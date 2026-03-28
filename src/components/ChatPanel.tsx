@@ -1,16 +1,126 @@
-import { useState } from "react";
-import type { BackendState, ChatMessage } from "../types/protocol";
+import { useMemo, useRef, useState } from "react";
+import type {
+  AppSettings,
+  BackendState,
+  ChatMessage,
+} from "../types/protocol";
 
 interface ChatPanelProps {
   backend: BackendState;
   messages: ChatMessage[];
   canSend: boolean;
   onSend: (content: string) => void;
+  settings: AppSettings;
+}
+
+type SlashItem = {
+  id: string;
+  category: "工具" | "MCP" | "Skill";
+  label: string;
+  sublabel: string;
+  value: string;
+  keywords: string[];
+};
+
+function buildSlashItems(settings: AppSettings): SlashItem[] {
+  return [
+    ...settings.tools
+      .filter((item) => item.enabled)
+      .map((item) => ({
+        id: `tool-${item.id}`,
+        category: "工具" as const,
+        label: item.name,
+        sublabel: item.command || item.description || "未配置说明",
+        value: `/tool ${item.name} `,
+        keywords: [item.name, item.command, item.description].filter(Boolean),
+      })),
+    ...settings.mcp
+      .filter((item) => item.enabled)
+      .map((item) => ({
+        id: `mcp-${item.id}`,
+        category: "MCP" as const,
+        label: item.name,
+        sublabel: item.endpoint || item.description || "未配置端点",
+        value: `/mcp ${item.name} `,
+        keywords: [item.name, item.endpoint, item.description, item.transport].filter(
+          Boolean,
+        ),
+      })),
+    ...settings.skills
+      .filter((item) => item.enabled)
+      .map((item) => ({
+        id: `skill-${item.id}`,
+        category: "Skill" as const,
+        label: item.name,
+        sublabel: item.description || item.prompt || "未配置说明",
+        value: `/skill ${item.name} `,
+        keywords: [item.name, item.description, item.prompt].filter(Boolean),
+      })),
+  ];
+}
+
+function findSlashQuery(draft: string, caretIndex: number) {
+  const textBeforeCaret = draft.slice(0, caretIndex);
+  const slashIndex = textBeforeCaret.lastIndexOf("/");
+  if (slashIndex === -1) {
+    return null;
+  }
+
+  const prefixChar = slashIndex === 0 ? "" : textBeforeCaret[slashIndex - 1];
+  if (prefixChar && !/\s/.test(prefixChar)) {
+    return null;
+  }
+
+  const queryText = textBeforeCaret.slice(slashIndex + 1);
+  if (queryText.includes("\n")) {
+    return null;
+  }
+
+  return {
+    slashIndex,
+    caretIndex,
+    queryText,
+  };
 }
 
 export function ChatPanel(props: ChatPanelProps) {
-  const { backend, messages, canSend, onSend } = props;
+  const { backend, messages, canSend, onSend, settings } = props;
   const [draft, setDraft] = useState("");
+  const [activeIndex, setActiveIndex] = useState(0);
+  const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const slashItems = useMemo(() => buildSlashItems(settings), [settings]);
+  const caretIndex = textareaRef.current?.selectionStart ?? draft.length;
+  const slashQuery = findSlashQuery(draft, caretIndex);
+  const normalizedQuery = slashQuery?.queryText.trim().toLowerCase() ?? "";
+
+  const filteredSlashItems = useMemo(() => {
+    if (!slashQuery) {
+      return [];
+    }
+
+    if (!normalizedQuery) {
+      return slashItems;
+    }
+
+    return slashItems.filter((item) =>
+      [item.category, item.label, item.sublabel, ...item.keywords].some((field) =>
+        field.toLowerCase().includes(normalizedQuery),
+      ),
+    );
+  }, [normalizedQuery, slashItems, slashQuery]);
+
+  const groupedItems = useMemo(() => {
+    const order: SlashItem["category"][] = ["工具", "MCP", "Skill"];
+    return order
+      .map((category) => ({
+        category,
+        items: filteredSlashItems.filter((item) => item.category === category),
+      }))
+      .filter((group) => group.items.length > 0);
+  }, [filteredSlashItems]);
+
+  const flatItems = groupedItems.flatMap((group) => group.items);
 
   const submit = () => {
     const normalized = draft.trim();
@@ -19,9 +129,69 @@ export function ChatPanel(props: ChatPanelProps) {
     }
     onSend(normalized);
     setDraft("");
+    setActiveIndex(0);
+  };
+
+  const applySlashItem = (item: SlashItem) => {
+    if (!slashQuery) {
+      return;
+    }
+
+    const nextDraft =
+      draft.slice(0, slashQuery.slashIndex) +
+      item.value +
+      draft.slice(slashQuery.caretIndex);
+
+    setDraft(nextDraft);
+    setActiveIndex(0);
+
+    requestAnimationFrame(() => {
+      if (!textareaRef.current) {
+        return;
+      }
+
+      const nextCaret = slashQuery.slashIndex + item.value.length;
+      textareaRef.current.focus();
+      textareaRef.current.setSelectionRange(nextCaret, nextCaret);
+    });
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (slashQuery && flatItems.length > 0) {
+      if (event.key === "ArrowDown") {
+        event.preventDefault();
+        setActiveIndex((current) => (current + 1) % flatItems.length);
+        return;
+      }
+
+      if (event.key === "ArrowUp") {
+        event.preventDefault();
+        setActiveIndex((current) => (current - 1 + flatItems.length) % flatItems.length);
+        return;
+      }
+
+      if (event.key === "Enter" && !event.altKey && !event.nativeEvent.isComposing) {
+        event.preventDefault();
+        applySlashItem(flatItems[activeIndex] ?? flatItems[0]);
+        return;
+      }
+
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setDraft((current) => {
+          if (!slashQuery) {
+            return current;
+          }
+          return (
+            current.slice(0, slashQuery.slashIndex) +
+            current.slice(slashQuery.caretIndex)
+          );
+        });
+        setActiveIndex(0);
+        return;
+      }
+    }
+
     if (event.key !== "Enter" || event.nativeEvent.isComposing) {
       return;
     }
@@ -47,7 +217,7 @@ export function ChatPanel(props: ChatPanelProps) {
         {messages.length === 0 ? (
           <div className="empty-state">
             <p>已连接后即可在这里发起任务、查看回复和追踪状态。</p>
-            <small>左下角会持续显示后端服务状态，异常时可点击查看详情。</small>
+            <small>输入 `/` 可快速插入 Tool、MCP 和 Skill 指令。</small>
           </div>
         ) : (
           messages.map((message) => (
@@ -63,6 +233,57 @@ export function ChatPanel(props: ChatPanelProps) {
                 <span>{new Date(message.createdAt).toLocaleTimeString()}</span>
               </div>
               <p>{message.content}</p>
+              {message.role === "assistant" && message.traces && message.traces.length > 0 ? (
+                <div className="trace-list-block">
+                  <div className="trace-list-title">本轮调用</div>
+                  <div className="trace-list">
+                    {message.traces.map((trace) => (
+                      <details key={trace.id} className="trace-item">
+                        <summary className="trace-item-summary">
+                          <span className={`trace-kind trace-kind-${trace.kind}`}>
+                            {trace.kind.toUpperCase()}
+                          </span>
+                          <span className="trace-name">{trace.name}</span>
+                          <span className={`trace-status trace-status-${trace.status}`}>
+                            {trace.status === "started"
+                              ? "执行中"
+                              : trace.status === "completed"
+                                ? "已完成"
+                                : "失败"}
+                          </span>
+                        </summary>
+                        <div className="trace-item-body">
+                          {trace.summary ? <p>{trace.summary}</p> : null}
+                          <div className="trace-meta-grid">
+                            <div>
+                              <strong>开始时间</strong>
+                              <span>{new Date(trace.startedAt).toLocaleString()}</span>
+                            </div>
+                            {trace.completedAt ? (
+                              <div>
+                                <strong>结束时间</strong>
+                                <span>{new Date(trace.completedAt).toLocaleString()}</span>
+                              </div>
+                            ) : null}
+                          </div>
+                          {trace.params ? (
+                            <div className="trace-section">
+                              <strong>参数</strong>
+                              <pre>{JSON.stringify(trace.params, null, 2)}</pre>
+                            </div>
+                          ) : null}
+                          {trace.result ? (
+                            <div className="trace-section">
+                              <strong>执行结果</strong>
+                              <pre>{trace.result}</pre>
+                            </div>
+                          ) : null}
+                        </div>
+                      </details>
+                    ))}
+                  </div>
+                </div>
+              ) : null}
               {message.role === "assistant" && message.status === "pending" ? (
                 <div className="message-thinking" aria-label="AI 正在思考">
                   <span />
@@ -78,18 +299,61 @@ export function ChatPanel(props: ChatPanelProps) {
       <div className="composer">
         <div className="composer-field">
           <textarea
+            ref={textareaRef}
             className="composer-input"
             disabled={!canSend}
-            onChange={(event) => setDraft(event.target.value)}
+            onChange={(event) => {
+              setDraft(event.target.value);
+              setActiveIndex(0);
+            }}
+            onClick={() => setActiveIndex(0)}
             onKeyDown={handleKeyDown}
             placeholder={
               canSend
-                ? "输入你要交给 openEagle 的任务..."
+                ? "输入任务，或使用 / 调出 Tool / MCP / Skill..."
                 : "等待后端启动完成..."
             }
             rows={3}
             value={draft}
           />
+
+          {slashQuery ? (
+            <div className="slash-panel" role="listbox">
+              <div className="slash-panel-header">
+                <strong>命令面板</strong>
+                <span>支持搜索、上下键选择、Enter 确认</span>
+              </div>
+
+              {groupedItems.length > 0 ? (
+                <div className="slash-group-list">
+                  {groupedItems.map((group) => (
+                    <div key={group.category} className="slash-group">
+                      <div className="slash-group-title">{group.category}</div>
+                      {group.items.map((item) => {
+                        const itemIndex = flatItems.findIndex((entry) => entry.id === item.id);
+                        const isActive = itemIndex === activeIndex;
+                        return (
+                          <button
+                            key={item.id}
+                            className={isActive ? "slash-item active" : "slash-item"}
+                            onClick={() => applySlashItem(item)}
+                            onMouseEnter={() => setActiveIndex(itemIndex)}
+                            type="button"
+                          >
+                            <span className="slash-item-label">{item.label}</span>
+                            <span className="slash-item-meta">{item.sublabel}</span>
+                          </button>
+                        );
+                      })}
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div className="slash-empty">没有匹配项，继续输入关键词试试。</div>
+              )}
+            </div>
+          ) : null}
+
           <button
             aria-label="发送消息"
             className="send-action"

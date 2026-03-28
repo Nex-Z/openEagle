@@ -24,6 +24,23 @@ export interface ChatMessage {
   createdAt: string;
   requestId?: string;
   status?: "pending" | "done" | "error";
+  traces?: AgentExecutionTrace[];
+}
+
+export type AgentExecutionKind = "tool" | "mcp" | "skill";
+
+export type AgentExecutionStatus = "started" | "completed" | "error";
+
+export interface AgentExecutionTrace {
+  id: string;
+  kind: AgentExecutionKind;
+  name: string;
+  status: AgentExecutionStatus;
+  summary?: string;
+  params?: Record<string, unknown>;
+  result?: string;
+  startedAt: string;
+  completedAt?: string;
 }
 
 export interface FeishuSettings {
@@ -44,10 +61,38 @@ export interface AppearanceSettings {
   themeMode: ThemeMode;
 }
 
+export interface ToolConfig {
+  id: string;
+  name: string;
+  description: string;
+  command: string;
+  enabled: boolean;
+}
+
+export interface McpServerConfig {
+  id: string;
+  name: string;
+  transport: "stdio" | "http";
+  endpoint: string;
+  description: string;
+  enabled: boolean;
+}
+
+export interface SkillConfig {
+  id: string;
+  name: string;
+  description: string;
+  prompt: string;
+  enabled: boolean;
+}
+
 export interface AppSettings {
   feishu: FeishuSettings;
   agent: AgentSettings;
   appearance: AppearanceSettings;
+  tools: ToolConfig[];
+  mcp: McpServerConfig[];
+  skills: SkillConfig[];
 }
 
 export interface ConversationSummary {

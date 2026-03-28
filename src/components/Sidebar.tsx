@@ -1,22 +1,33 @@
 import { useEffect, useRef, useState } from "react";
 import type { BackendState, ConversationSummary } from "../types/protocol";
 
+type SidebarView = "chat" | "general" | "tools" | "mcp" | "skills";
+
 interface SidebarProps {
   conversations: ConversationSummary[];
   activeConversationId: string;
+  activeView: SidebarView;
   backend: BackendState;
   statusLine: string;
   statusDetail: string | null;
   onSelectConversation: (id: string) => void;
   onDeleteConversation: (id: string) => void;
   onNewConversation: () => void;
-  onOpenSettings: () => void;
+  onOpenSettings: (view: Exclude<SidebarView, "chat">) => void;
 }
+
+const configEntries: Array<{ id: Exclude<SidebarView, "chat">; label: string }> = [
+  { id: "general", label: "基础设置" },
+  { id: "tools", label: "工具" },
+  { id: "mcp", label: "MCP" },
+  { id: "skills", label: "Skill" },
+];
 
 export function Sidebar(props: SidebarProps) {
   const {
     conversations,
     activeConversationId,
+    activeView,
     backend,
     statusLine,
     statusDetail,
@@ -62,6 +73,25 @@ export function Sidebar(props: SidebarProps) {
       <button className="primary-action primary-action-compact" onClick={onNewConversation} type="button">
         新建会话
       </button>
+
+      <div className="sidebar-section sidebar-section-compact">
+        <p className="section-title">配置中心</p>
+        <div className="workspace-nav-list">
+          {configEntries.map((entry) => (
+            <button
+              key={entry.id}
+              className={activeView === entry.id ? "workspace-nav-item active" : "workspace-nav-item"}
+              onClick={() => {
+                onOpenSettings(entry.id);
+                setOpenMenuId(null);
+              }}
+              type="button"
+            >
+              <span>{entry.label}</span>
+            </button>
+          ))}
+        </div>
+      </div>
 
       <div className="sidebar-section">
         <p className="section-title">历史会话</p>
@@ -164,7 +194,7 @@ export function Sidebar(props: SidebarProps) {
         <button
           aria-label="打开设置"
           className="icon-action"
-          onClick={onOpenSettings}
+          onClick={() => onOpenSettings("general")}
           title="设置"
           type="button"
         >

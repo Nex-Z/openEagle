@@ -12,6 +12,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from .agent_service import build_agent_service
 from .config import AppConfig, load_config
 from .models import Envelope, ErrorPayload, MessagePayload, StatusPayload, utc_now
+from .providers.base import ReplyChunk, ReplyTrace
 from .runtime_state import RuntimeState
 
 app = FastAPI(title="openEagle Agent Backend")
@@ -102,18 +103,41 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             agent_service = build_agent_service(runtime_state.get_config())
             chunks: list[str] = []
-            async for chunk in agent_service.stream_reply(
+            async for event in agent_service.stream_reply(
                 envelope.conversation_id,
                 payload.content,
             ):
-                chunks.append(chunk)
-                await send_envelope(
-                    websocket,
-                    "server:message_delta",
-                    envelope.request_id,
-                    envelope.conversation_id,
-                    {"content": chunk},
-                )
+                if isinstance(event, ReplyChunk):
+                    chunks.append(event.content)
+                    await send_envelope(
+                        websocket,
+                        "server:message_delta",
+                        envelope.request_id,
+                        envelope.conversation_id,
+                        {"content": event.content},
+                    )
+                    continue
+
+                if isinstance(event, ReplyTrace):
+                    await send_envelope(
+                        websocket,
+                        "server:trace",
+                        envelope.request_id,
+                        envelope.conversation_id,
+                        {
+                            "trace": {
+                                "id": event.trace_id,
+                                "kind": event.kind,
+                                "name": event.name,
+                                "status": event.status,
+                                "summary": event.summary,
+                                "params": event.params,
+                                "result": event.result,
+                                "startedAt": event.started_at,
+                                "completedAt": event.completed_at,
+                            }
+                        },
+                    )
 
             reply = "".join(chunks)
 

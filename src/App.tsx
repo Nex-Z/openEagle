@@ -13,6 +13,8 @@ import {
 } from "./lib/storage";
 import type { AppSettings, ConversationSummary } from "./types/protocol";
 
+type WorkspaceView = "chat" | "general" | "tools" | "mcp" | "skills";
+
 function createConversation(seed?: Partial<ConversationSummary>): ConversationSummary {
   const now = new Date().toISOString();
   return {
@@ -37,7 +39,7 @@ export default function App() {
   const [activeConversationId, setActiveConversationId] = useState(
     () => conversationStore[0].summary.id,
   );
-  const [showSettings, setShowSettings] = useState(false);
+  const [activeView, setActiveView] = useState<WorkspaceView>("chat");
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const conversations = conversationStore.map((item) => item.summary);
   const activeConversation =
@@ -104,7 +106,7 @@ export default function App() {
       ...current,
     ]);
     setActiveConversationId(next.id);
-    setShowSettings(false);
+    setActiveView("chat");
   };
 
   const deleteConversation = (conversationId: string) => {
@@ -124,39 +126,43 @@ export default function App() {
       setActiveConversationId(replacement.summary.id);
       return [replacement];
     });
-    setShowSettings(false);
+    setActiveView("chat");
   };
 
   return (
     <main className="app-shell">
       <Sidebar
+        activeView={activeView}
         activeConversationId={activeConversationId}
         backend={backend}
         conversations={conversations}
         onDeleteConversation={deleteConversation}
         onNewConversation={createNewConversation}
-        onOpenSettings={() => setShowSettings(true)}
+        onOpenSettings={(view) => setActiveView(view)}
         onSelectConversation={(id) => {
           setActiveConversationId(id);
-          setShowSettings(false);
+          setActiveView("chat");
         }}
         statusDetail={statusDetail}
         statusLine={statusLine}
       />
 
       <div className="content-panel">
-        {showSettings ? (
-          <SettingsPanel
-            onChange={setSettings}
-            onClose={() => setShowSettings(false)}
-            settings={settings}
-          />
-        ) : (
+        {activeView === "chat" ? (
           <ChatPanel
             backend={backend}
             canSend={canSend}
             messages={messages}
             onSend={sendMessage}
+            settings={settings}
+          />
+        ) : (
+          <SettingsPanel
+            activeSection={activeView}
+            onChange={setSettings}
+            onClose={() => setActiveView("chat")}
+            onSectionChange={setActiveView}
+            settings={settings}
           />
         )}
       </div>

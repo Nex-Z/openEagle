@@ -32,5 +32,9 @@ class ErrorPayload(BaseModel):
     code: str | None = None
 
 
+class TracePayload(BaseModel):
+    trace: dict[str, Any]
+
+
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()

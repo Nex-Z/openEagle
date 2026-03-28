@@ -4,7 +4,7 @@ from typing import AsyncIterator
 
 from .config import AppConfig
 from .providers.agno_provider import AgnoAgentProvider
-from .providers.base import AgentProvider
+from .providers.base import AgentProvider, ProviderStreamEvent
 from .providers.mock import MockAgentProvider
 
 
@@ -19,15 +19,15 @@ class AgentService:
         self,
         conversation_id: str,
         prompt: str,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[ProviderStreamEvent]:
         async for chunk in self._provider.stream_reply(conversation_id, prompt):
             yield chunk
 
 
 def build_agent_service(config: AppConfig) -> AgentService:
     if config.agent.provider in {"openai", "openai-like"}:
-        provider = AgnoAgentProvider(config.agent)
+        provider = AgnoAgentProvider(config)
     else:
-        provider = MockAgentProvider()
+        provider = MockAgentProvider(config)
 
     return AgentService(provider)

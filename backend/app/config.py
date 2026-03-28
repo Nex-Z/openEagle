@@ -3,6 +3,31 @@ from __future__ import annotations
 from pydantic import BaseModel, Field
 
 
+class ToolConfig(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+    command: str = ""
+    enabled: bool = True
+
+
+class McpConfig(BaseModel):
+    id: str
+    name: str
+    transport: str = "stdio"
+    endpoint: str = ""
+    description: str = ""
+    enabled: bool = True
+
+
+class SkillConfig(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+    prompt: str = ""
+    enabled: bool = True
+
+
 class AgentConfig(BaseModel):
     provider: str = "mock"
     model_id: str = Field(default="gpt-5-mini", alias="modelId")
@@ -28,6 +53,9 @@ class FeishuConfig(BaseModel):
 class AppConfig(BaseModel):
     agent: AgentConfig = AgentConfig()
     feishu: FeishuConfig = FeishuConfig()
+    tools: list[ToolConfig] = Field(default_factory=list)
+    mcp: list[McpConfig] = Field(default_factory=list)
+    skills: list[SkillConfig] = Field(default_factory=list)
 
     model_config = {
         "populate_by_name": True,

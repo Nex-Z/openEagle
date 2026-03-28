@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
+  AgentExecutionTrace,
   AppSettings,
   BackendState,
   ChatMessage,
@@ -37,6 +38,41 @@ function upsertAssistantMessage(
   return current.map((message, messageIndex) =>
     messageIndex === index ? updater(message) : message,
   );
+}
+
+function upsertAssistantTrace(
+  current: ChatMessage[],
+  requestId: string,
+  trace: AgentExecutionTrace,
+) {
+  return upsertAssistantMessage(current, requestId, (message) => {
+    const existingTraces = message?.traces ?? [];
+    const nextTraces = existingTraces.some((item) => item.id === trace.id)
+      ? existingTraces.map((item) =>
+          item.id === trace.id
+            ? {
+                ...item,
+                ...trace,
+                startedAt: item.startedAt ?? trace.startedAt,
+                completedAt: trace.completedAt ?? item.completedAt,
+                params: trace.params ?? item.params,
+                result: trace.result ?? item.result,
+                summary: trace.summary ?? item.summary,
+              }
+            : item,
+        )
+      : [...existingTraces, trace];
+
+    return {
+      id: message?.id ?? createId("assistant"),
+      requestId,
+      role: "assistant",
+      content: message?.content ?? "",
+      createdAt: message?.createdAt ?? trace.startedAt,
+      status: message?.status ?? "pending",
+      traces: nextTraces,
+    };
+  });
 }
 
 const initialState: BackendState = {
@@ -222,7 +258,12 @@ export function useBackendConnection(
 
     socket.addEventListener("message", (event) => {
       const envelope = JSON.parse(event.data) as Envelope<
-        { content?: string; detail?: string } & ErrorPayload & StatusPayload
+        {
+          content?: string;
+          detail?: string;
+          trace?: AgentExecutionTrace;
+        } & ErrorPayload &
+          StatusPayload
       >;
 
       if (envelope.type === "server:message") {
@@ -234,6 +275,7 @@ export function useBackendConnection(
             content: envelope.payload.content ?? message?.content ?? "",
             createdAt: message?.createdAt ?? envelope.timestamp,
             status: "done",
+            traces: message?.traces ?? [],
           })),
         );
         setStatusLine("已连接后端服务");
@@ -250,6 +292,7 @@ export function useBackendConnection(
             content: `${message?.content ?? ""}${envelope.payload.content ?? ""}`,
             createdAt: message?.createdAt ?? envelope.timestamp,
             status: "pending",
+            traces: message?.traces ?? [],
           })),
         );
         setStatusLine("AI 正在输出");
@@ -267,6 +310,7 @@ export function useBackendConnection(
               content: message?.content ?? "",
               createdAt: message?.createdAt ?? envelope.timestamp,
               status: "pending",
+              traces: message?.traces ?? [],
             })),
           );
           setStatusLine("AI 正在思考");
@@ -291,6 +335,13 @@ export function useBackendConnection(
 
         setStatusLine("已连接后端服务");
         setStatusDetail(envelope.payload.detail ?? null);
+        return;
+      }
+
+      if (envelope.type === "server:trace" && envelope.payload.trace) {
+        setMessages((current) =>
+          upsertAssistantTrace(current, envelope.requestId, envelope.payload.trace!),
+        );
         return;
       }
 
@@ -365,6 +416,7 @@ export function useBackendConnection(
         content: "",
         createdAt: now,
         status: "pending",
+        traces: [],
       },
     ]);
 
