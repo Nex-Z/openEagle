@@ -1,0 +1,33 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "openEagle",
+  "version": "0.1.0",
+  "identifier": "com.openeagle.desktop",
+  "build": {
+    "beforeDevCommand": "cmd /c pnpm dev",
+    "beforeBuildCommand": "cmd /c pnpm build",
+    "devUrl": "http://127.0.0.1:1420",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "openEagle",
+        "width": 1440,
+        "height": 920,
+        "minWidth": 1080,
+        "minHeight": 720,
+        "resizable": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": "all",
+    "externalBin": ["binaries/open-eagle-agent"]
+  }
+}

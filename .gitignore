@@ -1,0 +1,14 @@
+node_modules/
+dist/
+.vite/
+.venv/
+.uv-cache/
+.uv-python/
+__pycache__/
+*.pyc
+backend/.venv/
+backend/.pytest_cache/
+backend/dist/
+src-tauri/target/
+src-tauri/binaries/*.exe
+src-tauri/binaries/*-x86_64-*

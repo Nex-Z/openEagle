@@ -1,0 +1,33 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Main capability for openEagle desktop",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "shell:allow-execute",
+    {
+      "identifier": "shell:allow-spawn",
+      "allow": [
+        {
+          "name": "uv",
+          "cmd": "uv",
+          "sidecar": false,
+          "args": true
+        },
+        {
+          "name": "backend-python",
+          "cmd": "E:\\WorkSpace\\project\\openEagle\\backend\\.venv\\Scripts\\python.exe",
+          "sidecar": false,
+          "args": true
+        },
+        {
+          "name": "binaries/open-eagle-agent",
+          "sidecar": true,
+          "args": true
+        }
+      ]
+    },
+    "shell:allow-kill"
+  ]
+}
