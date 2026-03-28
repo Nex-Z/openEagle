@@ -21,6 +21,24 @@ function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
+function upsertAssistantMessage(
+  current: ChatMessage[],
+  requestId: string,
+  updater: (message: ChatMessage | undefined) => ChatMessage,
+) {
+  const index = current.findIndex(
+    (message) => message.role === "assistant" && message.requestId === requestId,
+  );
+
+  if (index === -1) {
+    return [...current, updater(undefined)];
+  }
+
+  return current.map((message, messageIndex) =>
+    messageIndex === index ? updater(message) : message,
+  );
+}
+
 const initialState: BackendState = {
   phase: "starting",
   port: null,
@@ -30,14 +48,19 @@ const initialState: BackendState = {
 export function useBackendConnection(
   conversationId: string,
   settings: AppSettings,
+  initialMessages: ChatMessage[],
+  onMessagesChange: (conversationId: string, messages: ChatMessage[]) => void,
 ) {
   const [backend, setBackend] = useState<BackendState>(initialState);
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
-  const [statusLine, setStatusLine] = useState("后端启动中...");
+  const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
+  const [statusLine, setStatusLine] = useState("后端服务启动中...");
+  const [statusDetail, setStatusDetail] = useState<string | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
   const activePortRef = useRef<number | null>(null);
+  const onMessagesChangeRef = useRef(onMessagesChange);
+  const skipNextMessageSyncRef = useRef(true);
 
   const syncSettings = () => {
     const socket = socketRef.current;
@@ -62,6 +85,8 @@ export function useBackendConnection(
         port: null,
         message: "当前不在 Tauri 环境，请通过 `pnpm tauri:dev` 启动。",
       });
+      setStatusLine("后端服务异常");
+      setStatusDetail("当前不在 Tauri 环境，请通过 `pnpm tauri:dev` 启动。");
       return;
     }
 
@@ -98,6 +123,24 @@ export function useBackendConnection(
   }, [conversationId, settings]);
 
   useEffect(() => {
+    onMessagesChangeRef.current = onMessagesChange;
+  }, [onMessagesChange]);
+
+  useEffect(() => {
+    skipNextMessageSyncRef.current = true;
+    setMessages(initialMessages);
+  }, [conversationId]);
+
+  useEffect(() => {
+    if (skipNextMessageSyncRef.current) {
+      skipNextMessageSyncRef.current = false;
+      return;
+    }
+
+    onMessagesChangeRef.current(conversationId, messages);
+  }, [conversationId, messages]);
+
+  useEffect(() => {
     if (!backend.port) {
       return;
     }
@@ -114,7 +157,8 @@ export function useBackendConnection(
 
     const targetPort = backend.port;
     activePortRef.current = targetPort;
-    setStatusLine(`正在连接 ws://127.0.0.1:${targetPort}/ws ...`);
+    setStatusLine("正在连接后端服务");
+    setStatusDetail(null);
 
     const socket = new WebSocket(`ws://127.0.0.1:${targetPort}/ws`);
     socketRef.current = socket;
@@ -127,7 +171,8 @@ export function useBackendConnection(
         port: targetPort,
         message: "连接已建立",
       }));
-      setStatusLine("已连接到本地 Agent");
+      setStatusLine("已连接后端服务");
+      setStatusDetail(null);
       syncSettings();
     });
 
@@ -147,7 +192,8 @@ export function useBackendConnection(
           port: targetPort,
           message: `连接中断，准备第 ${nextRetry} 次重试...`,
         }));
-        setStatusLine("WebSocket 已断开，正在重试...");
+        setStatusLine("后端连接中断");
+        setStatusDetail(`WebSocket 已断开，正在准备第 ${nextRetry} 次自动重试。`);
         reconnectTimerRef.current = window.setTimeout(() => {
           setBackend((current) => ({
             ...current,
@@ -165,11 +211,13 @@ export function useBackendConnection(
         port: targetPort,
         message: "WebSocket 连接失败，请检查后端启动日志。",
       }));
-      setStatusLine("连接失败");
+      setStatusLine("后端服务异常");
+      setStatusDetail("WebSocket 连接失败，请检查后端启动日志。");
     });
 
     socket.addEventListener("error", () => {
-      setStatusLine("连接异常，等待自动重试...");
+      setStatusLine("后端服务异常");
+      setStatusDetail("WebSocket 连接异常，正在等待自动重试。");
     });
 
     socket.addEventListener("message", (event) => {
@@ -178,39 +226,99 @@ export function useBackendConnection(
       >;
 
       if (envelope.type === "server:message") {
-        setMessages((current) => [
-          ...current,
-          {
-            id: createId("assistant"),
+        setMessages((current) =>
+          upsertAssistantMessage(current, envelope.requestId, (message) => ({
+            id: message?.id ?? createId("assistant"),
+            requestId: envelope.requestId,
             role: "assistant",
-            content: envelope.payload.content ?? "",
-            createdAt: envelope.timestamp,
+            content: envelope.payload.content ?? message?.content ?? "",
+            createdAt: message?.createdAt ?? envelope.timestamp,
             status: "done",
-          },
-        ]);
-        setStatusLine("Agent 已回复");
+          })),
+        );
+        setStatusLine("已连接后端服务");
+        setStatusDetail(null);
+        return;
+      }
+
+      if (envelope.type === "server:message_delta") {
+        setMessages((current) =>
+          upsertAssistantMessage(current, envelope.requestId, (message) => ({
+            id: message?.id ?? createId("assistant"),
+            requestId: envelope.requestId,
+            role: "assistant",
+            content: `${message?.content ?? ""}${envelope.payload.content ?? ""}`,
+            createdAt: message?.createdAt ?? envelope.timestamp,
+            status: "pending",
+          })),
+        );
+        setStatusLine("AI 正在输出");
+        setStatusDetail(null);
         return;
       }
 
       if (envelope.type === "server:status") {
-        setStatusLine(
-          envelope.payload.detail ?? envelope.payload.stage ?? "处理中",
-        );
+        if (envelope.payload.stage === "thinking") {
+          setMessages((current) =>
+            upsertAssistantMessage(current, envelope.requestId, (message) => ({
+              id: message?.id ?? createId("assistant"),
+              requestId: envelope.requestId,
+              role: "assistant",
+              content: message?.content ?? "",
+              createdAt: message?.createdAt ?? envelope.timestamp,
+              status: "pending",
+            })),
+          );
+          setStatusLine("AI 正在思考");
+          setStatusDetail(envelope.payload.detail ?? null);
+          return;
+        }
+
+        if (envelope.payload.stage === "idle") {
+          setMessages((current) =>
+            current.map((message) =>
+              message.role === "assistant" &&
+              message.requestId === envelope.requestId &&
+              message.status === "pending"
+                ? { ...message, status: "done" }
+                : message,
+            ),
+          );
+          setStatusLine("已连接后端服务");
+          setStatusDetail(null);
+          return;
+        }
+
+        setStatusLine("已连接后端服务");
+        setStatusDetail(envelope.payload.detail ?? null);
         return;
       }
 
       if (envelope.type === "server:error") {
-        setStatusLine(envelope.payload.message ?? "服务异常");
-        setMessages((current) => [
-          ...current,
-          {
-            id: createId("system"),
-            role: "system",
-            content: envelope.payload.message ?? "未知错误",
-            createdAt: envelope.timestamp,
-            status: "error",
-          },
-        ]);
+        setStatusLine("后端服务异常");
+        setStatusDetail(
+          envelope.payload.detail ?? envelope.payload.message ?? "未知错误",
+        );
+        setMessages((current) => {
+          const next: ChatMessage[] = current.map((message) =>
+            message.role === "assistant" &&
+            message.requestId === envelope.requestId &&
+            message.status === "pending"
+              ? { ...message, status: "error" as const }
+              : message,
+          );
+
+          return [
+            ...next,
+            {
+              id: createId("system"),
+              role: "system",
+              content: envelope.payload.message ?? "未知错误",
+              createdAt: envelope.timestamp,
+              status: "error" as const,
+            },
+          ];
+        });
       }
     });
   }, [backend.phase, backend.port, conversationId, settings]);
@@ -229,14 +337,11 @@ export function useBackendConnection(
     };
   }, []);
 
-  useEffect(() => {
-    setMessages([]);
-  }, [conversationId]);
-
   const sendMessage = (content: string) => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
-      setStatusLine("后端尚未连接完成");
+      setStatusLine("后端服务未就绪");
+      setStatusDetail("当前连接尚未建立完成，消息未发送。");
       return false;
     }
 
@@ -247,10 +352,19 @@ export function useBackendConnection(
       ...current,
       {
         id: createId("user"),
+        requestId,
         role: "user",
         content,
         createdAt: now,
         status: "done",
+      },
+      {
+        id: createId("assistant"),
+        requestId,
+        role: "assistant",
+        content: "",
+        createdAt: now,
+        status: "pending",
       },
     ]);
 
@@ -263,7 +377,8 @@ export function useBackendConnection(
     };
 
     socket.send(JSON.stringify(envelope));
-    setStatusLine("消息已发送");
+    setStatusLine("AI 正在思考");
+    setStatusDetail("请求已发送，等待模型开始生成。");
     return true;
   };
 
@@ -272,6 +387,7 @@ export function useBackendConnection(
     messages,
     canSend: backend.phase === "connected",
     sendMessage,
+    statusDetail,
     statusLine,
   };
 }

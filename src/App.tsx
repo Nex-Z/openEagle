@@ -2,12 +2,12 @@ import { useEffect, useState } from "react";
 import { ChatPanel } from "./components/ChatPanel";
 import { SettingsPanel } from "./components/SettingsPanel";
 import { Sidebar } from "./components/Sidebar";
-import { ThemeToggle } from "./components/ThemeToggle";
 import { useBackendConnection } from "./hooks/useBackendConnection";
 import { useTheme } from "./hooks/useTheme";
 import {
   loadPersistedConversations,
   loadSettings,
+  type PersistedConversation,
   savePersistedConversations,
   saveSettings,
 } from "./lib/storage";
@@ -23,40 +23,107 @@ function createConversation(seed?: Partial<ConversationSummary>): ConversationSu
 }
 
 export default function App() {
-  const initialConversations = loadPersistedConversations().map((item) => item.summary);
-  const [conversations, setConversations] = useState<ConversationSummary[]>(
-    initialConversations.length > 0 ? initialConversations : [createConversation()],
-  );
+  const [conversationStore, setConversationStore] = useState<PersistedConversation[]>(() => {
+    const persistedConversations = loadPersistedConversations();
+    return persistedConversations.length > 0
+      ? persistedConversations
+      : [
+          {
+            summary: createConversation(),
+            messages: [],
+          },
+        ];
+  });
   const [activeConversationId, setActiveConversationId] = useState(
-    initialConversations[0]?.id ?? conversations[0].id,
+    () => conversationStore[0].summary.id,
   );
   const [showSettings, setShowSettings] = useState(false);
-  const [settings, setSettings] = useState<AppSettings>(loadSettings());
+  const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
+  const conversations = conversationStore.map((item) => item.summary);
+  const activeConversation =
+    conversationStore.find((item) => item.summary.id === activeConversationId) ??
+    conversationStore[0];
 
   useTheme(settings.appearance.themeMode);
 
-  const { backend, messages, canSend, sendMessage, statusLine } =
-    useBackendConnection(activeConversationId, settings);
+  const { backend, messages, canSend, sendMessage, statusLine, statusDetail } =
+    useBackendConnection(
+      activeConversationId,
+      settings,
+      activeConversation?.messages ?? [],
+      (conversationId, nextMessages) => {
+        setConversationStore((current) =>
+          current.map((item) =>
+            item.summary.id !== conversationId
+              ? item
+              : item.messages === nextMessages
+                ? item
+                : {
+                    ...item,
+                    summary: {
+                      ...item.summary,
+                      updatedAt:
+                        nextMessages[nextMessages.length - 1]?.createdAt ??
+                        item.summary.updatedAt,
+                    },
+                    messages: nextMessages,
+                  },
+          ),
+        );
+      },
+    );
 
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
 
   useEffect(() => {
-    savePersistedConversations(
-      conversations.map((summary) => ({
-        summary,
-        messages: summary.id === activeConversationId ? messages : [],
-      })),
-    );
-  }, [activeConversationId, conversations, messages]);
+    savePersistedConversations(conversationStore);
+  }, [conversationStore]);
+
+  useEffect(() => {
+    if (conversationStore.some((item) => item.summary.id === activeConversationId)) {
+      return;
+    }
+
+    const fallback =
+      conversationStore[0]?.summary.id ??
+      createConversation({ title: "对话 1" }).id;
+    setActiveConversationId(fallback);
+  }, [activeConversationId, conversationStore]);
 
   const createNewConversation = () => {
     const next = createConversation({
       title: `对话 ${conversations.length + 1}`,
     });
-    setConversations((current) => [next, ...current]);
+    setConversationStore((current) => [
+      {
+        summary: next,
+        messages: [],
+      },
+      ...current,
+    ]);
     setActiveConversationId(next.id);
+    setShowSettings(false);
+  };
+
+  const deleteConversation = (conversationId: string) => {
+    setConversationStore((current) => {
+      const remaining = current.filter((item) => item.summary.id !== conversationId);
+      if (remaining.length > 0) {
+        if (conversationId === activeConversationId) {
+          setActiveConversationId(remaining[0].summary.id);
+        }
+        return remaining;
+      }
+
+      const replacement = {
+        summary: createConversation({ title: "对话 1" }),
+        messages: [],
+      };
+      setActiveConversationId(replacement.summary.id);
+      return [replacement];
+    });
     setShowSettings(false);
   };
 
@@ -64,24 +131,17 @@ export default function App() {
     <main className="app-shell">
       <Sidebar
         activeConversationId={activeConversationId}
+        backend={backend}
         conversations={conversations}
+        onDeleteConversation={deleteConversation}
         onNewConversation={createNewConversation}
         onOpenSettings={() => setShowSettings(true)}
         onSelectConversation={(id) => {
           setActiveConversationId(id);
           setShowSettings(false);
         }}
-        quickTheme={
-          <ThemeToggle
-            onChange={(themeMode) =>
-              setSettings((current) => ({
-                ...current,
-                appearance: { themeMode },
-              }))
-            }
-            value={settings.appearance.themeMode}
-          />
-        }
+        statusDetail={statusDetail}
+        statusLine={statusLine}
       />
 
       <div className="content-panel">
@@ -97,7 +157,6 @@ export default function App() {
             canSend={canSend}
             messages={messages}
             onSend={sendMessage}
-            statusLine={statusLine}
           />
         )}
       </div>

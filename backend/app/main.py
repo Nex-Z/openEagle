@@ -101,10 +101,21 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             )
 
             agent_service = build_agent_service(runtime_state.get_config())
-            reply = await agent_service.generate_reply(
+            chunks: list[str] = []
+            async for chunk in agent_service.stream_reply(
                 envelope.conversation_id,
                 payload.content,
-            )
+            ):
+                chunks.append(chunk)
+                await send_envelope(
+                    websocket,
+                    "server:message_delta",
+                    envelope.request_id,
+                    envelope.conversation_id,
+                    {"content": chunk},
+                )
+
+            reply = "".join(chunks)
 
             await send_envelope(
                 websocket,

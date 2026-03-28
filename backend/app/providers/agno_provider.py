@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import asyncio
+from typing import AsyncIterator
 
 from agno.agent import Agent
 from agno.models.openai import OpenAIResponses
 from agno.models.openai.like import OpenAILike
+from agno.run.agent import IntermediateRunContentEvent, RunContentEvent
 
 from ..config import AgentConfig
 
@@ -13,10 +14,7 @@ class AgnoAgentProvider:
     def __init__(self, config: AgentConfig) -> None:
         self._config = config
 
-    async def reply(self, conversation_id: str, prompt: str) -> str:
-        if not self._config.api_key:
-            raise ValueError("当前 provider 需要配置 API Key。")
-
+    def _build_agent(self, conversation_id: str) -> Agent:
         model_id = self._config.model_id or "gpt-5-mini"
 
         if self._config.provider == "openai-like":
@@ -32,7 +30,8 @@ class AgnoAgentProvider:
                 id=model_id,
                 api_key=self._config.api_key,
             )
-        agent = Agent(
+
+        return Agent(
             model=model,
             markdown=True,
             instructions=[
@@ -42,11 +41,30 @@ class AgnoAgentProvider:
             ],
         )
 
-        def run() -> str:
-            result = agent.run(prompt)
-            content = getattr(result, "content", None)
-            if isinstance(content, str) and content.strip():
-                return content
-            return str(result)
+    async def reply(self, conversation_id: str, prompt: str) -> str:
+        if not self._config.api_key:
+            raise ValueError("当前 provider 需要配置 API Key。")
 
-        return await asyncio.to_thread(run)
+        agent = self._build_agent(conversation_id)
+        result = await agent.arun(prompt)
+        content = getattr(result, "content", None)
+        if isinstance(content, str) and content.strip():
+            return content
+        return str(result)
+
+    async def stream_reply(
+        self,
+        conversation_id: str,
+        prompt: str,
+    ) -> AsyncIterator[str]:
+        if not self._config.api_key:
+            raise ValueError("当前 provider 需要配置 API Key。")
+
+        agent = self._build_agent(conversation_id)
+        stream = agent.arun(prompt, stream=True)
+
+        async for event in stream:
+            if isinstance(event, (RunContentEvent, IntermediateRunContentEvent)):
+                content = getattr(event, "content", None)
+                if isinstance(content, str) and content:
+                    yield content

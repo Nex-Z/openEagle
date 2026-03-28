@@ -13,35 +13,127 @@ export function SettingsPanel(props: SettingsPanelProps) {
   return (
     <section className="settings-panel">
       <header className="panel-header">
-        <div>
+        <div className="settings-header-copy">
           <p className="eyebrow">集成配置</p>
           <h2>设置</h2>
+          <p className="settings-summary">
+            集中调整外观、模型接入和飞书入口，修改后会立即应用到当前工作台。
+          </p>
         </div>
-        <button className="ghost-action" onClick={onClose} type="button">
+        <button className="secondary-action" onClick={onClose} type="button">
           返回对话
         </button>
       </header>
 
       <div className="settings-grid">
-        <div className="settings-card">
-          <h3>外观</h3>
-          <label className="field">
-            <span>主题模式</span>
-            <ThemeToggle
-              onChange={(themeMode) =>
-                onChange({
-                  ...settings,
-                  appearance: { themeMode },
-                })
-              }
-              value={settings.appearance.themeMode}
-            />
-          </label>
-          <p className="field-hint">支持固定日间、固定夜间，或自动跟随系统主题。</p>
+        <div className="settings-column">
+          <div className="settings-card settings-card-compact">
+            <div className="settings-card-heading">
+              <div>
+                <p className="eyebrow">界面</p>
+                <h3>外观</h3>
+              </div>
+            </div>
+            <label className="field">
+              <span>主题模式</span>
+              <ThemeToggle
+                onChange={(themeMode) =>
+                  onChange({
+                    ...settings,
+                    appearance: { themeMode },
+                  })
+                }
+                value={settings.appearance.themeMode}
+              />
+            </label>
+            <p className="field-hint">支持固定日间、固定夜间，或自动跟随系统主题。</p>
+          </div>
+
+          <div className="settings-card settings-card-compact">
+            <div className="settings-card-heading">
+              <div>
+                <p className="eyebrow">接入</p>
+                <h3>飞书机器人</h3>
+              </div>
+            </div>
+            <label className="switch-row">
+              <span>启用飞书入口</span>
+              <input
+                checked={settings.feishu.enabled}
+                onChange={(event) =>
+                  onChange({
+                    ...settings,
+                    feishu: {
+                      ...settings.feishu,
+                      enabled: event.target.checked,
+                    },
+                  })
+                }
+                type="checkbox"
+              />
+            </label>
+
+            <label className="field">
+              <span>App ID</span>
+              <input
+                onChange={(event) =>
+                  onChange({
+                    ...settings,
+                    feishu: {
+                      ...settings.feishu,
+                      appId: event.target.value,
+                    },
+                  })
+                }
+                placeholder="预留字段"
+                value={settings.feishu.appId}
+              />
+            </label>
+
+            <label className="field">
+              <span>App Secret</span>
+              <input
+                onChange={(event) =>
+                  onChange({
+                    ...settings,
+                    feishu: {
+                      ...settings.feishu,
+                      appSecret: event.target.value,
+                    },
+                  })
+                }
+                placeholder="预留字段"
+                value={settings.feishu.appSecret}
+              />
+            </label>
+
+            <label className="field">
+              <span>Verification Token</span>
+              <input
+                onChange={(event) =>
+                  onChange({
+                    ...settings,
+                    feishu: {
+                      ...settings.feishu,
+                      verificationToken: event.target.value,
+                    },
+                  })
+                }
+                placeholder="预留字段"
+                value={settings.feishu.verificationToken}
+              />
+            </label>
+          </div>
         </div>
 
-        <div className="settings-card">
-          <h3>模型配置</h3>
+        <div className="settings-card settings-card-feature">
+          <div className="settings-card-heading">
+            <div>
+              <p className="eyebrow">模型</p>
+              <h3>模型配置</h3>
+            </div>
+            <span className="settings-pill">{settings.agent.provider}</span>
+          </div>
           <label className="field">
             <span>Provider</span>
             <select
@@ -113,77 +205,6 @@ export function SettingsPanel(props: SettingsPanelProps) {
           <p className="field-hint">
             后端使用 Agno。`openai` 连接 OpenAI，`openai-like` 用于兼容 OpenAI API 的平台。
           </p>
-        </div>
-
-        <div className="settings-card">
-          <h3>飞书机器人</h3>
-          <label className="switch-row">
-            <span>启用飞书入口</span>
-            <input
-              checked={settings.feishu.enabled}
-              onChange={(event) =>
-                onChange({
-                  ...settings,
-                  feishu: {
-                    ...settings.feishu,
-                    enabled: event.target.checked,
-                  },
-                })
-              }
-              type="checkbox"
-            />
-          </label>
-
-          <label className="field">
-            <span>App ID</span>
-            <input
-              onChange={(event) =>
-                onChange({
-                  ...settings,
-                  feishu: {
-                    ...settings.feishu,
-                    appId: event.target.value,
-                  },
-                })
-              }
-              placeholder="预留字段"
-              value={settings.feishu.appId}
-            />
-          </label>
-
-          <label className="field">
-            <span>App Secret</span>
-            <input
-              onChange={(event) =>
-                onChange({
-                  ...settings,
-                  feishu: {
-                    ...settings.feishu,
-                    appSecret: event.target.value,
-                  },
-                })
-              }
-              placeholder="预留字段"
-              value={settings.feishu.appSecret}
-            />
-          </label>
-
-          <label className="field">
-            <span>Verification Token</span>
-            <input
-              onChange={(event) =>
-                onChange({
-                  ...settings,
-                  feishu: {
-                    ...settings.feishu,
-                    verificationToken: event.target.value,
-                  },
-                })
-              }
-              placeholder="预留字段"
-              value={settings.feishu.verificationToken}
-            />
-          </label>
         </div>
       </div>
     </section>

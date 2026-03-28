@@ -22,6 +22,7 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system";
   content: string;
   createdAt: string;
+  requestId?: string;
   status?: "pending" | "done" | "error";
 }
 
