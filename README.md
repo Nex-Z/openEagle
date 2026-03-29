@@ -1,40 +1,35 @@
 # openEagle
 
-openEagle 是一个通过视觉界面帮助你做事的桌面 Agent。
+openEagle 是一个桌面 Agent 应用，支持普通对话与 SOLO 视觉自动化任务。
 
-当前仓库已完成基础工程搭建：
-
+技术栈：
 - 前端：`Tauri 2 + React + TypeScript`
 - 后端：`Python + FastAPI + WebSocket`
-- 桌面集成：Tauri Rust 层负责拉起 Python sidecar，并通过 stdout 完成动态端口握手
+- 桌面壳：Rust 负责 sidecar 生命周期、本地能力桥接（截图、输入、文件等）
 
-## 当前能力
+## 核心功能
 
-- ChatGPT Web 风格的基础双栏布局
-- 左侧历史会话与设置入口
-- 主聊天面板、输入框、连接状态提示
-- Python 后端随机端口启动，并输出 `[AGENT_READY] WS_PORT: <port>`
-- Tauri 监听握手日志，将端口传递给前端
-- 前端自动连接 `ws://127.0.0.1:<port>/ws`
-- mock provider 占位链路已打通，真实模型链路使用 `Agno`
-- 支持 `openai` 与 `openai-like` 两类模型配置
-- 飞书机器人配置页已预留字段，暂未接入 webhook / 事件处理
+- Chat / SOLO 双模式对话
+- Tool/MCP/Skill 斜杠面板（`/`）与能力注入
+- SOLO 实时状态、步骤流、危险动作确认、自动暂停保护
+- SOLO 工具调用按单条 item 顺序展示，支持展开查看入参与结果
+- SOLO 新消息自动滚动到底
+- 设置页显示器选择（带实时截图预览），SOLO 截图按该配置生效
+- 多模型接入：`openai` / `openai-like` / `mock`
 
-## 项目结构
+## 目录结构
 
 ```text
 .
 |-- src/                    # React 前端
-|-- src-tauri/              # Tauri 2 Rust 壳与 sidecar 生命周期管理
-|-- backend/                # Python FastAPI/WebSocket 服务
-|-- docs/                   # 架构说明文档
+|-- src-tauri/              # Tauri Rust 壳
+|-- backend/                # Python FastAPI / WebSocket 服务
+|-- docs/                   # 文档（架构、开发指南）
 ```
 
-## 本地开发
+## 快速开始
 
-### 1. 安装前端依赖
-
-推荐使用 `pnpm`：
+### 1) 安装前端依赖
 
 ```powershell
 corepack enable
@@ -42,56 +37,67 @@ corepack prepare pnpm@10.7.0 --activate
 pnpm install
 ```
 
-### 2. 使用 uv 准备 Python 环境
+### 2) 准备 Python 环境
 
 ```powershell
 uv sync --project .\backend
 ```
 
-### 3. 启动桌面应用
+### 3) 启动桌面应用
 
 ```powershell
 pnpm tauri:dev
 ```
 
-开发模式下，Tauri 会优先通过 `uv run python -m app.main` 启动本地 Python 后端。
+说明：开发模式下 Tauri 会拉起 Python 后端并通过握手日志动态获取端口。
 
-## Python 后端
+## 常用命令
 
-后端提供：
+```powershell
+pnpm dev
+pnpm build
+pnpm tauri:dev
+pnpm tauri:build
+```
 
-- `GET /health`
-- `/ws` WebSocket 对话入口
+后端检查：
 
-消息协议统一包含以下字段：
+```powershell
+backend\.venv\Scripts\python.exe -m compileall backend\app
+```
 
+## WebSocket 协议（节选）
+
+公共字段：
 - `type`
 - `requestId`
 - `conversationId`
 - `payload`
 - `timestamp`
 
-目前已实现：
-
+常见消息类型：
 - `client:send_message`
 - `client:update_settings`
-- `server:message`
-- `server:status`
+- `client:start_solo`
+- `client:solo_control`
+- `client:list_solo_displays`
+- `server:message` / `server:message_delta`
+- `server:trace`
+- `server:solo_status` / `server:solo_step` / `server:solo_confirmation_required`
+- `server:solo_displays`
 - `server:error`
 
-## 打包分发
+## 文档
 
-打包思路参考 `docs/架构设计理念.md`。
+- 架构说明：`docs/架构设计理念.md`
+- 开发指南：`docs/开发指南.md`
 
-Python sidecar 预留了构建脚本：
+## 打包
+
+后端 sidecar 打包脚本：
 
 ```powershell
 .\backend\scripts\build-sidecar.ps1
 ```
 
-该脚本会用 `uv` 安装构建依赖，并通过 `PyInstaller` 将后端打包到 `src-tauri/binaries/` 下，供 Tauri 生产构建使用。
-
-## 通信方式
-
-1. 通过主页面对话框输入
-2. 通过接入飞书机器人（当前仅预留设置入口）
+该脚本通过 `PyInstaller` 构建后端可执行文件并输出到 `src-tauri/binaries/`。
