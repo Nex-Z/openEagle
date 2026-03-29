@@ -19,9 +19,16 @@ export const defaultSettings: AppSettings = {
     modelId: "gpt-5-mini",
     apiKey: "",
     baseUrl: "",
+    vlProvider: "openai",
+    vlModelId: "gpt-4.1-mini",
+    vlApiKey: "",
+    vlBaseUrl: "",
   },
   appearance: {
     themeMode: "system",
+  },
+  solo: {
+    preferredDisplayIndex: 1,
   },
   tools: [
     {
@@ -80,6 +87,10 @@ export function loadSettings(): AppSettings {
       appearance: {
         ...defaultSettings.appearance,
         ...parsed.appearance,
+      },
+      solo: {
+        ...defaultSettings.solo,
+        ...parsed.solo,
       },
       tools: Array.isArray(parsed.tools) ? parsed.tools : defaultSettings.tools,
       mcp: Array.isArray(parsed.mcp) ? parsed.mcp : defaultSettings.mcp,

@@ -22,6 +22,9 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system" | "tool";
   content: string;
   createdAt: string;
+  mode?: "chat" | "solo";
+  imagePath?: string;
+  label?: string;
   requestId?: string;
   status?: "pending" | "done" | "error";
   traces?: AgentExecutionTrace[];
@@ -72,10 +75,18 @@ export interface AgentSettings {
   modelId: string;
   apiKey: string;
   baseUrl: string;
+  vlProvider: "openai" | "openai-like";
+  vlModelId: string;
+  vlApiKey: string;
+  vlBaseUrl: string;
 }
 
 export interface AppearanceSettings {
   themeMode: ThemeMode;
+}
+
+export interface SoloSettings {
+  preferredDisplayIndex: number;
 }
 
 export interface ToolConfig {
@@ -107,9 +118,73 @@ export interface AppSettings {
   feishu: FeishuSettings;
   agent: AgentSettings;
   appearance: AppearanceSettings;
+  solo: SoloSettings;
   tools: ToolConfig[];
   mcp: McpServerConfig[];
   skills: SkillConfig[];
+}
+
+export interface SoloDisplayOption {
+  index: number;
+  label: string;
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  isPrimary: boolean;
+  isSelected: boolean;
+  previewPath?: string;
+  capturedAt?: string;
+}
+
+export type SoloRunState =
+  | "idle"
+  | "running"
+  | "paused"
+  | "waiting_user_confirmation"
+  | "completed"
+  | "aborted"
+  | "error";
+
+export interface SoloStatusPayload {
+  state: SoloRunState;
+  detail?: string;
+  stepCount: number;
+  maxSteps: number;
+  lastAction?: string;
+  lastScreenshotAt?: string;
+  startedAt?: string;
+  completedAt?: string;
+}
+
+export interface SoloStepPayload {
+  stepIndex: number;
+  action: string;
+  actionArgs?: Record<string, unknown>;
+  thoughtSummary: string;
+  expectedOutcome?: string;
+  screenshotPath?: string;
+  timestamp: string;
+}
+
+export interface SoloConfirmationPayload {
+  stepIndex: number;
+  reason: string;
+  action: string;
+  actionArgs?: Record<string, unknown>;
+  thoughtSummary: string;
+}
+
+export interface SoloControlPayload {
+  action:
+    | "pause"
+    | "resume"
+    | "stop"
+    | "confirm_allow"
+    | "confirm_reject"
+    | "step_result";
+  soloRequestId?: string;
+  result?: Record<string, unknown>;
 }
 
 export interface ConversationSummary {

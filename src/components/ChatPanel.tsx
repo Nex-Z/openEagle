@@ -1,18 +1,37 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import type {
   AgentExecutionTrace,
   AssistantMessageBlock,
   AppSettings,
   BackendState,
   ChatMessage,
+  SoloConfirmationPayload,
+  SoloStatusPayload,
+  SoloStepPayload,
 } from "../types/protocol";
 
 interface ChatPanelProps {
   backend: BackendState;
   messages: ChatMessage[];
   canSend: boolean;
+  canStartSolo: boolean;
   onSend: (content: string) => void;
+  onSoloStart: (content: string) => Promise<boolean>;
+  onSoloPause: () => boolean;
+  onSoloResume: () => boolean;
+  onSoloStop: () => boolean;
+  onSoloAllowDangerousStep: () => boolean;
+  onSoloRejectDangerousStep: () => boolean;
   settings: AppSettings;
+  soloStatus: SoloStatusPayload;
+  soloStep: SoloStepPayload | null;
+  soloConfirmation: SoloConfirmationPayload | null;
+  soloTimeline: string[];
+  soloLastError: string | null;
 }
 
 type SlashItem = {
@@ -118,6 +137,22 @@ function formatTraceDuration(startedAt: string, completedAt?: string) {
   return `${(duration / 1000).toFixed(duration >= 10_000 ? 0 : 1)}s`;
 }
 
+function renderMessageMarkdown(content: string) {
+  return (
+    <div className="message-markdown">
+      <ReactMarkdown
+        remarkPlugins={[remarkGfm]}
+        components={{
+          a: ({ node: _node, ...props }) => (
+            <a {...props} rel="noopener noreferrer nofollow" target="_blank" />
+          ),
+        }}
+      >
+        {content}
+      </ReactMarkdown>
+    </div>
+  );
+}
 function traceKeyFromMessage(message: ChatMessage, trace: AgentExecutionTrace) {
   return `${message.id}:${trace.id}`;
 }
@@ -182,10 +217,27 @@ function renderTraceItem(
 }
 
 export function ChatPanel(props: ChatPanelProps) {
-  const { backend, messages, canSend, onSend, settings } = props;
+  const {
+    backend,
+    messages,
+    canSend,
+    canStartSolo,
+    onSend,
+    onSoloStart,
+    onSoloPause,
+    onSoloResume,
+    onSoloStop,
+    onSoloAllowDangerousStep,
+    onSoloRejectDangerousStep,
+    settings,
+    soloStatus,
+    soloConfirmation,
+  } = props;
   const [draft, setDraft] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
   const [expandedTraceIds, setExpandedTraceIds] = useState<Set<string>>(new Set());
+  const [composerMode, setComposerMode] = useState<"chat" | "solo">("chat");
+  const [imageDataUrls, setImageDataUrls] = useState<Record<string, string>>({});
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const streamRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -236,6 +288,44 @@ export function ChatPanel(props: ChatPanelProps) {
   };
 
   useEffect(() => {
+    const imagePaths = Array.from(
+      new Set(messages.map((message) => message.imagePath).filter(Boolean) as string[]),
+    );
+    const missing = imagePaths.filter((path) => !imageDataUrls[path]);
+    if (missing.length === 0) {
+      return;
+    }
+    let cancelled = false;
+    void Promise.all(
+      missing.map(async (path) => {
+        try {
+          const dataUrl = await invoke<string>("read_image_data_url", { path });
+          return { path, dataUrl };
+        } catch {
+          return null;
+        }
+      }),
+    ).then((entries) => {
+      if (cancelled) {
+        return;
+      }
+      setImageDataUrls((current) => {
+        const next = { ...current };
+        for (const entry of entries) {
+          if (!entry) {
+            continue;
+          }
+          next[entry.path] = entry.dataUrl;
+        }
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [imageDataUrls, messages]);
+
+  useEffect(() => {
     const stream = streamRef.current;
     if (!stream) {
       return;
@@ -254,8 +344,13 @@ export function ChatPanel(props: ChatPanelProps) {
 
   useEffect(() => {
     const stream = streamRef.current;
-    if (!stream || !shouldStickToBottomRef.current) {
+    const latestMessage = messages[messages.length - 1];
+    const forceScrollForSolo = latestMessage?.mode === "solo";
+    if (!stream || (!shouldStickToBottomRef.current && !forceScrollForSolo)) {
       return;
+    }
+    if (forceScrollForSolo) {
+      shouldStickToBottomRef.current = true;
     }
 
     requestAnimationFrame(() => {
@@ -264,13 +359,23 @@ export function ChatPanel(props: ChatPanelProps) {
         behavior: "auto",
       });
     });
-  }, [messages]);
+  }, [messages, soloStatus.state]);
 
-  const submit = () => {
+  const submit = async () => {
     const normalized = draft.trim();
     if (!normalized) {
       return;
     }
+
+    if (composerMode === "solo") {
+      const ok = await onSoloStart(normalized);
+      if (ok) {
+        setDraft("");
+        setActiveIndex(0);
+      }
+      return;
+    }
+
     onSend(normalized);
     setDraft("");
     setActiveIndex(0);
@@ -345,8 +450,13 @@ export function ChatPanel(props: ChatPanelProps) {
     }
 
     event.preventDefault();
-    submit();
+    void submit();
   };
+
+  const isSoloBusy =
+    soloStatus.state === "running" ||
+    soloStatus.state === "paused" ||
+    soloStatus.state === "waiting_user_confirmation";
 
   return (
     <section className="chat-panel">
@@ -355,6 +465,9 @@ export function ChatPanel(props: ChatPanelProps) {
           <p className="eyebrow">桌面智能体</p>
           <h2>主对话区</h2>
         </div>
+        {backend.phase === "connected" ? (
+          <span className="toggle-chip">SOLO {soloStatus.state}</span>
+        ) : null}
       </header>
 
       <div ref={streamRef} className="message-stream">
@@ -372,17 +485,21 @@ export function ChatPanel(props: ChatPanelProps) {
                     ? "你"
                     : message.role === "assistant"
                       ? "Agent"
+                      : message.role === "tool"
+                        ? "工具"
                       : "系统"}
+                  {message.mode === "solo" ? " · SOLO" : ""}
                 </strong>
                 <span>{new Date(message.createdAt).toLocaleTimeString()}</span>
               </div>
-              {message.role === "assistant" &&
-              message.blocks &&
-              message.blocks.length > 0 ? (
+              {message.label ? <div className="message-label">{message.label}</div> : null}
+              {message.blocks && message.blocks.length > 0 ? (
                 <div className="assistant-blocks">
                   {message.blocks.map((block: AssistantMessageBlock) =>
                     block.kind === "text" ? (
-                      block.content ? <p key={block.id}>{block.content}</p> : null
+                      block.content ? (
+                        <div key={block.id}>{renderMessageMarkdown(block.content)}</div>
+                      ) : null
                     ) : (
                       renderTraceItem(
                         message,
@@ -394,10 +511,19 @@ export function ChatPanel(props: ChatPanelProps) {
                   )}
                 </div>
               ) : message.content ? (
-                <p>{message.content}</p>
+                <div>{renderMessageMarkdown(message.content)}</div>
               ) : null}
-              {message.role === "assistant" &&
-              (!message.blocks || message.blocks.length === 0) &&
+              {message.imagePath ? (
+                <div className="message-image-wrap">
+                  <img
+                    alt={message.label || "SOLO screenshot"}
+                    className="message-image"
+                    src={imageDataUrls[message.imagePath] ?? convertFileSrc(message.imagePath)}
+                  />
+                  <small>{message.imagePath}</small>
+                </div>
+              ) : null}
+              {(!message.blocks || message.blocks.length === 0) &&
               message.traces &&
               message.traces.length > 0 ? (
                 <div className="trace-list-block">
@@ -422,6 +548,51 @@ export function ChatPanel(props: ChatPanelProps) {
       </div>
 
       <div className="composer">
+        {isSoloBusy ? (
+          <div className="solo-status-card solo-status-card-compact">
+            <div className="solo-status-row">
+              <strong>SOLO 模式已启用</strong>
+              <span>
+                {soloStatus.stepCount}/{soloStatus.maxSteps}
+              </span>
+            </div>
+            <small>状态: {soloStatus.state}{soloStatus.detail ? ` · ${soloStatus.detail}` : ""}</small>
+            <div className="solo-controls">
+              {soloStatus.state === "running" ? (
+                <button className="secondary-action" onClick={onSoloPause} type="button">
+                  暂停
+                </button>
+              ) : null}
+              {soloStatus.state === "paused" ? (
+                <button className="secondary-action" onClick={onSoloResume} type="button">
+                  继续
+                </button>
+              ) : null}
+              {soloStatus.state === "waiting_user_confirmation" && soloConfirmation ? (
+                <button
+                  className="secondary-action"
+                  onClick={onSoloAllowDangerousStep}
+                  type="button"
+                >
+                  允许本次
+                </button>
+              ) : null}
+              {soloStatus.state === "waiting_user_confirmation" && soloConfirmation ? (
+                <button
+                  className="secondary-action"
+                  onClick={onSoloRejectDangerousStep}
+                  type="button"
+                >
+                  拒绝本次
+                </button>
+              ) : null}
+              <button className="text-action danger" onClick={onSoloStop} type="button">
+                结束
+              </button>
+            </div>
+          </div>
+        ) : null}
+
         <div className="composer-field">
           <textarea
             ref={textareaRef}
@@ -435,14 +606,16 @@ export function ChatPanel(props: ChatPanelProps) {
             onKeyDown={handleKeyDown}
             placeholder={
               canSend
-                ? "输入任务，或使用 / 调出 Tool / MCP / Skill..."
+                ? composerMode === "solo"
+                  ? "SOLO: 描述你要自动操作电脑完成的任务..."
+                  : "输入任务，或使用 / 调出 Tool / MCP / Skill..."
                 : "等待后端启动完成..."
             }
             rows={3}
             value={draft}
           />
 
-          {slashQuery ? (
+          {slashQuery && composerMode === "chat" ? (
             <div className="slash-panel" role="listbox">
               <div className="slash-panel-header">
                 <strong>命令面板</strong>
@@ -479,17 +652,33 @@ export function ChatPanel(props: ChatPanelProps) {
             </div>
           ) : null}
 
-          <button
-            aria-label="发送消息"
-            className="send-action"
-            disabled={!canSend || !draft.trim()}
-            onClick={submit}
-            type="button"
-          >
-            <svg aria-hidden="true" viewBox="0 0 24 24">
-              <path d="M3.4 20.4 21 12 3.4 3.6l.1 6.1 10.6 2.3-10.6 2.3-.1 6.1Z" />
-            </svg>
-          </button>
+          <div className="composer-bottom">
+            <button
+              className={composerMode === "solo" ? "solo-mode-btn active" : "solo-mode-btn"}
+              disabled={!canStartSolo}
+              onClick={() =>
+                setComposerMode((current) => (current === "solo" ? "chat" : "solo"))
+              }
+              title={!canStartSolo ? "请先在设置中配置 VL 模型 ID 和 API Key" : "切换 SOLO"}
+              type="button"
+            >
+              SOLO
+            </button>
+
+            <button
+              aria-label="发送消息"
+              className="send-action"
+              disabled={!canSend || !draft.trim() || (composerMode === "solo" && !canStartSolo)}
+              onClick={() => {
+                void submit();
+              }}
+              type="button"
+            >
+              <svg aria-hidden="true" viewBox="0 0 24 24">
+                <path d="M3.4 20.4 21 12 3.4 3.6l.1 6.1 10.6 2.3-10.6 2.3-.1 6.1Z" />
+              </svg>
+            </button>
+          </div>
         </div>
       </div>
     </section>

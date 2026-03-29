@@ -48,33 +48,52 @@ export default function App() {
 
   useTheme(settings.appearance.themeMode);
 
-  const { backend, messages, canSend, sendMessage, statusLine, statusDetail } =
-    useBackendConnection(
-      activeConversationId,
-      settings,
-      activeConversation?.messages ?? [],
-      (conversationId, nextMessages) => {
-        setConversationStore((current) =>
-          current.map((item) =>
-            item.summary.id !== conversationId
+  const {
+    backend,
+    messages,
+    canSend,
+    sendMessage,
+    statusLine,
+    statusDetail,
+    soloStatus,
+    soloStep,
+    soloConfirmation,
+    soloDisplays,
+    soloTimeline,
+    soloLastError,
+    canStartSolo,
+    startSolo,
+    requestSoloDisplays,
+    pauseSolo,
+    resumeSolo,
+    stopSolo,
+    allowDangerousStep,
+    rejectDangerousStep,
+  } = useBackendConnection(
+    activeConversationId,
+    settings,
+    activeConversation?.messages ?? [],
+    (conversationId, nextMessages) => {
+      setConversationStore((current) =>
+        current.map((item) =>
+          item.summary.id !== conversationId
+            ? item
+            : item.messages === nextMessages
               ? item
-              : item.messages === nextMessages
-                ? item
-                : {
-                    ...item,
-                    summary: {
-                      ...item.summary,
-                      updatedAt:
-                        nextMessages[nextMessages.length - 1]?.createdAt ??
-                        item.summary.updatedAt,
-                    },
-                    messages: nextMessages,
+              : {
+                  ...item,
+                  summary: {
+                    ...item.summary,
+                    updatedAt:
+                      nextMessages[nextMessages.length - 1]?.createdAt ??
+                      item.summary.updatedAt,
                   },
-          ),
-        );
-      },
-    );
-
+                  messages: nextMessages,
+                },
+        ),
+      );
+    },
+  );
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
@@ -152,13 +171,27 @@ export default function App() {
           <ChatPanel
             backend={backend}
             canSend={canSend}
+            canStartSolo={canStartSolo}
             messages={messages}
             onSend={sendMessage}
+            onSoloStart={startSolo}
+            onSoloPause={pauseSolo}
+            onSoloResume={resumeSolo}
+            onSoloStop={stopSolo}
+            onSoloAllowDangerousStep={allowDangerousStep}
+            onSoloRejectDangerousStep={rejectDangerousStep}
             settings={settings}
+            soloConfirmation={soloConfirmation}
+            soloLastError={soloLastError}
+            soloStatus={soloStatus}
+            soloStep={soloStep}
+            soloTimeline={soloTimeline}
           />
         ) : (
           <SettingsPanel
             activeSection={activeView}
+            soloDisplays={soloDisplays}
+            onRefreshSoloDisplays={requestSoloDisplays}
             onChange={setSettings}
             onClose={() => setActiveView("chat")}
             onSectionChange={setActiveView}

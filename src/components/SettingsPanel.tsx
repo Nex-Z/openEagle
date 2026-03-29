@@ -1,7 +1,10 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
+import { invoke } from "@tauri-apps/api/core";
 import type {
   AppSettings,
   McpServerConfig,
+  SoloDisplayOption,
   SkillConfig,
   ToolConfig,
 } from "../types/protocol";
@@ -12,6 +15,8 @@ type SettingsSection = "general" | "tools" | "mcp" | "skills";
 interface SettingsPanelProps {
   settings: AppSettings;
   activeSection: SettingsSection;
+  soloDisplays: SoloDisplayOption[];
+  onRefreshSoloDisplays: () => boolean;
   onChange: (settings: AppSettings) => void;
   onClose: () => void;
   onSectionChange: (section: SettingsSection) => void;
@@ -92,7 +97,12 @@ function removeListItem<T extends { id: string }>(list: T[], id: string) {
   return list.filter((item) => item.id !== id);
 }
 
-function renderGeneralSection(settings: AppSettings, onChange: (settings: AppSettings) => void) {
+function renderGeneralSection(
+  settings: AppSettings,
+  onChange: (settings: AppSettings) => void,
+  soloDisplays: SoloDisplayOption[],
+  onRefreshSoloDisplays: () => boolean,
+) {
   return (
     <div className="settings-grid">
       <div className="settings-column">
@@ -199,12 +209,13 @@ function renderGeneralSection(settings: AppSettings, onChange: (settings: AppSet
         <div className="settings-card-heading">
           <div>
             <p className="eyebrow">模型</p>
-            <h3>模型配置</h3>
+            <h3>模型配置（文本 + VL）</h3>
           </div>
           <span className="settings-pill">{settings.agent.provider}</span>
         </div>
+        <p className="field-hint">文本模型用于普通对话与工具推理。</p>
         <label className="field">
-          <span>Provider</span>
+          <span>文本 Provider</span>
           <select
             value={settings.agent.provider}
             onChange={(event) =>
@@ -223,7 +234,7 @@ function renderGeneralSection(settings: AppSettings, onChange: (settings: AppSet
           </select>
         </label>
         <label className="field">
-          <span>模型 ID</span>
+          <span>文本模型 ID</span>
           <input
             onChange={(event) =>
               onChange({
@@ -239,7 +250,7 @@ function renderGeneralSection(settings: AppSettings, onChange: (settings: AppSet
           />
         </label>
         <label className="field">
-          <span>API Key</span>
+          <span>文本 API Key</span>
           <input
             onChange={(event) =>
               onChange({
@@ -256,7 +267,7 @@ function renderGeneralSection(settings: AppSettings, onChange: (settings: AppSet
           />
         </label>
         <label className="field">
-          <span>Base URL</span>
+          <span>文本 Base URL</span>
           <input
             onChange={(event) =>
               onChange({
@@ -271,9 +282,145 @@ function renderGeneralSection(settings: AppSettings, onChange: (settings: AppSet
             value={settings.agent.baseUrl}
           />
         </label>
+
+        <hr className="settings-divider" />
+        <p className="field-hint">VL 模型用于 SOLO 视觉操作，未配置时无法启动 SOLO。</p>
+        <label className="field">
+          <span>VL Provider</span>
+          <select
+            value={settings.agent.vlProvider}
+            onChange={(event) =>
+              onChange({
+                ...settings,
+                agent: {
+                  ...settings.agent,
+                  vlProvider: event.target.value as AppSettings["agent"]["vlProvider"],
+                },
+              })
+            }
+          >
+            <option value="openai">openai</option>
+            <option value="openai-like">openai-like</option>
+          </select>
+        </label>
+        <label className="field">
+          <span>VL 模型 ID</span>
+          <input
+            onChange={(event) =>
+              onChange({
+                ...settings,
+                agent: {
+                  ...settings.agent,
+                  vlModelId: event.target.value,
+                },
+              })
+            }
+            placeholder="例如 gpt-4.1-mini"
+            value={settings.agent.vlModelId}
+          />
+        </label>
+        <label className="field">
+          <span>VL API Key</span>
+          <input
+            onChange={(event) =>
+              onChange({
+                ...settings,
+                agent: {
+                  ...settings.agent,
+                  vlApiKey: event.target.value,
+                },
+              })
+            }
+            placeholder="用于视觉理解模型调用"
+            type="password"
+            value={settings.agent.vlApiKey}
+          />
+        </label>
+        <label className="field">
+          <span>VL Base URL</span>
+          <input
+            onChange={(event) =>
+              onChange({
+                ...settings,
+                agent: {
+                  ...settings.agent,
+                  vlBaseUrl: event.target.value,
+                },
+              })
+            }
+            placeholder="VL 为 openai-like 时填写"
+            value={settings.agent.vlBaseUrl}
+          />
+        </label>
         <p className="field-hint">
           后端使用 Agno。`openai` 连接 OpenAI，`openai-like` 用于兼容 OpenAI API 的平台。
         </p>
+
+        <hr className="settings-divider" />
+        <div className="settings-card-heading">
+          <div>
+            <p className="eyebrow">SOLO</p>
+            <h3>截图显示器</h3>
+          </div>
+          <button className="secondary-action" onClick={onRefreshSoloDisplays} type="button">
+            刷新预览
+          </button>
+        </div>
+        <p className="field-hint">
+          选择 SOLO 截图和坐标执行使用的显示器。截图预览来自实时采样。
+        </p>
+        {soloDisplays.length === 0 ? (
+          <div className="solo-display-empty">暂无显示器预览，点击“刷新预览”获取。</div>
+        ) : (
+          <div className="solo-display-grid">
+            {soloDisplays.map((display) => {
+              const isActive = settings.solo.preferredDisplayIndex === display.index;
+              return (
+                <label
+                  key={display.index}
+                  className={isActive ? "solo-display-card active" : "solo-display-card"}
+                >
+                  <input
+                    checked={isActive}
+                    name="solo-display"
+                    onChange={() =>
+                      onChange({
+                        ...settings,
+                        solo: {
+                          ...settings.solo,
+                          preferredDisplayIndex: display.index,
+                        },
+                      })
+                    }
+                    type="radio"
+                  />
+                  <div className="solo-display-head">
+                    <strong>{display.label}</strong>
+                    {display.isPrimary ? <span className="settings-pill">主屏</span> : null}
+                  </div>
+                  <small>
+                    {display.width}×{display.height} · ({display.left}, {display.top})
+                  </small>
+                  {display.previewPath ? (
+                    <img
+                      alt={`${display.label} 预览`}
+                      className="solo-display-preview"
+                      src={
+                        display.previewPath.startsWith("data:")
+                          ? display.previewPath
+                          : convertFileSrc(display.previewPath)
+                      }
+                    />
+                  ) : (
+                    <div className="solo-display-preview solo-display-preview-empty">
+                      无预览图
+                    </div>
+                  )}
+                </label>
+              );
+            })}
+          </div>
+        )}
       </div>
     </div>
   );
@@ -291,6 +438,19 @@ function renderToolsSection(props: ToolListProps) {
 
   return (
     <div className="settings-stack">
+      <div className="settings-card settings-card-tool-builtin">
+        <div className="settings-card-heading">
+          <div>
+            <p className="eyebrow">系统内置</p>
+            <h3>截图工具</h3>
+          </div>
+          <span className="toggle-chip">已启用</span>
+        </div>
+        <p className="field-hint">
+          SOLO 模式会调用系统级截图能力（不经过用户自定义命令）。
+        </p>
+      </div>
+
       <div className="settings-card settings-card-toolbar">
         <div>
           <p className="eyebrow">执行入口</p>
@@ -740,10 +900,63 @@ function renderSkillsSection(props: SkillListProps) {
 }
 
 export function SettingsPanel(props: SettingsPanelProps) {
-  const { settings, activeSection, onChange, onClose, onSectionChange } = props;
+  const {
+    settings,
+    activeSection,
+    soloDisplays,
+    onRefreshSoloDisplays,
+    onChange,
+    onClose,
+    onSectionChange,
+  } = props;
   const [expandedToolId, setExpandedToolId] = useState<string | null>(null);
   const [expandedMcpId, setExpandedMcpId] = useState<string | null>(null);
   const [expandedSkillId, setExpandedSkillId] = useState<string | null>(null);
+  const [previewDataUrls, setPreviewDataUrls] = useState<Record<string, string>>({});
+
+  useEffect(() => {
+    if (activeSection === "general") {
+      onRefreshSoloDisplays();
+    }
+  }, [activeSection, onRefreshSoloDisplays]);
+
+  useEffect(() => {
+    const previewPaths = soloDisplays
+      .map((display) => display.previewPath)
+      .filter(Boolean) as string[];
+    const missing = previewPaths.filter((path) => !previewDataUrls[path]);
+    if (missing.length === 0) {
+      return;
+    }
+    let cancelled = false;
+    void Promise.all(
+      missing.map(async (path) => {
+        try {
+          const dataUrl = await invoke<string>("read_image_data_url", { path });
+          return { path, dataUrl };
+        } catch {
+          return null;
+        }
+      }),
+    ).then((entries) => {
+      if (cancelled) {
+        return;
+      }
+      setPreviewDataUrls((current) => {
+        const next = { ...current };
+        for (const entry of entries) {
+          if (!entry) {
+            continue;
+          }
+          next[entry.path] = entry.dataUrl;
+        }
+        return next;
+      });
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, [previewDataUrls, soloDisplays]);
 
   const activeMeta =
     sectionMeta.find((section) => section.id === activeSection) ?? sectionMeta[0];
@@ -778,7 +991,19 @@ export function SettingsPanel(props: SettingsPanelProps) {
         ))}
       </div>
 
-      {activeSection === "general" ? renderGeneralSection(settings, onChange) : null}
+      {activeSection === "general"
+        ? renderGeneralSection(
+            settings,
+            onChange,
+            soloDisplays.map((display) => ({
+              ...display,
+              previewPath:
+                (display.previewPath && previewDataUrls[display.previewPath]) ||
+                display.previewPath,
+            })),
+            onRefreshSoloDisplays,
+          )
+        : null}
       {activeSection === "tools"
         ? renderToolsSection({
             settings,

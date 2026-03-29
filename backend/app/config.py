@@ -28,11 +28,23 @@ class SkillConfig(BaseModel):
     enabled: bool = True
 
 
+class SoloConfig(BaseModel):
+    preferred_display_index: int = Field(default=1, alias="preferredDisplayIndex")
+
+    model_config = {
+        "populate_by_name": True,
+    }
+
+
 class AgentConfig(BaseModel):
     provider: str = "mock"
     model_id: str = Field(default="gpt-5-mini", alias="modelId")
     api_key: str | None = Field(default=None, alias="apiKey")
     base_url: str | None = Field(default=None, alias="baseUrl")
+    vl_provider: str = Field(default="openai", alias="vlProvider")
+    vl_model_id: str = Field(default="gpt-4.1-mini", alias="vlModelId")
+    vl_api_key: str | None = Field(default=None, alias="vlApiKey")
+    vl_base_url: str | None = Field(default=None, alias="vlBaseUrl")
 
     model_config = {
         "populate_by_name": True,
@@ -53,6 +65,7 @@ class FeishuConfig(BaseModel):
 class AppConfig(BaseModel):
     agent: AgentConfig = AgentConfig()
     feishu: FeishuConfig = FeishuConfig()
+    solo: SoloConfig = SoloConfig()
     tools: list[ToolConfig] = Field(default_factory=list)
     mcp: list[McpConfig] = Field(default_factory=list)
     skills: list[SkillConfig] = Field(default_factory=list)
