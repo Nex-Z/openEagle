@@ -1,7 +1,10 @@
 from __future__ import annotations
 
+import json
 import re
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 from typing import AsyncIterator
 
 from agno.agent import Agent
@@ -22,6 +25,32 @@ from .base import ProviderStreamEvent, ReplyChunk, ReplyTrace
 
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def workspace_root() -> Path:
+    return Path(__file__).resolve().parents[3]
+
+
+def to_jsonable(value: Any) -> Any:
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): to_jsonable(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple, set)):
+        return [to_jsonable(item) for item in value]
+    return str(value)
+
+
+def stringify_trace_result(value: Any) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+
+    try:
+        return json.dumps(to_jsonable(value), ensure_ascii=False, indent=2)
+    except TypeError:
+        return str(value)
 
 
 class AgnoAgentProvider:
@@ -87,7 +116,7 @@ class AgnoAgentProvider:
             model=model,
             markdown=True,
             instructions=instructions,
-            tools= [default_tools.build_default_tools]
+            tools=[default_tools.build_default_tools(workspace_root=workspace_root())],
         )
 
     @staticmethod
@@ -224,7 +253,11 @@ class AgnoAgentProvider:
             selected_mcp=selected_mcp,
             selected_skills=selected_skills,
         )
-        stream = agent.arun(cleaned_prompt or "请结合已选能力处理当前请求。", stream=True)
+        stream = agent.arun(
+            cleaned_prompt or "请结合已选能力处理当前请求。",
+            stream=True,
+            stream_events=True,
+        )
 
         async for event in stream:
             if isinstance(event, (RunContentEvent, IntermediateRunContentEvent)):
@@ -243,7 +276,7 @@ class AgnoAgentProvider:
                     name=tool.tool_name or "未命名工具",
                     status="started",
                     summary="Agent 正在调用工具。",
-                    params=tool.tool_args or {},
+                    params=to_jsonable(tool.tool_args or {}),
                     started_at=utc_now(),
                 )
                 continue
@@ -259,8 +292,8 @@ class AgnoAgentProvider:
                     name=tool.tool_name or "未命名工具",
                     status="completed",
                     summary="Agent 已完成工具调用。",
-                    params=tool.tool_args or {},
-                    result=tool.result,
+                    params=to_jsonable(tool.tool_args or {}),
+                    result=stringify_trace_result(tool.result),
                     started_at=now,
                     completed_at=now,
                 )
@@ -276,8 +309,8 @@ class AgnoAgentProvider:
                     name=tool.tool_name if tool else "未命名工具",
                     status="error",
                     summary="Agent 工具调用失败。",
-                    params=(tool.tool_args if tool else {}) or {},
-                    result=getattr(event, "error", None),
+                    params=to_jsonable((tool.tool_args if tool else {}) or {}),
+                    result=stringify_trace_result(getattr(event, "error", None)),
                     started_at=now,
                     completed_at=now,
                 )

@@ -53,6 +53,7 @@ button {
   display: grid;
   grid-template-columns: 216px minmax(0, 1fr);
   width: 100vw;
+  height: 100vh;
   min-height: 100vh;
   padding: 8px;
   gap: 8px;
@@ -82,9 +83,12 @@ button {
 
 .content-panel {
   border-radius: 22px;
+  display: flex;
+  flex-direction: column;
   padding: 14px;
   min-width: 0;
   min-height: 0;
+  height: 100%;
   overflow: hidden;
   background: #212121;
 }
@@ -576,6 +580,7 @@ button {
 .message-stream {
   flex: 1;
   min-height: 0;
+  min-width: 0;
   overflow: auto;
   display: flex;
   flex-direction: column;
@@ -621,6 +626,12 @@ button {
 .message-card p {
   margin: 0;
   white-space: pre-wrap;
+}
+
+.assistant-blocks {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
 
 .trace-list-block {
@@ -704,6 +715,16 @@ button {
   font-weight: 600;
 }
 
+.trace-duration {
+  color: #8e8ea0;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+:root[data-theme="light"] .trace-duration {
+  color: #6e6e80;
+}
+
 .trace-status-started {
   background: rgba(245, 158, 11, 0.14);
   color: #fcd34d;
@@ -728,6 +749,37 @@ button {
 
 .trace-item-body p {
   font-size: 13px;
+}
+
+.trace-item-compact {
+  padding: 10px 12px;
+  cursor: pointer;
+}
+
+.trace-item-compact .trace-item-summary {
+  padding: 0;
+}
+
+.trace-item-compact:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+
+:root[data-theme="light"] .trace-item-compact:hover {
+  background: rgba(32, 33, 35, 0.04);
+}
+
+.trace-item-compact.is-expanded {
+  border-color: rgba(16, 163, 127, 0.4);
+}
+
+.trace-item-compact:focus-visible {
+  outline: 2px solid rgba(16, 163, 127, 0.7);
+  outline-offset: 1px;
+}
+
+.trace-item-body-compact {
+  padding: 8px 0 0;
+  gap: 8px;
 }
 
 .trace-meta-grid {
@@ -822,6 +874,8 @@ button {
 
 .composer-field {
   position: relative;
+  display: flex;
+  flex-direction: column;
 }
 
 .slash-panel {
@@ -944,6 +998,13 @@ button {
   background: #212121;
   color: #ececf1;
   padding: 11px 56px 11px 12px;
+}
+
+.composer-input {
+  min-height: 88px;
+  max-height: 200px;
+  overflow: auto;
+  resize: none;
 }
 
 :root[data-theme="light"] .composer-input,

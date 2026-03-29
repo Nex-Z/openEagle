@@ -19,12 +19,14 @@ export interface Envelope<TPayload = Record<string, unknown>> {
 
 export interface ChatMessage {
   id: string;
-  role: "user" | "assistant" | "system";
+  role: "user" | "assistant" | "system" | "tool";
   content: string;
   createdAt: string;
   requestId?: string;
   status?: "pending" | "done" | "error";
   traces?: AgentExecutionTrace[];
+  trace?: AgentExecutionTrace;
+  blocks?: AssistantMessageBlock[];
 }
 
 export type AgentExecutionKind = "tool" | "mcp" | "skill";
@@ -42,6 +44,21 @@ export interface AgentExecutionTrace {
   startedAt: string;
   completedAt?: string;
 }
+
+export interface AssistantTextBlock {
+  id: string;
+  kind: "text";
+  content: string;
+  status?: "pending" | "done";
+}
+
+export interface AssistantTraceBlock {
+  id: string;
+  kind: "trace";
+  trace: AgentExecutionTrace;
+}
+
+export type AssistantMessageBlock = AssistantTextBlock | AssistantTraceBlock;
 
 export interface FeishuSettings {
   enabled: boolean;

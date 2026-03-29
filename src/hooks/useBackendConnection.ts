@@ -3,6 +3,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AgentExecutionTrace,
+  AssistantMessageBlock,
   AppSettings,
   BackendState,
   ChatMessage,
@@ -20,6 +21,39 @@ function isTauriRuntime() {
 
 function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
+}
+
+function collectAssistantContent(blocks?: AssistantMessageBlock[]) {
+  if (!blocks || blocks.length === 0) {
+    return "";
+  }
+  return blocks
+    .filter((block) => block.kind === "text")
+    .map((block) => block.content)
+    .join("");
+}
+
+function cloneAssistantBlocks(message?: ChatMessage): AssistantMessageBlock[] {
+  if (message?.blocks && message.blocks.length > 0) {
+    return message.blocks.map((block) =>
+      block.kind === "text"
+        ? { ...block }
+        : { ...block, trace: { ...block.trace } },
+    );
+  }
+
+  if (message?.content) {
+    return [
+      {
+        id: createId("blk"),
+        kind: "text",
+        content: message.content,
+        status: message.status === "pending" ? "pending" : "done",
+      },
+    ];
+  }
+
+  return [];
 }
 
 function upsertAssistantMessage(
@@ -63,14 +97,41 @@ function upsertAssistantTrace(
         )
       : [...existingTraces, trace];
 
+    const blocks = cloneAssistantBlocks(message);
+    const traceBlockIndex = blocks.findIndex(
+      (block) => block.kind === "trace" && block.trace.id === trace.id,
+    );
+
+    if (traceBlockIndex >= 0) {
+      const block = blocks[traceBlockIndex];
+      if (block.kind === "trace") {
+        block.trace = {
+          ...block.trace,
+          ...trace,
+          startedAt: block.trace.startedAt ?? trace.startedAt,
+          completedAt: trace.completedAt ?? block.trace.completedAt,
+          params: trace.params ?? block.trace.params,
+          result: trace.result ?? block.trace.result,
+          summary: trace.summary ?? block.trace.summary,
+        };
+      }
+    } else {
+      blocks.push({
+        id: `trace-${trace.id}`,
+        kind: "trace",
+        trace,
+      });
+    }
+
     return {
       id: message?.id ?? createId("assistant"),
       requestId,
       role: "assistant",
-      content: message?.content ?? "",
+      content: collectAssistantContent(blocks),
       createdAt: message?.createdAt ?? trace.startedAt,
       status: message?.status ?? "pending",
       traces: nextTraces,
+      blocks,
     };
   });
 }
@@ -268,15 +329,35 @@ export function useBackendConnection(
 
       if (envelope.type === "server:message") {
         setMessages((current) =>
-          upsertAssistantMessage(current, envelope.requestId, (message) => ({
-            id: message?.id ?? createId("assistant"),
-            requestId: envelope.requestId,
-            role: "assistant",
-            content: envelope.payload.content ?? message?.content ?? "",
-            createdAt: message?.createdAt ?? envelope.timestamp,
-            status: "done",
-            traces: message?.traces ?? [],
-          })),
+          upsertAssistantMessage(current, envelope.requestId, (message) => {
+            const blocks = cloneAssistantBlocks(message);
+            if (blocks.length === 0 && envelope.payload.content) {
+              blocks.push({
+                id: createId("blk"),
+                kind: "text",
+                content: envelope.payload.content,
+                status: "done",
+              });
+            }
+
+            for (const block of blocks) {
+              if (block.kind === "text") {
+                block.status = "done";
+              }
+            }
+
+            const content = collectAssistantContent(blocks) || envelope.payload.content || "";
+            return {
+              id: message?.id ?? createId("assistant"),
+              requestId: envelope.requestId,
+              role: "assistant",
+              content,
+              createdAt: message?.createdAt ?? envelope.timestamp,
+              status: "done",
+              traces: message?.traces ?? [],
+              blocks,
+            };
+          }),
         );
         setStatusLine("已连接后端服务");
         setStatusDetail(null);
@@ -285,15 +366,33 @@ export function useBackendConnection(
 
       if (envelope.type === "server:message_delta") {
         setMessages((current) =>
-          upsertAssistantMessage(current, envelope.requestId, (message) => ({
-            id: message?.id ?? createId("assistant"),
-            requestId: envelope.requestId,
-            role: "assistant",
-            content: `${message?.content ?? ""}${envelope.payload.content ?? ""}`,
-            createdAt: message?.createdAt ?? envelope.timestamp,
-            status: "pending",
-            traces: message?.traces ?? [],
-          })),
+          upsertAssistantMessage(current, envelope.requestId, (message) => {
+            const delta = envelope.payload.content ?? "";
+            const blocks = cloneAssistantBlocks(message);
+            const last = blocks[blocks.length - 1];
+            if (last && last.kind === "text" && last.status !== "done") {
+              last.content += delta;
+              last.status = "pending";
+            } else {
+              blocks.push({
+                id: createId("blk"),
+                kind: "text",
+                content: delta,
+                status: "pending",
+              });
+            }
+
+            return {
+              id: message?.id ?? createId("assistant"),
+              requestId: envelope.requestId,
+              role: "assistant",
+              content: collectAssistantContent(blocks),
+              createdAt: message?.createdAt ?? envelope.timestamp,
+              status: "pending",
+              traces: message?.traces ?? [],
+              blocks,
+            };
+          }),
         );
         setStatusLine("AI 正在输出");
         setStatusDetail(null);
@@ -303,15 +402,19 @@ export function useBackendConnection(
       if (envelope.type === "server:status") {
         if (envelope.payload.stage === "thinking") {
           setMessages((current) =>
-            upsertAssistantMessage(current, envelope.requestId, (message) => ({
-              id: message?.id ?? createId("assistant"),
-              requestId: envelope.requestId,
-              role: "assistant",
-              content: message?.content ?? "",
-              createdAt: message?.createdAt ?? envelope.timestamp,
-              status: "pending",
-              traces: message?.traces ?? [],
-            })),
+            upsertAssistantMessage(current, envelope.requestId, (message) => {
+              const blocks = cloneAssistantBlocks(message);
+              return {
+                id: message?.id ?? createId("assistant"),
+                requestId: envelope.requestId,
+                role: "assistant",
+                content: collectAssistantContent(blocks),
+                createdAt: message?.createdAt ?? envelope.timestamp,
+                status: "pending",
+                traces: message?.traces ?? [],
+                blocks,
+              };
+            }),
           );
           setStatusLine("AI 正在思考");
           setStatusDetail(envelope.payload.detail ?? null);
@@ -382,7 +485,11 @@ export function useBackendConnection(
       const socket = socketRef.current;
       socketRef.current = null;
       activePortRef.current = null;
-      if (socket && (socket.readyState === WebSocket.OPEN || socket.readyState === WebSocket.CONNECTING)) {
+      if (
+        socket &&
+        (socket.readyState === WebSocket.OPEN ||
+          socket.readyState === WebSocket.CONNECTING)
+      ) {
         socket.close();
       }
     };

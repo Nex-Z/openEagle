@@ -1,5 +1,7 @@
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type {
+  AgentExecutionTrace,
+  AssistantMessageBlock,
   AppSettings,
   BackendState,
   ChatMessage,
@@ -83,11 +85,110 @@ function findSlashQuery(draft: string, caretIndex: number) {
   };
 }
 
+function isNearBottom(element: HTMLDivElement, threshold = 48) {
+  const remaining = element.scrollHeight - element.scrollTop - element.clientHeight;
+  return remaining <= threshold;
+}
+
+function formatTraceValue(value: unknown) {
+  if (typeof value === "string") {
+    return value;
+  }
+
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
+}
+
+function formatTraceDuration(startedAt: string, completedAt?: string) {
+  if (!completedAt) {
+    return "进行中";
+  }
+
+  const duration = new Date(completedAt).getTime() - new Date(startedAt).getTime();
+  if (Number.isNaN(duration) || duration < 0) {
+    return "刚刚";
+  }
+  if (duration < 1000) {
+    return `${duration}ms`;
+  }
+
+  return `${(duration / 1000).toFixed(duration >= 10_000 ? 0 : 1)}s`;
+}
+
+function traceKeyFromMessage(message: ChatMessage, trace: AgentExecutionTrace) {
+  return `${message.id}:${trace.id}`;
+}
+
+function renderTraceItem(
+  message: ChatMessage,
+  trace: AgentExecutionTrace,
+  expandedTraceIds: Set<string>,
+  toggleTrace: (traceKey: string) => void,
+) {
+  const traceKey = traceKeyFromMessage(message, trace);
+  const isExpanded = expandedTraceIds.has(traceKey);
+
+  return (
+    <div
+      key={trace.id}
+      className={`trace-item trace-item-compact ${isExpanded ? "is-expanded" : ""}`}
+      onClick={() => toggleTrace(traceKey)}
+      onKeyDown={(event) => {
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          toggleTrace(traceKey);
+        }
+      }}
+      role="button"
+      tabIndex={0}
+    >
+      <div className="trace-item-summary">
+        <span className={`trace-kind trace-kind-${trace.kind}`}>
+          {trace.kind.toUpperCase()}
+        </span>
+        <span className="trace-name">{trace.name}</span>
+        <span className="trace-duration">
+          {formatTraceDuration(trace.startedAt, trace.completedAt)}
+        </span>
+        <span className={`trace-status trace-status-${trace.status}`}>
+          {trace.status === "started"
+            ? "执行中"
+            : trace.status === "completed"
+              ? "已完成"
+              : "失败"}
+        </span>
+      </div>
+      {isExpanded && (trace.params || trace.result) ? (
+        <div className="trace-item-body trace-item-body-compact">
+          {trace.params ? (
+            <div className="trace-section">
+              <strong>入参</strong>
+              <pre>{formatTraceValue(trace.params)}</pre>
+            </div>
+          ) : null}
+          {trace.result ? (
+            <div className="trace-section">
+              <strong>执行结果</strong>
+              <pre>{formatTraceValue(trace.result)}</pre>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 export function ChatPanel(props: ChatPanelProps) {
   const { backend, messages, canSend, onSend, settings } = props;
   const [draft, setDraft] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
+  const [expandedTraceIds, setExpandedTraceIds] = useState<Set<string>>(new Set());
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const streamRef = useRef<HTMLDivElement | null>(null);
+  const shouldStickToBottomRef = useRef(true);
 
   const slashItems = useMemo(() => buildSlashItems(settings), [settings]);
   const caretIndex = textareaRef.current?.selectionStart ?? draft.length;
@@ -121,6 +222,49 @@ export function ChatPanel(props: ChatPanelProps) {
   }, [filteredSlashItems]);
 
   const flatItems = groupedItems.flatMap((group) => group.items);
+
+  const toggleTrace = (traceKey: string) => {
+    setExpandedTraceIds((current) => {
+      const next = new Set(current);
+      if (next.has(traceKey)) {
+        next.delete(traceKey);
+      } else {
+        next.add(traceKey);
+      }
+      return next;
+    });
+  };
+
+  useEffect(() => {
+    const stream = streamRef.current;
+    if (!stream) {
+      return;
+    }
+
+    const handleScroll = () => {
+      shouldStickToBottomRef.current = isNearBottom(stream);
+    };
+
+    handleScroll();
+    stream.addEventListener("scroll", handleScroll);
+    return () => {
+      stream.removeEventListener("scroll", handleScroll);
+    };
+  }, []);
+
+  useEffect(() => {
+    const stream = streamRef.current;
+    if (!stream || !shouldStickToBottomRef.current) {
+      return;
+    }
+
+    requestAnimationFrame(() => {
+      stream.scrollTo({
+        top: stream.scrollHeight,
+        behavior: "auto",
+      });
+    });
+  }, [messages]);
 
   const submit = () => {
     const normalized = draft.trim();
@@ -213,7 +357,7 @@ export function ChatPanel(props: ChatPanelProps) {
         </div>
       </header>
 
-      <div className="message-stream">
+      <div ref={streamRef} className="message-stream">
         {messages.length === 0 ? (
           <div className="empty-state">
             <p>已连接后即可在这里发起任务、查看回复和追踪状态。</p>
@@ -232,55 +376,36 @@ export function ChatPanel(props: ChatPanelProps) {
                 </strong>
                 <span>{new Date(message.createdAt).toLocaleTimeString()}</span>
               </div>
-              <p>{message.content}</p>
-              {message.role === "assistant" && message.traces && message.traces.length > 0 ? (
+              {message.role === "assistant" &&
+              message.blocks &&
+              message.blocks.length > 0 ? (
+                <div className="assistant-blocks">
+                  {message.blocks.map((block: AssistantMessageBlock) =>
+                    block.kind === "text" ? (
+                      block.content ? <p key={block.id}>{block.content}</p> : null
+                    ) : (
+                      renderTraceItem(
+                        message,
+                        block.trace,
+                        expandedTraceIds,
+                        toggleTrace,
+                      )
+                    ),
+                  )}
+                </div>
+              ) : message.content ? (
+                <p>{message.content}</p>
+              ) : null}
+              {message.role === "assistant" &&
+              (!message.blocks || message.blocks.length === 0) &&
+              message.traces &&
+              message.traces.length > 0 ? (
                 <div className="trace-list-block">
                   <div className="trace-list-title">本轮调用</div>
                   <div className="trace-list">
-                    {message.traces.map((trace) => (
-                      <details key={trace.id} className="trace-item">
-                        <summary className="trace-item-summary">
-                          <span className={`trace-kind trace-kind-${trace.kind}`}>
-                            {trace.kind.toUpperCase()}
-                          </span>
-                          <span className="trace-name">{trace.name}</span>
-                          <span className={`trace-status trace-status-${trace.status}`}>
-                            {trace.status === "started"
-                              ? "执行中"
-                              : trace.status === "completed"
-                                ? "已完成"
-                                : "失败"}
-                          </span>
-                        </summary>
-                        <div className="trace-item-body">
-                          {trace.summary ? <p>{trace.summary}</p> : null}
-                          <div className="trace-meta-grid">
-                            <div>
-                              <strong>开始时间</strong>
-                              <span>{new Date(trace.startedAt).toLocaleString()}</span>
-                            </div>
-                            {trace.completedAt ? (
-                              <div>
-                                <strong>结束时间</strong>
-                                <span>{new Date(trace.completedAt).toLocaleString()}</span>
-                              </div>
-                            ) : null}
-                          </div>
-                          {trace.params ? (
-                            <div className="trace-section">
-                              <strong>参数</strong>
-                              <pre>{JSON.stringify(trace.params, null, 2)}</pre>
-                            </div>
-                          ) : null}
-                          {trace.result ? (
-                            <div className="trace-section">
-                              <strong>执行结果</strong>
-                              <pre>{trace.result}</pre>
-                            </div>
-                          ) : null}
-                        </div>
-                      </details>
-                    ))}
+                    {message.traces.map((trace) =>
+                      renderTraceItem(message, trace, expandedTraceIds, toggleTrace),
+                    )}
                   </div>
                 </div>
               ) : null}
