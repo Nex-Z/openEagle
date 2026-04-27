@@ -22,7 +22,12 @@ class ReplyTrace:
     completed_at: str | None = None
 
 
-ProviderStreamEvent = ReplyChunk | ReplyTrace
+@dataclass
+class ReplyToolConfirmation:
+    confirmation_id: str
+
+
+ProviderStreamEvent = ReplyChunk | ReplyTrace | ReplyToolConfirmation
 
 
 class AgentProvider(Protocol):

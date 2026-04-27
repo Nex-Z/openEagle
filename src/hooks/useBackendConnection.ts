@@ -15,6 +15,7 @@ import type {
   SoloStatusPayload,
   SoloStepPayload,
   StatusPayload,
+  ToolConfirmationPayload,
 } from "../types/protocol";
 
 const BACKEND_EVENT = "backend://status";
@@ -197,6 +198,8 @@ export function useBackendConnection(
   const [soloStep, setSoloStep] = useState<SoloStepPayload | null>(null);
   const [soloConfirmation, setSoloConfirmation] =
     useState<SoloConfirmationPayload | null>(null);
+  const [toolConfirmation, setToolConfirmation] =
+    useState<ToolConfirmationPayload | null>(null);
   const [soloDisplays, setSoloDisplays] = useState<SoloDisplayOption[]>([]);
   const [soloTimeline, setSoloTimeline] = useState<string[]>([]);
   const [soloLastError, setSoloLastError] = useState<string | null>(null);
@@ -427,7 +430,7 @@ export function useBackendConnection(
           trace?: AgentExecutionTrace;
           status?: SoloStatusPayload;
           step?: SoloStepPayload;
-          confirmation?: SoloConfirmationPayload;
+          confirmation?: SoloConfirmationPayload | ToolConfirmationPayload;
           displays?: SoloDisplayOption[];
           preferredDisplayIndex?: number;
         } & ErrorPayload &
@@ -576,6 +579,29 @@ export function useBackendConnection(
         return;
       }
 
+      if (
+        envelope.type === "server:tool_confirmation_required" &&
+        envelope.payload.confirmation
+      ) {
+        const confirmation = envelope.payload.confirmation as ToolConfirmationPayload;
+        setToolConfirmation(confirmation);
+        setStatusLine("等待工具确认");
+        setStatusDetail(`${confirmation.name}: ${confirmation.reason}`);
+        setMessages((current) => [
+          ...current,
+          {
+            id: createId("system"),
+            requestId: envelope.requestId,
+            role: "system",
+            label: "工具确认",
+            content: `工具 \`${confirmation.name}\` 需要确认。\n\n原因: ${confirmation.reason}`,
+            createdAt: envelope.timestamp,
+            status: "error" as const,
+          },
+        ]);
+        return;
+      }
+
       if (envelope.type === "server:solo_displays") {
         setSoloDisplays(
           Array.isArray(envelope.payload.displays) ? envelope.payload.displays : [],
@@ -701,20 +727,21 @@ export function useBackendConnection(
         envelope.type === "server:solo_confirmation_required" &&
         envelope.payload.confirmation
       ) {
+        const confirmation = envelope.payload.confirmation as SoloConfirmationPayload;
         activeSoloRequestIdRef.current = envelope.requestId;
-        setSoloConfirmation(envelope.payload.confirmation);
+        setSoloConfirmation(confirmation);
         setSoloStatus((current) => ({
           ...current,
           state: "waiting_user_confirmation",
         }));
         appendSoloTimeline(
-          `等待确认: ${envelope.payload.confirmation.action} · ${envelope.payload.confirmation.reason}`,
+          `等待确认: ${confirmation.action} · ${confirmation.reason}`,
         );
         appendSoloMessage(
           createChatMessage({
             role: "system",
             label: "危险动作确认",
-            content: `${envelope.payload.confirmation.thoughtSummary}\n\n动作: \`${envelope.payload.confirmation.action}\`\n\n原因: ${envelope.payload.confirmation.reason}`,
+            content: `${confirmation.thoughtSummary}\n\n动作: \`${confirmation.action}\`\n\n原因: ${confirmation.reason}`,
             createdAt: new Date().toISOString(),
             requestId: envelope.requestId,
             mode: "solo",
@@ -907,6 +934,32 @@ export function useBackendConnection(
     return sendSoloControl({ action: "confirm_reject" });
   };
 
+  const sendToolConfirmation = (decision: "allow" | "reject") => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN || !toolConfirmation) {
+      return false;
+    }
+    const now = new Date().toISOString();
+    const envelope: Envelope<{
+      confirmationId: string;
+      decision: "allow" | "reject";
+    }> = {
+      type: "client:tool_confirmation",
+      requestId: createId("tool-confirm"),
+      conversationId,
+      payload: {
+        confirmationId: toolConfirmation.confirmationId,
+        decision,
+      },
+      timestamp: now,
+    };
+    socket.send(JSON.stringify(envelope));
+    setToolConfirmation(null);
+    setStatusLine(decision === "allow" ? "工具确认已发送" : "工具动作已拒绝");
+    setStatusDetail(null);
+    return true;
+  };
+
   return {
     backend,
     messages,
@@ -917,6 +970,7 @@ export function useBackendConnection(
     soloStatus,
     soloStep,
     soloConfirmation,
+    toolConfirmation,
     soloDisplays,
     soloTimeline,
     soloLastError,
@@ -928,5 +982,7 @@ export function useBackendConnection(
     stopSolo,
     allowDangerousStep,
     rejectDangerousStep,
+    allowToolConfirmation: () => sendToolConfirmation("allow"),
+    rejectToolConfirmation: () => sendToolConfirmation("reject"),
   };
 }

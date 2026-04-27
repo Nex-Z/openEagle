@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 import subprocess
+import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import gettempdir
@@ -19,6 +20,10 @@ class SoloExecutor:
     @staticmethod
     def _now_iso() -> str:
         return datetime.now(UTC).isoformat()
+
+    @staticmethod
+    def content_hash(path: Path) -> str:
+        return hashlib.sha256(path.read_bytes()).hexdigest()
 
     @staticmethod
     def _normalize_point(value: float, bound: int, offset: int = 0) -> int:
@@ -82,6 +87,7 @@ class SoloExecutor:
         frame = sct.grab(monitor)
         target = Path(gettempdir()) / f"{filename_prefix}_{uuid4().hex}.png"
         mss_tools.to_png(frame.rgb, frame.size, output=str(target))
+        content_hash = self.content_hash(target)
         normalized_path = target.resolve().as_posix()
         return {
             "path": normalized_path,
@@ -89,6 +95,7 @@ class SoloExecutor:
             "height": int(frame.height),
             "left": int(monitor.get("left", 0)),
             "top": int(monitor.get("top", 0)),
+            "contentHash": content_hash,
             "capturedAt": self._now_iso(),
         }
 

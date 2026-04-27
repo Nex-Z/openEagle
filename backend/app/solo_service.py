@@ -14,6 +14,7 @@ from agno.models.openai.like import OpenAILike
 from pydantic import BaseModel, Field, ValidationError
 
 from .config import AgentConfig
+from .safety import assess_solo_action
 
 ALLOWED_ACTIONS = {
     "finish",
@@ -53,6 +54,7 @@ class SoloSessionState:
     same_screenshot_count: int = 0
     last_action: str | None = None
     last_screenshot_path: str | None = None
+    last_screenshot_hash: str | None = None
     last_screenshot_at: str | None = None
     started_at: str | None = None
     completed_at: str | None = None
@@ -60,6 +62,7 @@ class SoloSessionState:
     detail: str | None = None
     history: list[dict[str, Any]] = field(default_factory=list)
     pending_confirmation: dict[str, Any] | None = None
+    log_path: str | None = None
 
 
 class SoloService:
@@ -159,22 +162,9 @@ class SoloService:
 
     @staticmethod
     def is_dangerous_action(action: str, action_args: dict[str, Any]) -> tuple[bool, str]:
-        if action == "execute_command":
-            command = str(action_args.get("command", "")).strip()
-            if not command:
-                return True, "命令为空或未提供"
-            return True, "将执行系统命令"
-        if action != "press_keys":
-            return False, ""
-        keys = action_args.get("keys")
-        if not isinstance(keys, list):
-            return False, ""
-        lowered = [str(item).lower() for item in keys]
-        if any(item in lowered for item in ("ctrl", "alt", "meta", "win")):
-            return True, "包含系统级组合键"
-        if any(item in lowered for item in ("f4", "delete", "backspace", "enter")):
-            return True, "可能触发不可逆提交或关闭/删除"
-        return False, ""
+        workspace_root = Path(__file__).resolve().parents[2]
+        assessment = assess_solo_action(action, action_args, workspace_root)
+        return assessment.level == "confirm", assessment.reason
 
     @staticmethod
     def to_error_decision(error: Exception) -> SoloDecision:

@@ -12,6 +12,7 @@ import type {
   SoloConfirmationPayload,
   SoloStatusPayload,
   SoloStepPayload,
+  ToolConfirmationPayload,
 } from "../types/protocol";
 
 interface ChatPanelProps {
@@ -26,10 +27,13 @@ interface ChatPanelProps {
   onSoloStop: () => boolean;
   onSoloAllowDangerousStep: () => boolean;
   onSoloRejectDangerousStep: () => boolean;
+  onToolConfirmationAllow: () => boolean;
+  onToolConfirmationReject: () => boolean;
   settings: AppSettings;
   soloStatus: SoloStatusPayload;
   soloStep: SoloStepPayload | null;
   soloConfirmation: SoloConfirmationPayload | null;
+  toolConfirmation: ToolConfirmationPayload | null;
   soloTimeline: string[];
   soloLastError: string | null;
 }
@@ -61,7 +65,7 @@ function buildSlashItems(settings: AppSettings): SlashItem[] {
         id: `mcp-${item.id}`,
         category: "MCP" as const,
         label: item.name,
-        sublabel: item.endpoint || item.description || "未配置端点",
+        sublabel: `描述模式 · ${item.endpoint || item.description || "未配置端点"}`,
         value: `/mcp ${item.name} `,
         keywords: [item.name, item.endpoint, item.description, item.transport].filter(
           Boolean,
@@ -229,9 +233,12 @@ export function ChatPanel(props: ChatPanelProps) {
     onSoloStop,
     onSoloAllowDangerousStep,
     onSoloRejectDangerousStep,
+    onToolConfirmationAllow,
+    onToolConfirmationReject,
     settings,
     soloStatus,
     soloConfirmation,
+    toolConfirmation,
   } = props;
   const [draft, setDraft] = useState("");
   const [activeIndex, setActiveIndex] = useState(0);
@@ -588,6 +595,39 @@ export function ChatPanel(props: ChatPanelProps) {
               ) : null}
               <button className="text-action danger" onClick={onSoloStop} type="button">
                 结束
+              </button>
+            </div>
+            {soloConfirmation ? (
+              <div className="confirmation-detail">
+                <strong>风险等级: {soloConfirmation.riskLevel ?? "confirm"}</strong>
+                <span>动作: {soloConfirmation.action}</span>
+                <span>原因: {soloConfirmation.reason}</span>
+                {soloConfirmation.actionArgs ? (
+                  <pre>{formatTraceValue(soloConfirmation.actionArgs)}</pre>
+                ) : null}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        {toolConfirmation ? (
+          <div className="solo-status-card solo-status-card-compact confirmation-card">
+            <div className="solo-status-row">
+              <strong>工具动作需要确认</strong>
+              <span>{toolConfirmation.riskLevel}</span>
+            </div>
+            <small>{toolConfirmation.name} · {toolConfirmation.reason}</small>
+            {toolConfirmation.params ? (
+              <div className="confirmation-detail">
+                <pre>{formatTraceValue(toolConfirmation.params)}</pre>
+              </div>
+            ) : null}
+            <div className="solo-controls">
+              <button className="secondary-action" onClick={onToolConfirmationAllow} type="button">
+                允许执行
+              </button>
+              <button className="text-action danger" onClick={onToolConfirmationReject} type="button">
+                拒绝
               </button>
             </div>
           </div>

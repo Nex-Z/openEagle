@@ -20,7 +20,8 @@ from agno.run.agent import (
 from .. import default_tools
 
 from ..config import AgentConfig, AppConfig, McpConfig, SkillConfig, ToolConfig
-from .base import ProviderStreamEvent, ReplyChunk, ReplyTrace
+from ..confirmations import ToolConfirmationStore
+from .base import ProviderStreamEvent, ReplyChunk, ReplyToolConfirmation, ReplyTrace
 
 
 def utc_now() -> str:
@@ -54,8 +55,17 @@ def stringify_trace_result(value: Any) -> str | None:
 
 
 class AgnoAgentProvider:
-    def __init__(self, config: AppConfig) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        confirmation_store: ToolConfirmationStore | None = None,
+        request_id: str | None = None,
+        conversation_id: str | None = None,
+    ) -> None:
         self._config = config
+        self._confirmation_store = confirmation_store
+        self._request_id = request_id
+        self._conversation_id = conversation_id
 
     @property
     def _agent_config(self) -> AgentConfig:
@@ -116,7 +126,14 @@ class AgnoAgentProvider:
             model=model,
             markdown=True,
             instructions=instructions,
-            tools=[default_tools.build_default_tools(workspace_root=workspace_root())],
+            tools=[
+                default_tools.build_default_tools(
+                    workspace_root=workspace_root(),
+                    confirmation_store=self._confirmation_store,
+                    request_id=self._request_id,
+                    conversation_id=self._conversation_id or conversation_id,
+                )
+            ],
         )
 
     @staticmethod
@@ -286,6 +303,11 @@ class AgnoAgentProvider:
                 if tool is None:
                     continue
                 now = utc_now()
+                result_text = stringify_trace_result(tool.result)
+                if isinstance(result_text, str) and result_text.startswith("CONFIRMATION_REQUIRED "):
+                    confirmation_id = result_text.split(" ", 1)[1].split(":", 1)[0].strip()
+                    if confirmation_id:
+                        yield ReplyToolConfirmation(confirmation_id=confirmation_id)
                 yield ReplyTrace(
                     trace_id=tool.tool_call_id or f"tool-call-{tool.tool_name or 'unknown'}",
                     kind="tool",
@@ -293,7 +315,7 @@ class AgnoAgentProvider:
                     status="completed",
                     summary="Agent 已完成工具调用。",
                     params=to_jsonable(tool.tool_args or {}),
-                    result=stringify_trace_result(tool.result),
+                    result=result_text,
                     started_at=now,
                     completed_at=now,
                 )

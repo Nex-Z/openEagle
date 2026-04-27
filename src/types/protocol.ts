@@ -153,6 +153,7 @@ export interface SoloStatusPayload {
   maxSteps: number;
   lastAction?: string;
   lastScreenshotAt?: string;
+  logPath?: string;
   startedAt?: string;
   completedAt?: string;
 }
@@ -169,10 +170,21 @@ export interface SoloStepPayload {
 
 export interface SoloConfirmationPayload {
   stepIndex: number;
+  riskLevel?: "confirm";
   reason: string;
   action: string;
   actionArgs?: Record<string, unknown>;
   thoughtSummary: string;
+}
+
+export interface ToolConfirmationPayload {
+  confirmationId: string;
+  riskLevel: "confirm";
+  kind: "tool" | "mcp" | "skill";
+  name: string;
+  reason: string;
+  params?: Record<string, unknown>;
+  createdAt: string;
 }
 
 export interface SoloControlPayload {

@@ -4,6 +4,7 @@ import argparse
 import asyncio
 import json
 import socket
+from pathlib import Path
 from typing import Any
 
 import uvicorn
@@ -11,6 +12,8 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from .agent_service import build_agent_service
 from .config import AppConfig, load_config
+from .confirmations import ToolConfirmationStore
+from .default_tools import execute_confirmed_tool
 from .models import (
     Envelope,
     ErrorPayload,
@@ -21,11 +24,14 @@ from .models import (
     SoloStatusPayload,
     SoloStepPayload,
     StatusPayload,
+    ToolConfirmationPayload,
     utc_now,
 )
-from .providers.base import ReplyChunk, ReplyTrace
+from .providers.base import ReplyChunk, ReplyToolConfirmation, ReplyTrace
 from .runtime_state import RuntimeState
+from .safety import assess_solo_action
 from .solo_executor import SoloExecutor
+from .solo_run_logger import SoloRunLogger
 from .solo_service import SoloService, SoloSessionState
 from .solo_toolkit import SoloToolkit
 
@@ -33,6 +39,7 @@ app = FastAPI(title="openEagle Agent Backend")
 config = load_config()
 runtime_state = RuntimeState()
 runtime_state.update_config(config)
+workspace_root = Path(__file__).resolve().parents[2]
 
 
 def slog(message: str) -> None:
@@ -80,6 +87,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     solo_service: SoloService | None = None
     solo_executor = SoloExecutor()
     solo_tools = SoloToolkit(solo_executor)
+    solo_logger = SoloRunLogger(workspace_root)
+    tool_confirmations = ToolConfirmationStore()
 
     async def safe_send(
         type_: str,
@@ -128,6 +137,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             startedAt=session.started_at,
             completedAt=session.completed_at,
             lastScreenshotAt=session.last_screenshot_at,
+            logPath=session.log_path,
         ).model_dump(by_alias=True)
         await safe_send(
             "server:solo_status",
@@ -193,20 +203,26 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         screenshot = result.get("screenshot")
         screenshot_path: str | None = None
         screenshot_at: str | None = None
+        screenshot_hash: str | None = None
         if isinstance(screenshot, dict):
             path_value = screenshot.get("path")
             captured_at_value = screenshot.get("capturedAt")
+            content_hash_value = screenshot.get("contentHash")
             if isinstance(path_value, str):
                 screenshot_path = path_value
             if isinstance(captured_at_value, str):
                 screenshot_at = captured_at_value
+            if isinstance(content_hash_value, str):
+                screenshot_hash = content_hash_value
 
         if screenshot_path:
-            if screenshot_path == session.last_screenshot_path:
+            session.last_screenshot_path = screenshot_path
+        if screenshot_hash:
+            if screenshot_hash == session.last_screenshot_hash:
                 session.same_screenshot_count += 1
             else:
                 session.same_screenshot_count = 0
-            session.last_screenshot_path = screenshot_path
+            session.last_screenshot_hash = screenshot_hash
         if screenshot_at:
             session.last_screenshot_at = screenshot_at
 
@@ -220,6 +236,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             session.state = "paused"
             session.detail = f"动作执行失败: {result.get('error', execution_error or 'unknown error')}"
             slog(f"request={session.request_id} step_result failed action={action} result={result}")
+            solo_logger.write("error", {"action": action, "result": result})
             await emit_solo_trace(
                 session,
                 "step_result",
@@ -237,6 +254,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             slog(
                 f"request={session.request_id} step_result execution_error action={action} error={execution_error}"
             )
+            solo_logger.write("error", {"action": action, "result": result})
             await emit_solo_trace(
                 session,
                 "step_result",
@@ -254,6 +272,15 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             f"request={session.request_id} step_result ok step={session.step_count} "
             f"action={action} execution_error={execution_error}"
         )
+        solo_logger.write(
+            "action_result",
+            {
+                "step": session.step_count,
+                "action": action,
+                "screenshotHash": screenshot_hash,
+                "result": result,
+            },
+        )
         await emit_solo_trace(
             session,
             "step_result",
@@ -267,24 +294,28 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         if session.step_count >= session.max_steps:
             session.state = "paused"
             session.detail = f"超过最大步数 {session.max_steps}，已自动暂停。"
+            solo_logger.write("paused", {"reason": session.detail})
             await emit_solo_status(session)
             return
 
         if session.repeat_action_count >= 6:
             session.state = "paused"
             session.detail = "检测到连续重复动作（>=6 次），已自动暂停。"
+            solo_logger.write("paused", {"reason": session.detail})
             await emit_solo_status(session)
             return
 
         if session.same_screenshot_count >= 3:
             session.state = "paused"
             session.detail = "检测到连续截图无变化，已自动暂停。"
+            solo_logger.write("paused", {"reason": session.detail})
             await emit_solo_status(session)
             return
 
         if not session.last_screenshot_path:
             session.state = "paused"
             session.detail = "缺少新截图，无法继续。"
+            solo_logger.write("paused", {"reason": session.detail})
             await emit_solo_status(session)
             return
 
@@ -334,6 +365,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         if solo_service is None:
             session.state = "error"
             session.detail = "SOLO 服务未初始化。"
+            solo_logger.write("error", {"reason": session.detail})
             await emit_solo_status(session)
             return
 
@@ -358,10 +390,19 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 },
                 result=solo_service.decision_dict(decision),
             )
+            solo_logger.write(
+                "decision",
+                {
+                    "step": session.step_count + 1,
+                    "decision": solo_service.decision_dict(decision),
+                    "screenshotPath": screenshot_path,
+                },
+            )
         except Exception as exc:  # noqa: BLE001
             session.state = "error"
             session.detail = f"VL 推理失败: {exc}"
             slog(f"request={session.request_id} decision error={exc}")
+            solo_logger.write("error", {"reason": session.detail})
             await emit_solo_trace(
                 session,
                 "decision",
@@ -385,6 +426,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             session.completed_at = utc_now()
             session.detail = "SOLO 任务完成。"
             slog(f"request={session.request_id} completed at step={session.step_count}")
+            solo_logger.write("completed", {"step": session.step_count})
             await emit_solo_status(session)
             await safe_send(
                 "server:message",
@@ -397,35 +439,62 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             slog(
                 f"request={session.request_id} ignored early finish at step={session.step_count}"
             )
+            wait_args = {"ms": 600}
             await emit_solo_step(
                 session,
                 step_index=session.step_count + 1,
                 action="wait",
-                action_args={"ms": 600},
+                action_args=wait_args,
                 thought_summary="模型过早结束，系统要求至少完成两步执行后再结束。",
                 expected_outcome="等待后继续基于新截图决策",
                 screenshot_path=screenshot_path,
             )
+            await execute_solo_step(session, "wait", wait_args)
             return
 
-        dangerous, reason = solo_service.is_dangerous_action(decision.action, decision.action_args)
-        if dangerous:
+        assessment = assess_solo_action(decision.action, decision.action_args, workspace_root)
+        if assessment.level == "blocked":
+            session.state = "paused"
+            session.detail = f"动作已阻断: {assessment.reason}"
+            solo_logger.write(
+                "paused",
+                {
+                    "reason": session.detail,
+                    "action": decision.action,
+                    "actionArgs": decision.action_args,
+                },
+            )
+            await emit_solo_status(session)
+            return
+
+        if assessment.level == "confirm":
             session.state = "waiting_user_confirmation"
             session.pending_confirmation = {
                 "action": decision.action,
                 "action_args": decision.action_args,
                 "thought_summary": decision.thought_summary,
                 "expected_outcome": decision.expected_outcome,
+                "risk_level": assessment.level,
+                "reason": assessment.reason,
             }
             session.detail = "检测到危险动作，等待用户确认。"
             slog(
-                f"request={session.request_id} waiting confirmation action={decision.action} reason={reason}"
+                f"request={session.request_id} waiting confirmation action={decision.action} reason={assessment.reason}"
+            )
+            solo_logger.write(
+                "confirmation_required",
+                {
+                    "step": session.step_count + 1,
+                    "action": decision.action,
+                    "actionArgs": decision.action_args,
+                    "reason": assessment.reason,
+                },
             )
             await emit_solo_status(session)
             await emit_confirmation(
                 session,
                 step_index=session.step_count + 1,
-                reason=reason,
+                reason=assessment.reason,
                 action=decision.action,
                 action_args=decision.action_args,
                 thought_summary=decision.thought_summary,
@@ -462,6 +531,100 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 )
                 continue
 
+            if envelope.type == "client:tool_confirmation":
+                control = ToolConfirmationPayload.model_validate(envelope.payload)
+                pending = tool_confirmations.pop(control.confirmation_id)
+                if pending is None:
+                    await safe_send(
+                        "server:error",
+                        envelope.request_id,
+                        envelope.conversation_id,
+                        ErrorPayload(
+                            message="没有找到待确认工具动作",
+                            code="tool_confirmation_missing",
+                        ).model_dump(),
+                    )
+                    continue
+
+                if control.decision != "allow":
+                    await safe_send(
+                        "server:message",
+                        pending.request_id,
+                        pending.conversation_id,
+                        {"content": f"已拒绝执行工具动作：{pending.name}。"},
+                    )
+                    continue
+
+                now = utc_now()
+                await safe_send(
+                    "server:trace",
+                    pending.request_id,
+                    pending.conversation_id,
+                    {
+                        "trace": {
+                            "id": f"confirmed-{pending.confirmation_id}",
+                            "kind": "tool",
+                            "name": pending.name,
+                            "status": "started",
+                            "summary": "用户已确认，开始执行工具动作。",
+                            "params": pending.params,
+                            "startedAt": now,
+                        }
+                    },
+                )
+                try:
+                    result = await asyncio.to_thread(
+                        execute_confirmed_tool,
+                        workspace_root,
+                        pending,
+                    )
+                    completed_at = utc_now()
+                    await safe_send(
+                        "server:trace",
+                        pending.request_id,
+                        pending.conversation_id,
+                        {
+                            "trace": {
+                                "id": f"confirmed-{pending.confirmation_id}",
+                                "kind": "tool",
+                                "name": pending.name,
+                                "status": "completed",
+                                "summary": "用户确认后的工具动作已完成。",
+                                "params": pending.params,
+                                "result": result,
+                                "startedAt": now,
+                                "completedAt": completed_at,
+                            }
+                        },
+                    )
+                    await safe_send(
+                        "server:message",
+                        pending.request_id,
+                        pending.conversation_id,
+                        {"content": f"已执行确认动作 `{pending.name}`。\n\n```text\n{result}\n```"},
+                    )
+                except Exception as exc:  # noqa: BLE001
+                    completed_at = utc_now()
+                    await safe_send(
+                        "server:trace",
+                        pending.request_id,
+                        pending.conversation_id,
+                        {
+                            "trace": {
+                                "id": f"confirmed-{pending.confirmation_id}",
+                                "kind": "tool",
+                                "name": pending.name,
+                                "status": "error",
+                                "summary": "用户确认后的工具动作执行失败。",
+                                "params": pending.params,
+                                "result": str(exc),
+                                "startedAt": now,
+                                "completedAt": completed_at,
+                            }
+                        },
+                    )
+                continue
+
             if envelope.type == "client:list_solo_displays":
                 current_config = runtime_state.get_config()
                 solo_executor.set_preferred_display_index(
@@ -496,6 +659,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     task=payload.content,
                     started_at=utc_now(),
                     last_screenshot_path=str(first_screenshot.get("path", "")) or None,
+                    last_screenshot_hash=(
+                        str(first_screenshot.get("contentHash", ""))
+                        if first_screenshot.get("contentHash")
+                        else None
+                    ),
                     last_screenshot_at=(
                         str(first_screenshot.get("capturedAt", ""))
                         if first_screenshot.get("capturedAt")
@@ -503,6 +671,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     ),
                     detail="SOLO 已启动，正在分析首帧截图。",
                 )
+                active_solo.log_path = solo_logger.start(envelope.request_id, payload.content)
                 await emit_solo_status(active_solo)
                 if not active_solo.last_screenshot_path:
                     active_solo.state = "error"
@@ -530,6 +699,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 if control.action == "pause":
                     active_solo.state = "paused"
                     active_solo.detail = "用户已暂停 SOLO。"
+                    solo_logger.write("paused", {"reason": active_solo.detail})
                     await emit_solo_trace(
                         active_solo,
                         "control",
@@ -544,6 +714,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     if active_solo.last_screenshot_path is None:
                         active_solo.state = "error"
                         active_solo.detail = "缺少截图，无法恢复 SOLO。"
+                        solo_logger.write("error", {"reason": active_solo.detail})
                         await emit_solo_status(active_solo)
                     else:
                         active_solo.state = "running"
@@ -563,6 +734,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     active_solo.state = "aborted"
                     active_solo.detail = "用户已结束 SOLO。"
                     active_solo.completed_at = utc_now()
+                    solo_logger.write("paused", {"reason": active_solo.detail})
                     await emit_solo_trace(
                         active_solo,
                         "control",
@@ -586,6 +758,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     active_solo.pending_confirmation = None
                     active_solo.state = "running"
                     active_solo.detail = "用户已允许危险动作，继续执行。"
+                    solo_logger.write(
+                        "confirmation_required",
+                        {
+                            "decision": "allow",
+                            "action": pending["action"],
+                            "actionArgs": pending["action_args"],
+                        },
+                    )
                     await emit_solo_status(active_solo)
                     await emit_solo_step(
                         active_solo,
@@ -607,6 +787,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     active_solo.pending_confirmation = None
                     active_solo.state = "paused"
                     active_solo.detail = "用户拒绝了危险动作，SOLO 已暂停。"
+                    solo_logger.write("paused", {"reason": active_solo.detail})
                     await emit_solo_status(active_solo)
                     continue
 
@@ -647,7 +828,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 ).model_dump(),
             )
 
-            agent_service = build_agent_service(runtime_state.get_config())
+            agent_service = build_agent_service(
+                runtime_state.get_config(),
+                confirmation_store=tool_confirmations,
+                request_id=envelope.request_id,
+                conversation_id=envelope.conversation_id,
+            )
             chunks: list[str] = []
             async for event in agent_service.stream_reply(
                 envelope.conversation_id,
@@ -682,6 +868,17 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                             }
                         },
                     )
+                    continue
+
+                if isinstance(event, ReplyToolConfirmation):
+                    pending = tool_confirmations.get(event.confirmation_id)
+                    if pending:
+                        await safe_send(
+                            "server:tool_confirmation_required",
+                            envelope.request_id,
+                            envelope.conversation_id,
+                            {"confirmation": pending.to_payload()},
+                        )
 
             reply = "".join(chunks)
 

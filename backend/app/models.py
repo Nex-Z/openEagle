@@ -62,6 +62,15 @@ class SoloControlPayload(BaseModel):
     }
 
 
+class ToolConfirmationPayload(BaseModel):
+    confirmation_id: str = Field(alias="confirmationId")
+    decision: str
+
+    model_config = {
+        "populate_by_name": True,
+    }
+
+
 class SoloStatusPayload(BaseModel):
     state: str
     detail: str | None = None
@@ -69,6 +78,7 @@ class SoloStatusPayload(BaseModel):
     max_steps: int = Field(default=25, alias="maxSteps")
     last_action: str | None = Field(default=None, alias="lastAction")
     last_screenshot_at: str | None = Field(default=None, alias="lastScreenshotAt")
+    log_path: str | None = Field(default=None, alias="logPath")
     started_at: str | None = Field(default=None, alias="startedAt")
     completed_at: str | None = Field(default=None, alias="completedAt")
 
@@ -93,6 +103,7 @@ class SoloStepPayload(BaseModel):
 
 class SoloConfirmationPayload(BaseModel):
     step_index: int = Field(alias="stepIndex")
+    risk_level: str = Field(default="confirm", alias="riskLevel")
     reason: str
     action: str
     action_args: dict[str, Any] = Field(default_factory=dict, alias="actionArgs")

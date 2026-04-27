@@ -134,7 +134,11 @@ function renderGeneralSection(
               <p className="eyebrow">接入</p>
               <h3>飞书机器人</h3>
             </div>
+            <span className="settings-pill">规划中</span>
           </div>
+          <p className="field-hint">
+            当前版本保留配置入口，但飞书事件接入暂未启用。
+          </p>
           <label className="switch-row">
             <span>启用飞书入口</span>
             <input
@@ -603,6 +607,7 @@ function renderMcpSection(props: McpListProps) {
           <p className="eyebrow">Model Context Protocol</p>
           <h3>MCP Server 列表</h3>
         </div>
+        <span className="settings-pill">描述模式</span>
         <button
           className="secondary-action"
           onClick={() =>
@@ -626,7 +631,7 @@ function renderMcpSection(props: McpListProps) {
                 <div className="settings-list-main">
                   <strong>{server.name || "未命名 MCP"}</strong>
                   <span className="settings-list-meta">
-                    {server.transport} · {server.endpoint || "未配置端点"}
+                    描述模式 · {server.transport} · {server.endpoint || "未配置端点"}
                   </span>
                 </div>
 

@@ -1347,6 +1347,29 @@ button {
   gap: 10px;
 }
 
+.confirmation-card {
+  border-color: rgba(245, 158, 11, 0.45);
+  background: rgba(245, 158, 11, 0.1);
+}
+
+.confirmation-detail {
+  display: grid;
+  gap: 4px;
+  font-size: 0.84rem;
+  color: var(--muted);
+}
+
+.confirmation-detail pre {
+  max-height: 120px;
+  overflow: auto;
+  margin: 0;
+  padding: 8px;
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.14);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
 .solo-timeline {
   display: flex;
   flex-direction: column;

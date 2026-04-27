@@ -58,6 +58,7 @@ export default function App() {
     soloStatus,
     soloStep,
     soloConfirmation,
+    toolConfirmation,
     soloDisplays,
     soloTimeline,
     soloLastError,
@@ -69,6 +70,8 @@ export default function App() {
     stopSolo,
     allowDangerousStep,
     rejectDangerousStep,
+    allowToolConfirmation,
+    rejectToolConfirmation,
   } = useBackendConnection(
     activeConversationId,
     settings,
@@ -180,8 +183,11 @@ export default function App() {
             onSoloStop={stopSolo}
             onSoloAllowDangerousStep={allowDangerousStep}
             onSoloRejectDangerousStep={rejectDangerousStep}
+            onToolConfirmationAllow={allowToolConfirmation}
+            onToolConfirmationReject={rejectToolConfirmation}
             settings={settings}
             soloConfirmation={soloConfirmation}
+            toolConfirmation={toolConfirmation}
             soloLastError={soloLastError}
             soloStatus={soloStatus}
             soloStep={soloStep}

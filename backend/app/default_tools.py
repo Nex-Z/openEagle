@@ -6,10 +6,65 @@ from typing import Optional
 
 from agno.tools import Toolkit
 
+from .confirmations import PendingToolConfirmation, ToolConfirmationStore
+from .safety import assess_tool_action, resolve_workspace_path
+
+
+def _tail_output(stdout: str, stderr: str, returncode: int, tail: int) -> str:
+    combined = stdout if returncode == 0 else stderr or stdout
+    if not combined:
+        combined = "(no output)"
+    lines = combined.strip().splitlines()
+    tail_lines = "\n".join(lines[-max(tail, 1) :])
+    if returncode != 0:
+        return f"Error (exit {returncode}):\n{tail_lines}"
+    return tail_lines
+
+
+def execute_confirmed_tool(workspace_root: Path, pending: PendingToolConfirmation) -> str:
+    root = workspace_root.resolve()
+    if pending.name == "write_text_file":
+        path = str(pending.params.get("path", ""))
+        content = str(pending.params.get("content", ""))
+        target = resolve_workspace_path(root, path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(content, encoding="utf-8")
+        return f"Successfully wrote UTF-8 file: {target}"
+
+    if pending.name == "run_command":
+        command = str(pending.params.get("command", ""))
+        cwd = str(pending.params.get("cwd", "."))
+        tail = int(pending.params.get("tail", 120))
+        working_dir = resolve_workspace_path(root, cwd)
+        if not working_dir.exists() or not working_dir.is_dir():
+            return f"Error: 无效执行目录: {working_dir}"
+
+        completed = subprocess.run(
+            command,
+            cwd=str(working_dir),
+            shell=True,
+            capture_output=True,
+            text=True,
+            encoding="utf-8",
+            errors="replace",
+        )
+        return _tail_output(completed.stdout, completed.stderr, completed.returncode, tail)
+
+    return f"Error: unsupported confirmed tool: {pending.name}"
+
 
 class OpenEagleDefaultTools(Toolkit):
-    def __init__(self, workspace_root: Path):
+    def __init__(
+        self,
+        workspace_root: Path,
+        confirmation_store: ToolConfirmationStore | None = None,
+        request_id: str | None = None,
+        conversation_id: str | None = None,
+    ):
         self.workspace_root = workspace_root.resolve()
+        self.confirmation_store = confirmation_store
+        self.request_id = request_id
+        self.conversation_id = conversation_id
         super().__init__(
             name="open_eagle_default_tools",
             tools=[
@@ -28,12 +83,24 @@ class OpenEagleDefaultTools(Toolkit):
         )
 
     def _resolve_path(self, path: str = ".") -> Path:
-        target = (self.workspace_root / path).resolve()
-        try:
-            target.relative_to(self.workspace_root)
-        except ValueError as exc:
-            raise ValueError("路径超出工作区范围，不允许访问。") from exc
-        return target
+        return resolve_workspace_path(self.workspace_root, path)
+
+    def _create_confirmation(self, name: str, reason: str, params: dict[str, object]) -> str:
+        if not self.confirmation_store or not self.request_id or not self.conversation_id:
+            return "Error: 当前工具需要确认，但确认通道未初始化。"
+        pending = self.confirmation_store.create(
+            request_id=self.request_id,
+            conversation_id=self.conversation_id,
+            kind="tool",
+            name=name,
+            reason=reason,
+            params=params,
+        )
+        return (
+            "CONFIRMATION_REQUIRED "
+            f"{pending.confirmation_id}: {reason}。"
+            "请等待用户在 openEagle 中允许或拒绝后再继续。"
+        )
 
     def list_directory(self, path: str = ".") -> str:
         """列出工作区内指定目录的文件和子目录。
@@ -82,10 +149,24 @@ class OpenEagleDefaultTools(Toolkit):
         Returns:
             str: 写入结果。
         """
-        target = self._resolve_path(path)
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content, encoding="utf-8")
-        return f"Successfully wrote UTF-8 file: {target}"
+        params = {"path": path, "content": content}
+        assessment = assess_tool_action("write_text_file", params, self.workspace_root)
+        if assessment.level == "blocked":
+            return f"Error: {assessment.reason}"
+        if assessment.level == "confirm":
+            return self._create_confirmation("write_text_file", assessment.reason, params)
+        return execute_confirmed_tool(
+            self.workspace_root,
+            PendingToolConfirmation(
+                confirmation_id="auto",
+                request_id=self.request_id or "auto",
+                conversation_id=self.conversation_id or "auto",
+                kind="tool",
+                name="write_text_file",
+                reason=assessment.reason,
+                params=params,
+            ),
+        )
 
     def search_files(self, keyword: str, path: str = ".") -> str:
         """在工作区内按文件名搜索。
@@ -121,31 +202,36 @@ class OpenEagleDefaultTools(Toolkit):
         Returns:
             str: 命令输出或错误信息。
         """
-        working_dir = self._resolve_path(cwd)
-        if not working_dir.exists() or not working_dir.is_dir():
-            return f"Error: 无效执行目录: {working_dir}"
-
-        completed = subprocess.run(
-            command,
-            cwd=str(working_dir),
-            shell=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+        params = {"command": command, "cwd": cwd, "tail": tail}
+        assessment = assess_tool_action("run_command", params, self.workspace_root)
+        if assessment.level == "blocked":
+            return f"Error: {assessment.reason}"
+        if assessment.level == "confirm":
+            return self._create_confirmation("run_command", assessment.reason, params)
+        return execute_confirmed_tool(
+            self.workspace_root,
+            PendingToolConfirmation(
+                confirmation_id="auto",
+                request_id=self.request_id or "auto",
+                conversation_id=self.conversation_id or "auto",
+                kind="tool",
+                name="run_command",
+                reason=assessment.reason,
+                params=params,
+            ),
         )
-        stdout = completed.stdout.strip()
-        stderr = completed.stderr.strip()
-        combined = stdout if completed.returncode == 0 else stderr or stdout
-        if not combined:
-            combined = "(no output)"
-        lines = combined.splitlines()
-        tail_lines = "\n".join(lines[-max(tail, 1) :])
-        if completed.returncode != 0:
-            return f"Error (exit {completed.returncode}):\n{tail_lines}"
-        return tail_lines
 
 
-def build_default_tools(workspace_root: Optional[Path] = None) -> OpenEagleDefaultTools:
+def build_default_tools(
+    workspace_root: Optional[Path] = None,
+    confirmation_store: ToolConfirmationStore | None = None,
+    request_id: str | None = None,
+    conversation_id: str | None = None,
+) -> OpenEagleDefaultTools:
     root = workspace_root or Path(__file__).resolve().parents[2]
-    return OpenEagleDefaultTools(workspace_root=root)
+    return OpenEagleDefaultTools(
+        workspace_root=root,
+        confirmation_store=confirmation_store,
+        request_id=request_id,
+        conversation_id=conversation_id,
+    )
