@@ -8,6 +8,7 @@ import {
   Play,
   SendHorizonal,
   ShieldAlert,
+  ShieldCheck,
   Sparkles,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -18,6 +19,7 @@ import type {
   AppSettings,
   BackendState,
   ChatMessage,
+  PermissionMode,
   SoloConfirmationPayload,
   SoloStatusPayload,
   ToolConfirmationPayload,
@@ -39,6 +41,7 @@ interface ChatWorkspaceProps {
   onRejectDangerousStep: () => boolean;
   onAllowToolConfirmation: () => boolean;
   onRejectToolConfirmation: () => boolean;
+  onPermissionModeChange: (mode: PermissionMode) => void;
   onOpenSettings: () => void;
   onOpenMobileSidebar: () => void;
   onOpenInspector: () => void;
@@ -236,6 +239,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     onRejectDangerousStep,
     onAllowToolConfirmation,
     onRejectToolConfirmation,
+    onPermissionModeChange,
     onOpenSettings,
     onOpenMobileSidebar,
     onOpenInspector,
@@ -659,21 +663,43 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
 
         <div className="composer-frame">
           <div className="composer-mode-row">
-            <div className="segmented-control" role="tablist" aria-label="模式切换">
-              <button
-                className={composerMode === "chat" ? "segment is-active" : "segment"}
-                onClick={() => setComposerMode("chat")}
-                type="button"
-              >
-                Chat
-              </button>
-              <button
-                className={composerMode === "solo" ? "segment is-active" : "segment"}
-                onClick={() => setComposerMode("solo")}
-                type="button"
-              >
-                SOLO
-              </button>
+            <div className="composer-controls">
+              <div className="segmented-control" role="tablist" aria-label="模式切换">
+                <button
+                  className={composerMode === "chat" ? "segment is-active" : "segment"}
+                  onClick={() => setComposerMode("chat")}
+                  type="button"
+                >
+                  Chat
+                </button>
+                <button
+                  className={composerMode === "solo" ? "segment is-active" : "segment"}
+                  onClick={() => setComposerMode("solo")}
+                  type="button"
+                >
+                  SOLO
+                </button>
+              </div>
+              <div className="segmented-control permission-control" aria-label="权限控制">
+                <button
+                  className={
+                    settings.permissions.mode === "default" ? "segment is-active" : "segment"
+                  }
+                  onClick={() => onPermissionModeChange("default")}
+                  type="button"
+                >
+                  <ShieldAlert size={13} />
+                  <span>默认权限</span>
+                </button>
+                <button
+                  className={settings.permissions.mode === "all" ? "segment is-active" : "segment"}
+                  onClick={() => onPermissionModeChange("all")}
+                  type="button"
+                >
+                  <ShieldCheck size={13} />
+                  <span>所有权限</span>
+                </button>
+              </div>
             </div>
             {composerMode === "solo" && soloDisabledReason ? (
               <span className="mode-hint warning">{soloDisabledReason}</span>

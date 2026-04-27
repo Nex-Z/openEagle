@@ -910,6 +910,14 @@ a {
   justify-content: space-between;
 }
 
+.composer-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  flex-wrap: wrap;
+}
+
 .segmented-control,
 .theme-toggle {
   padding: 4px;
@@ -925,6 +933,14 @@ a {
   border-radius: 999px;
   font-size: 13px;
   color: var(--text-secondary);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.permission-control .segment {
+  gap: 6px;
+  padding-inline: 10px;
 }
 
 .segment.is-active,
@@ -1344,6 +1360,24 @@ a {
   min-height: 144px;
 }
 
+.form-hint,
+.field-hint.warning {
+  color: var(--text-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.form-hint {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.form-hint.warning,
+.field-hint.warning {
+  color: var(--warning);
+}
+
 .display-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1367,7 +1401,15 @@ a {
 }
 
 .display-card img {
-  aspect-ratio: 16 / 10;
+  aspect-ratio: 16 / 9;
+  object-fit: contain;
+}
+
+.display-card .display-preview-empty {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 
 .config-row {
@@ -1647,6 +1689,10 @@ a {
   .composer-footer,
   .config-row-head {
     flex-direction: column;
+    align-items: stretch;
+  }
+
+  .composer-controls {
     align-items: stretch;
   }
 

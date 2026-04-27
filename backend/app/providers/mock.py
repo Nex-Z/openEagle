@@ -36,12 +36,13 @@ class MockAgentProvider:
                         kind="tool",
                         name=tool.name,
                         status="completed",
-                        summary="已将工具加入当前轮可用能力。",
+                        summary="用户本轮显式选择了该工具。",
                         params={
                             "command": tool.command,
+                            "cwd": tool.cwd,
                             "description": tool.description,
                         },
-                        result="Mock provider 未真实执行命令，仅记录为本轮可用工具。",
+                        result="Mock provider 未真实执行命令，仅记录本轮显式选择。",
                         started_at=now,
                         completed_at=now,
                     )
@@ -114,7 +115,7 @@ class MockAgentProvider:
             "openEagle 已收到你的请求。\n\n"
             f"conversationId: {conversation_id}\n"
             f"echo: {content}\n"
-            f"已挂载能力: {trace_names}\n\n"
+            f"本轮显式选择: {trace_names}\n\n"
             "当前回复来自 mock provider。你可以在设置中切换到 openai 或 openai-like，并通过 Agno 驱动真实模型。"
         )
 

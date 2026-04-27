@@ -14,6 +14,7 @@ from agno.models.openai.like import OpenAILike
 from pydantic import BaseModel, Field, ValidationError
 
 from .config import AgentConfig
+from .prompts import build_solo_decision_prompt, solo_decision_instructions
 from .safety import assess_solo_action
 
 ALLOWED_ACTIONS = {
@@ -94,14 +95,7 @@ class SoloService:
         self._agent = Agent(
             model=model,
             markdown=False,
-            instructions=[
-                "你是桌面自动化决策模型。",
-                "必须仅输出 JSON，禁止输出任何额外文本。",
-                "JSON 字段必须为 thought_summary, action, action_args, expected_outcome, is_task_done。",
-                "action 仅可取: finish, wait, screenshot, click, double_click, right_click, move_mouse, scroll, type_text, press_keys, execute_command。",
-                "如果任务已完成，action=finish 且 is_task_done=true。",
-                "仅在确实需要系统命令时才使用 execute_command，且必须提供 action_args.command。",
-            ],
+            instructions=solo_decision_instructions(),
         )
         return self._agent
 
@@ -144,12 +138,7 @@ class SoloService:
         history: list[dict[str, Any]],
     ) -> SoloDecision:
         agent = self._build_agent()
-        history_text = json.dumps(history[-8:], ensure_ascii=False)
-        prompt = (
-            f"用户任务: {task}\n\n"
-            f"最近步骤历史: {history_text}\n\n"
-            "请基于当前截图给出下一步动作。仅返回 JSON。"
-        )
+        prompt = build_solo_decision_prompt(task, history)
         result = await agent.arun(
             prompt,
             images=[Image(url=self._to_data_url(screenshot_path))],

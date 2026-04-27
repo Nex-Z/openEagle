@@ -8,7 +8,14 @@ class ToolConfig(BaseModel):
     name: str
     description: str = ""
     command: str = ""
+    cwd: str = ""
+    timeout_ms: int = Field(default=30_000, alias="timeoutMs")
+    tail: int = 120
     enabled: bool = True
+
+    model_config = {
+        "populate_by_name": True,
+    }
 
 
 class McpConfig(BaseModel):
@@ -34,6 +41,10 @@ class SoloConfig(BaseModel):
     model_config = {
         "populate_by_name": True,
     }
+
+
+class PermissionConfig(BaseModel):
+    mode: str = "default"
 
 
 class AgentConfig(BaseModel):
@@ -65,6 +76,7 @@ class FeishuConfig(BaseModel):
 class AppConfig(BaseModel):
     agent: AgentConfig = AgentConfig()
     feishu: FeishuConfig = FeishuConfig()
+    permissions: PermissionConfig = PermissionConfig()
     solo: SoloConfig = SoloConfig()
     tools: list[ToolConfig] = Field(default_factory=list)
     mcp: list[McpConfig] = Field(default_factory=list)

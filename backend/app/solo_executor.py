@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import time
-import subprocess
 import hashlib
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import gettempdir
 from typing import Any
 from uuid import uuid4
+
+from .command_runner import run_workspace_command
 
 
 class SoloExecutor:
@@ -224,34 +225,21 @@ class SoloExecutor:
                 raise ValueError("cwd 无效，必须是工作区内目录。")
 
             timeout_ms = int(action_args.get("timeout_ms", 30_000))
-            timeout_s = max(1, min(timeout_ms / 1000, 120))
             tail = int(action_args.get("tail", 120))
-            tail = max(1, min(tail, 300))
-
-            completed = subprocess.run(
-                command,
-                cwd=str(working_dir),
-                shell=True,
-                capture_output=True,
-                text=True,
-                encoding="utf-8",
-                errors="replace",
-                timeout=timeout_s,
+            result = run_workspace_command(
+                workspace_root=self._workspace_root,
+                command=command,
+                cwd=str(cwd),
+                timeout_ms=timeout_ms,
+                tail=tail,
             )
-            stdout = completed.stdout.strip()
-            stderr = completed.stderr.strip()
-            combined = stdout if completed.returncode == 0 else stderr or stdout
-            if not combined:
-                combined = "(no output)"
-            lines = combined.splitlines()
-            output = "\n".join(lines[-tail:])
             return {
-                "ok": completed.returncode == 0,
+                "ok": result.returncode == 0 and not result.timed_out,
                 "action": action,
                 "command": command,
                 "cwd": str(working_dir),
-                "exitCode": completed.returncode,
-                "output": output,
+                "exitCode": result.returncode,
+                "output": result.output,
             }
 
         pyautogui = self._ensure_pyautogui()

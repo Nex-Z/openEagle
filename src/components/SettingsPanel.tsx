@@ -60,6 +60,9 @@ function createToolConfig(): ToolConfig {
     name: "新工具",
     description: "",
     command: "",
+    cwd: "",
+    timeoutMs: 30_000,
+    tail: 120,
     enabled: true,
   };
 }
@@ -95,6 +98,41 @@ function updateListItem<T extends { id: string }>(
 
 function removeListItem<T extends { id: string }>(list: T[], id: string) {
   return list.filter((item) => item.id !== id);
+}
+
+function getToolQualityMessages(tool: ToolConfig, tools: ToolConfig[]) {
+  const messages: string[] = [];
+  const duplicateName =
+    tool.name.trim() &&
+    tools.some((item) => item.id !== tool.id && item.name.trim() === tool.name.trim());
+  const cwd = tool.cwd.trim();
+  const looksOutside =
+    cwd.startsWith("..") ||
+    cwd.includes("../") ||
+    cwd.includes("..\\") ||
+    /^[A-Za-z]:[\\/]/.test(cwd) ||
+    cwd.startsWith("/") ||
+    cwd.startsWith("\\");
+
+  if (tool.enabled && !tool.command.trim()) {
+    messages.push("启用的工具必须填写固定命令，否则不会注册。");
+  }
+  if (tool.enabled && !tool.description.trim()) {
+    messages.push("建议说明何时使用、会输出什么，帮助 Agent 准确选择。");
+  }
+  if (duplicateName) {
+    messages.push("存在同名工具，建议改成更具体的名称。");
+  }
+  if (looksOutside) {
+    messages.push("cwd 看起来会越出工作区，后端会阻断执行。");
+  }
+  if (tool.timeoutMs < 1000 || tool.timeoutMs > 120_000) {
+    messages.push("timeoutMs 会被限制在 1000 到 120000 之间。");
+  }
+  if (tool.tail < 1 || tool.tail > 300) {
+    messages.push("tail 会被限制在 1 到 300 之间。");
+  }
+  return messages;
 }
 
 function renderGeneralSection(
@@ -477,6 +515,7 @@ function renderToolsSection(props: ToolListProps) {
       <div className="settings-list">
         {settings.tools.map((tool) => {
           const isExpanded = expandedId === tool.id;
+          const qualityMessages = getToolQualityMessages(tool, settings.tools);
           return (
             <article key={tool.id} className="settings-list-item">
               <div className="settings-list-row">
@@ -528,6 +567,11 @@ function renderToolsSection(props: ToolListProps) {
 
               {isExpanded ? (
                 <div className="settings-list-editor">
+                  {qualityMessages.length > 0 ? (
+                    <p className="field-hint warning">
+                      {qualityMessages.join(" ")}
+                    </p>
+                  ) : null}
                   <div className="settings-item-grid">
                     <label className="field">
                       <span>名称</span>
@@ -559,6 +603,56 @@ function renderToolsSection(props: ToolListProps) {
                         }
                         placeholder="例如 npx my-tool"
                         value={tool.command}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>工作目录</span>
+                      <input
+                        onChange={(event) =>
+                          onChange({
+                            ...settings,
+                            tools: updateListItem(settings.tools, tool.id, (item) => ({
+                              ...item,
+                              cwd: event.target.value,
+                            })),
+                          })
+                        }
+                        placeholder="留空表示工作区根目录"
+                        value={tool.cwd}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>超时 (ms)</span>
+                      <input
+                        min={1000}
+                        onChange={(event) =>
+                          onChange({
+                            ...settings,
+                            tools: updateListItem(settings.tools, tool.id, (item) => ({
+                              ...item,
+                              timeoutMs: Number(event.target.value) || 30_000,
+                            })),
+                          })
+                        }
+                        type="number"
+                        value={tool.timeoutMs}
+                      />
+                    </label>
+                    <label className="field">
+                      <span>输出尾部行数</span>
+                      <input
+                        min={1}
+                        onChange={(event) =>
+                          onChange({
+                            ...settings,
+                            tools: updateListItem(settings.tools, tool.id, (item) => ({
+                              ...item,
+                              tail: Number(event.target.value) || 120,
+                            })),
+                          })
+                        }
+                        type="number"
+                        value={tool.tail}
                       />
                     </label>
                   </div>

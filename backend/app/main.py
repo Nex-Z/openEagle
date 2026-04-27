@@ -84,6 +84,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     await websocket.accept()
     send_lock = asyncio.Lock()
     active_solo: SoloSessionState | None = None
+    active_solo_task: asyncio.Task[None] | None = None
     solo_service: SoloService | None = None
     solo_executor = SoloExecutor()
     solo_tools = SoloToolkit(solo_executor)
@@ -98,6 +99,43 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     ) -> None:
         async with send_lock:
             await send_envelope(websocket, type_, request_id, conversation_id, payload)
+
+    def is_solo_running(session: SoloSessionState) -> bool:
+        return active_solo is session and session.state == "running"
+
+    async def handle_solo_task_error(task: asyncio.Task[None]) -> None:
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except Exception as exc:  # noqa: BLE001
+            if active_solo is None or active_solo.state in {"aborted", "completed", "error"}:
+                return
+            active_solo.state = "error"
+            active_solo.detail = f"SOLO 后台任务异常: {exc}"
+            solo_logger.write("error", {"reason": active_solo.detail})
+            await emit_solo_status(active_solo)
+
+    def schedule_solo_task(coro: Any) -> None:
+        nonlocal active_solo_task
+        if active_solo_task and not active_solo_task.done():
+            active_solo_task.cancel()
+        task = asyncio.create_task(coro)
+        active_solo_task = task
+
+        def on_done(done: asyncio.Task[None]) -> None:
+            nonlocal active_solo_task
+            if active_solo_task is done:
+                active_solo_task = None
+            asyncio.create_task(handle_solo_task_error(done))
+
+        task.add_done_callback(on_done)
+
+    def cancel_active_solo_task() -> None:
+        nonlocal active_solo_task
+        if active_solo_task and not active_solo_task.done():
+            active_solo_task.cancel()
+        active_solo_task = None
 
     async def emit_solo_trace(
         session: SoloSessionState,
@@ -197,6 +235,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         session: SoloSessionState,
         result: dict[str, Any],
     ) -> None:
+        if not is_solo_running(session):
+            return
+
         success = bool(result.get("success", False))
         action = str(result.get("action", "unknown"))
         execution_error = result.get("executionError")
@@ -319,22 +360,30 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             await emit_solo_status(session)
             return
 
-        await decide_and_emit_next_step(session, session.last_screenshot_path)
+        if is_solo_running(session):
+            await decide_and_emit_next_step(session, session.last_screenshot_path)
 
     async def execute_solo_step(
         session: SoloSessionState,
         action: str,
         action_args: dict[str, Any],
     ) -> None:
+        if not is_solo_running(session):
+            return
+
         try:
             execution_result = await asyncio.to_thread(
                 solo_tools.execute,
                 action,
                 action_args,
             )
+            if not is_solo_running(session):
+                return
             screenshot = execution_result.get("screenshot")
             if not isinstance(screenshot, dict):
                 screenshot = await asyncio.to_thread(solo_tools.screenshot)
+            if not is_solo_running(session):
+                return
             await process_step_result(
                 session,
                 {
@@ -345,11 +394,15 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 },
             )
         except Exception as exc:  # noqa: BLE001
+            if not is_solo_running(session):
+                return
             screenshot_payload: dict[str, Any] | None = None
             try:
                 screenshot_payload = await asyncio.to_thread(solo_tools.screenshot)
             except Exception:  # noqa: BLE001
                 screenshot_payload = None
+            if not is_solo_running(session):
+                return
             await process_step_result(
                 session,
                 {
@@ -362,6 +415,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
     async def decide_and_emit_next_step(session: SoloSessionState, screenshot_path: str) -> None:
         nonlocal solo_service
+        if not is_solo_running(session):
+            return
+
         if solo_service is None:
             session.state = "error"
             session.detail = "SOLO 服务未初始化。"
@@ -375,6 +431,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 screenshot_path=screenshot_path,
                 history=session.history,
             )
+            if not is_solo_running(session):
+                return
             slog(
                 f"request={session.request_id} decision action={decision.action} "
                 f"done={decision.is_task_done} step={session.step_count + 1}"
@@ -411,6 +469,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 result=str(exc),
             )
             await emit_solo_status(session)
+            return
+
+        if not is_solo_running(session):
             return
 
         session.history.append(
@@ -467,7 +528,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             await emit_solo_status(session)
             return
 
-        if assessment.level == "confirm":
+        permission_mode = runtime_state.get_config().permissions.mode
+        if assessment.level == "confirm" and permission_mode != "all":
             session.state = "waiting_user_confirmation"
             session.pending_confirmation = {
                 "action": decision.action,
@@ -623,6 +685,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                             }
                         },
                     )
+                    await safe_send(
+                        "server:message",
+                        pending.request_id,
+                        pending.conversation_id,
+                        {"content": f"确认后的工具动作 `{pending.name}` 执行失败：{exc}"},
+                    )
                 continue
 
             if envelope.type == "client:list_solo_displays":
@@ -678,7 +746,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     active_solo.detail = "首帧截图失败，无法启动 SOLO。"
                     await emit_solo_status(active_solo)
                 else:
-                    await decide_and_emit_next_step(active_solo, active_solo.last_screenshot_path)
+                    schedule_solo_task(
+                        decide_and_emit_next_step(
+                            active_solo,
+                            active_solo.last_screenshot_path,
+                        )
+                    )
                 continue
 
             if envelope.type == "client:solo_control":
@@ -699,6 +772,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 if control.action == "pause":
                     active_solo.state = "paused"
                     active_solo.detail = "用户已暂停 SOLO。"
+                    cancel_active_solo_task()
                     solo_logger.write("paused", {"reason": active_solo.detail})
                     await emit_solo_trace(
                         active_solo,
@@ -727,14 +801,21 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                             params={"action": "resume"},
                         )
                         await emit_solo_status(active_solo)
-                        await decide_and_emit_next_step(active_solo, active_solo.last_screenshot_path)
+                        schedule_solo_task(
+                            decide_and_emit_next_step(
+                                active_solo,
+                                active_solo.last_screenshot_path,
+                            )
+                        )
                     continue
 
                 if control.action == "stop":
                     active_solo.state = "aborted"
                     active_solo.detail = "用户已结束 SOLO。"
                     active_solo.completed_at = utc_now()
-                    solo_logger.write("paused", {"reason": active_solo.detail})
+                    active_solo.pending_confirmation = None
+                    cancel_active_solo_task()
+                    solo_logger.write("aborted", {"reason": active_solo.detail})
                     await emit_solo_trace(
                         active_solo,
                         "control",
@@ -776,10 +857,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         expected_outcome=pending["expected_outcome"],
                         screenshot_path=active_solo.last_screenshot_path,
                     )
-                    await execute_solo_step(
-                        active_solo,
-                        str(pending["action"]),
-                        dict(pending["action_args"]),
+                    schedule_solo_task(
+                        execute_solo_step(
+                            active_solo,
+                            str(pending["action"]),
+                            dict(pending["action_args"]),
+                        )
                     )
                     continue
 

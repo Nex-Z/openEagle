@@ -21,6 +21,7 @@ from .. import default_tools
 
 from ..config import AgentConfig, AppConfig, McpConfig, SkillConfig, ToolConfig
 from ..confirmations import ToolConfirmationStore
+from ..prompts import build_chat_instructions
 from .base import ProviderStreamEvent, ReplyChunk, ReplyToolConfirmation, ReplyTrace
 
 
@@ -77,7 +78,7 @@ class AgnoAgentProvider:
         selected_tools: list[ToolConfig],
         selected_mcp: list[McpConfig],
         selected_skills: list[SkillConfig],
-    ) -> Agent:
+    ) -> tuple[Agent, dict[str, str]]:
         model_id = self._agent_config.model_id or "gpt-5-mini"
 
         if self._agent_config.provider == "openai-like":
@@ -94,47 +95,35 @@ class AgnoAgentProvider:
                 api_key=self._agent_config.api_key,
             )
 
-        instructions = [
-            "你是 openEagle 的桌面 Agent 助手。",
-            f"当前会话 ID: {conversation_id}",
-            "回答默认使用简洁中文。",
-        ]
+        instructions = build_chat_instructions(
+            conversation_id=conversation_id,
+            selected_tools=selected_tools,
+            selected_mcp=selected_mcp,
+            selected_skills=selected_skills,
+        )
 
-        if selected_tools:
-          instructions.append(
-              "本轮可用工具：" + "；".join(
-                  f"{item.name}（命令: {item.command or '未配置'}，说明: {item.description or '无'}）"
-                  for item in selected_tools
-              )
-          )
-        if selected_mcp:
-          instructions.append(
-              "本轮可用 MCP：" + "；".join(
-                  f"{item.name}（transport: {item.transport}，endpoint: {item.endpoint or '未配置'}，说明: {item.description or '无'}）"
-                  for item in selected_mcp
-              )
-          )
-        if selected_skills:
-          instructions.append(
-              "本轮需遵循的 Skill：" + "；".join(
-                  f"{item.name}（说明: {item.description or '无'}；提示: {item.prompt or '无'}）"
-                  for item in selected_skills
-              )
-          )
+        default_toolkit = default_tools.build_default_tools(
+            workspace_root=workspace_root(),
+            confirmation_store=self._confirmation_store,
+            request_id=self._request_id,
+            conversation_id=self._conversation_id or conversation_id,
+            permission_mode=self._config.permissions.mode,
+        )
+        configured_functions, configured_name_map = default_tools.build_configured_tool_functions(
+            self._config.tools,
+            workspace_root=workspace_root(),
+            confirmation_store=self._confirmation_store,
+            request_id=self._request_id,
+            conversation_id=self._conversation_id or conversation_id,
+            permission_mode=self._config.permissions.mode,
+        )
 
         return Agent(
             model=model,
             markdown=True,
             instructions=instructions,
-            tools=[
-                default_tools.build_default_tools(
-                    workspace_root=workspace_root(),
-                    confirmation_store=self._confirmation_store,
-                    request_id=self._request_id,
-                    conversation_id=self._conversation_id or conversation_id,
-                )
-            ],
-        )
+            tools=[default_toolkit, *configured_functions],
+        ), configured_name_map
 
     @staticmethod
     def _consume_command(prompt: str, prefix: str, name: str) -> tuple[str, bool]:
@@ -169,12 +158,13 @@ class AgnoAgentProvider:
                         kind="tool",
                         name=tool.name,
                         status="completed",
-                        summary="已将工具描述注入当前轮上下文。",
+                        summary="用户本轮显式选择了该工具。",
                         params={
                             "command": tool.command,
+                            "cwd": tool.cwd,
                             "description": tool.description,
                         },
-                        result="模型已知晓该工具的名称、命令和说明。",
+                        result="该工具本轮已被用户点名，可优先考虑使用。",
                         started_at=now,
                         completed_at=now,
                     )
@@ -238,7 +228,7 @@ class AgnoAgentProvider:
         cleaned_prompt, selected_tools, selected_mcp, selected_skills, _ = (
             self._extract_selected_capabilities(prompt)
         )
-        agent = self._build_agent(
+        agent, _ = self._build_agent(
             conversation_id,
             selected_tools=selected_tools,
             selected_mcp=selected_mcp,
@@ -264,7 +254,7 @@ class AgnoAgentProvider:
         for trace in selection_traces:
             yield trace
 
-        agent = self._build_agent(
+        agent, configured_name_map = self._build_agent(
             conversation_id,
             selected_tools=selected_tools,
             selected_mcp=selected_mcp,
@@ -287,10 +277,11 @@ class AgnoAgentProvider:
                 tool = getattr(event, "tool", None)
                 if tool is None:
                     continue
+                tool_name = configured_name_map.get(tool.tool_name or "", tool.tool_name or "未命名工具")
                 yield ReplyTrace(
                     trace_id=tool.tool_call_id or f"tool-call-{tool.tool_name or 'unknown'}",
                     kind="tool",
-                    name=tool.tool_name or "未命名工具",
+                    name=tool_name,
                     status="started",
                     summary="Agent 正在调用工具。",
                     params=to_jsonable(tool.tool_args or {}),
@@ -303,6 +294,7 @@ class AgnoAgentProvider:
                 if tool is None:
                     continue
                 now = utc_now()
+                tool_name = configured_name_map.get(tool.tool_name or "", tool.tool_name or "未命名工具")
                 result_text = stringify_trace_result(tool.result)
                 if isinstance(result_text, str) and result_text.startswith("CONFIRMATION_REQUIRED "):
                     confirmation_id = result_text.split(" ", 1)[1].split(":", 1)[0].strip()
@@ -311,7 +303,7 @@ class AgnoAgentProvider:
                 yield ReplyTrace(
                     trace_id=tool.tool_call_id or f"tool-call-{tool.tool_name or 'unknown'}",
                     kind="tool",
-                    name=tool.tool_name or "未命名工具",
+                    name=tool_name,
                     status="completed",
                     summary="Agent 已完成工具调用。",
                     params=to_jsonable(tool.tool_args or {}),
@@ -324,11 +316,13 @@ class AgnoAgentProvider:
             if isinstance(event, ToolCallErrorEvent):
                 tool = getattr(event, "tool", None)
                 now = utc_now()
+                raw_tool_name = tool.tool_name if tool else ""
+                tool_name = configured_name_map.get(raw_tool_name or "", raw_tool_name or "未命名工具")
                 yield ReplyTrace(
                     trace_id=(tool.tool_call_id if tool else None)
                     or f"tool-call-{tool.tool_name if tool else 'unknown'}",
                     kind="tool",
-                    name=tool.tool_name if tool else "未命名工具",
+                    name=tool_name,
                     status="error",
                     summary="Agent 工具调用失败。",
                     params=to_jsonable((tool.tool_args if tool else {}) or {}),

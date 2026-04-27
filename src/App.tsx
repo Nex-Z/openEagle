@@ -237,6 +237,15 @@ export default function App() {
               setSettingsSection("general");
               setSettingsDrawerOpen(true);
             }}
+            onPermissionModeChange={(mode) =>
+              setSettings((current) => ({
+                ...current,
+                permissions: {
+                  ...current.permissions,
+                  mode,
+                },
+              }))
+            }
             onRejectDangerousStep={rejectDangerousStep}
             onRejectToolConfirmation={rejectToolConfirmation}
             onSend={sendMessage}

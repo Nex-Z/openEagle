@@ -1,24 +1,231 @@
 from __future__ import annotations
 
-import subprocess
+import re
+import hashlib
+import os
+import shutil
 from pathlib import Path
 from typing import Optional
 
 from agno.tools import Toolkit
+from agno.tools.function import Function
 
+from .command_runner import DEFAULT_COMMAND_TAIL, DEFAULT_COMMAND_TIMEOUT_MS
+from .command_runner import execute_workspace_command
+from .config import ToolConfig
 from .confirmations import PendingToolConfirmation, ToolConfirmationStore
 from .safety import assess_tool_action, resolve_workspace_path
 
+DEFAULT_MAX_CHARS = 12_000
+DEFAULT_MAX_SEARCH_RESULTS = 50
+DEFAULT_MAX_SEARCH_FILE_BYTES = 2_000_000
+DEFAULT_MAX_LIST_RESULTS = 200
+DEFAULT_IGNORED_NAMES = {
+    ".git",
+    "node_modules",
+    "dist",
+    "build",
+    "coverage",
+    "target",
+    ".venv",
+    "venv",
+    "__pycache__",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    ".next",
+    ".turbo",
+    ".open-eagle",
+    ".idea",
+}
+DEFAULT_BINARY_EXTENSIONS = {
+    ".7z",
+    ".avif",
+    ".bmp",
+    ".class",
+    ".dll",
+    ".exe",
+    ".gif",
+    ".ico",
+    ".jar",
+    ".jpeg",
+    ".jpg",
+    ".lockb",
+    ".mp3",
+    ".mp4",
+    ".pdf",
+    ".png",
+    ".pyc",
+    ".so",
+    ".wasm",
+    ".webp",
+    ".zip",
+}
 
-def _tail_output(stdout: str, stderr: str, returncode: int, tail: int) -> str:
-    combined = stdout if returncode == 0 else stderr or stdout
-    if not combined:
-        combined = "(no output)"
-    lines = combined.strip().splitlines()
-    tail_lines = "\n".join(lines[-max(tail, 1) :])
-    if returncode != 0:
-        return f"Error (exit {returncode}):\n{tail_lines}"
-    return tail_lines
+
+def _truncate_text(text: str, max_chars: int) -> str:
+    limit = max(1, int(max_chars))
+    if len(text) <= limit:
+        return text
+    omitted = len(text) - limit
+    return f"{text[:limit]}\n\n...[truncated {omitted} chars]"
+
+
+def _relative_path(path: Path, root: Path) -> str:
+    return path.relative_to(root).as_posix()
+
+
+def _is_ignored_path(path: Path, root: Path) -> bool:
+    try:
+        relative = path.relative_to(root)
+    except ValueError:
+        return True
+    return any(part in DEFAULT_IGNORED_NAMES for part in relative.parts)
+
+
+def _iter_workspace_entries(base_dir: Path, root: Path):
+    for current, dir_names, file_names in os.walk(base_dir):
+        current_path = Path(current)
+        dir_names[:] = [
+            name
+            for name in dir_names
+            if not _is_ignored_path(current_path / name, root)
+        ]
+        for name in dir_names:
+            yield current_path / name
+        for name in file_names:
+            candidate = current_path / name
+            if not _is_ignored_path(candidate, root):
+                yield candidate
+
+
+def _iter_workspace_files(base_dir: Path, root: Path):
+    for candidate in _iter_workspace_entries(base_dir, root):
+        if candidate.is_file():
+            yield candidate
+
+
+def _normalize_globs(value: object) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [value] if value.strip() else []
+    if isinstance(value, list):
+        return [str(item) for item in value if str(item).strip()]
+    return []
+
+
+def _matches_any_glob(relative_path: str, globs: list[str]) -> bool:
+    candidate = Path(relative_path)
+    return any(candidate.match(pattern) or relative_path == pattern for pattern in globs)
+
+
+def _is_probably_binary(path: Path) -> bool:
+    if path.suffix.lower() in DEFAULT_BINARY_EXTENSIONS:
+        return True
+    try:
+        with path.open("rb") as handle:
+            sample = handle.read(4096)
+    except OSError:
+        return True
+    return b"\0" in sample
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _sha256_text(text: str) -> str:
+    return hashlib.sha256(text.encode("utf-8")).hexdigest()
+
+
+def create_confirmation_response(
+    confirmation_store: ToolConfirmationStore | None,
+    request_id: str | None,
+    conversation_id: str | None,
+    name: str,
+    reason: str,
+    params: dict[str, object],
+) -> str:
+    if not confirmation_store or not request_id or not conversation_id:
+        return "Error: 当前工具需要确认，但确认通道未初始化。"
+    pending = confirmation_store.create(
+        request_id=request_id,
+        conversation_id=conversation_id,
+        kind="tool",
+        name=name,
+        reason=reason,
+        params=params,
+    )
+    return (
+        "CONFIRMATION_REQUIRED "
+        f"{pending.confirmation_id}: {reason}。"
+        "请等待用户在 openEagle 中允许或拒绝后再继续。"
+    )
+
+
+def _replace_text(path: Path, old_text: str, new_text: str, expected_occurrences: int) -> str:
+    current = path.read_text(encoding="utf-8")
+    occurrences = current.count(old_text)
+    if occurrences != expected_occurrences:
+        return (
+            "Error: 替换命中次数不符合预期。"
+            f" expected={expected_occurrences}, actual={occurrences}"
+        )
+
+    updated = current.replace(old_text, new_text, expected_occurrences)
+    path.write_text(updated, encoding="utf-8")
+    return f"Successfully replaced {occurrences} occurrence(s) in: {path}"
+
+
+def _apply_text_edits(
+    path: Path,
+    edits: object,
+    expected_sha256: str | None = None,
+) -> str:
+    if not isinstance(edits, list) or not edits:
+        return "Error: edits 必须是非空列表。"
+
+    try:
+        current = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError:
+        return "Error: 目标文件不是可按 UTF-8 读取的文本文件。"
+
+    if expected_sha256 and _sha256_text(current) != expected_sha256:
+        return "Error: expected_sha256 与当前文件内容不匹配，未写入。"
+
+    normalized: list[tuple[str, str, int]] = []
+    for index, edit in enumerate(edits, start=1):
+        if not isinstance(edit, dict):
+            return f"Error: 第 {index} 个 edit 必须是对象。"
+        old_text = str(edit.get("old_text", ""))
+        new_text = str(edit.get("new_text", ""))
+        try:
+            expected_occurrences = int(edit.get("expected_occurrences", 1))
+        except (TypeError, ValueError):
+            return f"Error: 第 {index} 个 edit 的 expected_occurrences 必须是整数。"
+        if not old_text:
+            return f"Error: 第 {index} 个 edit 缺少 old_text。"
+        if expected_occurrences < 1:
+            return f"Error: 第 {index} 个 edit 的 expected_occurrences 必须 >= 1。"
+        actual = current.count(old_text)
+        if actual != expected_occurrences:
+            return (
+                f"Error: 第 {index} 个 edit 命中次数不符合预期。"
+                f" expected={expected_occurrences}, actual={actual}"
+            )
+        normalized.append((old_text, new_text, expected_occurrences))
+
+    updated = current
+    for old_text, new_text, expected_occurrences in normalized:
+        updated = updated.replace(old_text, new_text, expected_occurrences)
+
+    path.write_text(updated, encoding="utf-8")
+    return f"Successfully applied {len(normalized)} text edit(s) in: {path}"
 
 
 def execute_confirmed_tool(workspace_root: Path, pending: PendingToolConfirmation) -> str:
@@ -31,24 +238,92 @@ def execute_confirmed_tool(workspace_root: Path, pending: PendingToolConfirmatio
         target.write_text(content, encoding="utf-8")
         return f"Successfully wrote UTF-8 file: {target}"
 
+    if pending.name == "create_directory":
+        path = str(pending.params.get("path", ""))
+        target = resolve_workspace_path(root, path)
+        target.mkdir(parents=True, exist_ok=True)
+        return f"Successfully created directory: {target}"
+
+    if pending.name == "copy_path":
+        source = resolve_workspace_path(root, str(pending.params.get("source", "")))
+        destination = resolve_workspace_path(root, str(pending.params.get("destination", "")))
+        overwrite = bool(pending.params.get("overwrite", False))
+        if destination.exists() and not overwrite:
+            return f"Error: 目标已存在: {destination}"
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        if source.is_dir():
+            if destination.exists() and overwrite:
+                if destination.is_dir():
+                    shutil.rmtree(destination)
+                else:
+                    destination.unlink()
+            shutil.copytree(source, destination)
+        else:
+            shutil.copy2(source, destination)
+        return f"Successfully copied: {source} -> {destination}"
+
+    if pending.name == "move_path":
+        source = resolve_workspace_path(root, str(pending.params.get("source", "")))
+        destination = resolve_workspace_path(root, str(pending.params.get("destination", "")))
+        overwrite = bool(pending.params.get("overwrite", False))
+        if destination.exists() and not overwrite:
+            return f"Error: 目标已存在: {destination}"
+        if destination.exists():
+            if destination.is_dir():
+                shutil.rmtree(destination)
+            else:
+                destination.unlink()
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        shutil.move(str(source), str(destination))
+        return f"Successfully moved: {source} -> {destination}"
+
+    if pending.name == "delete_path":
+        target = resolve_workspace_path(root, str(pending.params.get("path", "")))
+        recursive = bool(pending.params.get("recursive", False))
+        if target.is_dir():
+            if not recursive:
+                return "Error: 目标是目录，必须 recursive=true 才能删除。"
+            shutil.rmtree(target)
+        else:
+            target.unlink()
+        return f"Successfully deleted: {target}"
+
+    if pending.name == "replace_text_in_file":
+        path = str(pending.params.get("path", ""))
+        old_text = str(pending.params.get("old_text", ""))
+        new_text = str(pending.params.get("new_text", ""))
+        expected_occurrences = int(pending.params.get("expected_occurrences", 1))
+        target = resolve_workspace_path(root, path)
+        return _replace_text(target, old_text, new_text, expected_occurrences)
+
+    if pending.name == "apply_text_edits":
+        path = str(pending.params.get("path", ""))
+        edits = pending.params.get("edits", [])
+        expected_sha256 = str(pending.params.get("expected_sha256", "") or "")
+        target = resolve_workspace_path(root, path)
+        return _apply_text_edits(target, edits, expected_sha256 or None)
+
     if pending.name == "run_command":
         command = str(pending.params.get("command", ""))
         cwd = str(pending.params.get("cwd", "."))
-        tail = int(pending.params.get("tail", 120))
-        working_dir = resolve_workspace_path(root, cwd)
-        if not working_dir.exists() or not working_dir.is_dir():
-            return f"Error: 无效执行目录: {working_dir}"
-
-        completed = subprocess.run(
-            command,
-            cwd=str(working_dir),
-            shell=True,
-            capture_output=True,
-            text=True,
-            encoding="utf-8",
-            errors="replace",
+        tail = int(pending.params.get("tail", DEFAULT_COMMAND_TAIL))
+        timeout_ms = int(pending.params.get("timeout_ms", DEFAULT_COMMAND_TIMEOUT_MS))
+        return execute_workspace_command(
+            workspace_root=root,
+            command=command,
+            cwd=cwd,
+            tail=tail,
+            timeout_ms=timeout_ms,
         )
-        return _tail_output(completed.stdout, completed.stderr, completed.returncode, tail)
+
+    if pending.params.get("toolId") and pending.params.get("command"):
+        return execute_workspace_command(
+            workspace_root=root,
+            command=str(pending.params.get("command", "")),
+            cwd=str(pending.params.get("cwd", ".")),
+            tail=int(pending.params.get("tail", DEFAULT_COMMAND_TAIL)),
+            timeout_ms=int(pending.params.get("timeout_ms", DEFAULT_COMMAND_TIMEOUT_MS)),
+        )
 
     return f"Error: unsupported confirmed tool: {pending.name}"
 
@@ -60,24 +335,35 @@ class OpenEagleDefaultTools(Toolkit):
         confirmation_store: ToolConfirmationStore | None = None,
         request_id: str | None = None,
         conversation_id: str | None = None,
+        permission_mode: str = "default",
     ):
         self.workspace_root = workspace_root.resolve()
         self.confirmation_store = confirmation_store
         self.request_id = request_id
         self.conversation_id = conversation_id
+        self.permission_mode = permission_mode
         super().__init__(
             name="open_eagle_default_tools",
             tools=[
+                self.get_file_info,
                 self.list_directory,
                 self.read_text_file,
                 self.write_text_file,
+                self.create_directory,
+                self.copy_path,
+                self.move_path,
+                self.delete_path,
                 self.search_files,
+                self.search_text,
+                self.replace_text_in_file,
+                self.apply_text_edits,
                 self.run_command,
             ],
             instructions=(
-                "你可以使用内置默认工具执行工作区内的常用操作：浏览目录、读取文本文件、"
-                "写入 UTF-8 文本文件、按文件名搜索、执行命令。"
-                "除非确有必要，不要修改工作区外的内容。"
+                "你可以使用内置默认工具执行工作区内的常用操作：查看文件信息、浏览目录、"
+                "读取文本文件、搜索文件名与文本、执行命令，以及在确认后创建目录、写入、"
+                "复制、移动、删除或精确编辑文件。优先用命令行完成可自动化的搜索、构建、"
+                "测试和 Git 检查；修改文件时优先小步精确编辑。"
             ),
             add_instructions=True,
         )
@@ -86,21 +372,61 @@ class OpenEagleDefaultTools(Toolkit):
         return resolve_workspace_path(self.workspace_root, path)
 
     def _create_confirmation(self, name: str, reason: str, params: dict[str, object]) -> str:
-        if not self.confirmation_store or not self.request_id or not self.conversation_id:
-            return "Error: 当前工具需要确认，但确认通道未初始化。"
-        pending = self.confirmation_store.create(
+        return create_confirmation_response(
+            confirmation_store=self.confirmation_store,
             request_id=self.request_id,
             conversation_id=self.conversation_id,
-            kind="tool",
             name=name,
             reason=reason,
             params=params,
         )
-        return (
-            "CONFIRMATION_REQUIRED "
-            f"{pending.confirmation_id}: {reason}。"
-            "请等待用户在 openEagle 中允许或拒绝后再继续。"
+
+    def _should_confirm(self) -> bool:
+        return self.permission_mode != "all"
+
+    def _run_guarded_tool(self, name: str, params: dict[str, object]) -> str:
+        assessment = assess_tool_action(name, params, self.workspace_root)
+        if assessment.level == "blocked":
+            return f"Error: {assessment.reason}"
+        if assessment.level == "confirm" and self._should_confirm():
+            return self._create_confirmation(name, assessment.reason, params)
+        return execute_confirmed_tool(
+            self.workspace_root,
+            PendingToolConfirmation(
+                confirmation_id="auto",
+                request_id=self.request_id or "auto",
+                conversation_id=self.conversation_id or "auto",
+                kind="tool",
+                name=name,
+                reason=assessment.reason,
+                params=params,
+            ),
         )
+
+    def get_file_info(self, path: str) -> str:
+        """返回工作区内路径的基础信息。
+
+        Args:
+            path: 相对工作区根目录的路径。
+
+        Returns:
+            str: 路径类型、大小、更新时间和文件哈希等信息。
+        """
+        target = self._resolve_path(path)
+        if not target.exists():
+            return f"Error: 路径不存在: {target}"
+
+        stat = target.stat()
+        info = [
+            f"path: {_relative_path(target, self.workspace_root)}",
+            f"type: {'directory' if target.is_dir() else 'file'}",
+            f"sizeBytes: {stat.st_size}",
+            f"modifiedAt: {stat.st_mtime}",
+            f"ignoredByDefault: {_is_ignored_path(target, self.workspace_root)}",
+        ]
+        if target.is_file():
+            info.append(f"sha256: {_sha256_file(target)}")
+        return "\n".join(info)
 
     def list_directory(self, path: str = ".") -> str:
         """列出工作区内指定目录的文件和子目录。
@@ -119,15 +445,28 @@ class OpenEagleDefaultTools(Toolkit):
 
         entries = []
         for item in sorted(target.iterdir(), key=lambda entry: (not entry.is_dir(), entry.name.lower())):
+            if _is_ignored_path(item, self.workspace_root):
+                continue
             suffix = "/" if item.is_dir() else ""
             entries.append(f"{item.name}{suffix}")
         return "\n".join(entries) if entries else "(empty)"
 
-    def read_text_file(self, path: str) -> str:
+    def read_text_file(
+        self,
+        path: str,
+        start_line: int | None = None,
+        end_line: int | None = None,
+        max_chars: int = DEFAULT_MAX_CHARS,
+        include_line_numbers: bool = False,
+    ) -> str:
         """以 UTF-8 读取工作区内的文本文件。
 
         Args:
             path: 相对工作区根目录的文件路径。
+            start_line: 可选起始行号，从 1 开始。
+            end_line: 可选结束行号，包含该行。
+            max_chars: 最多返回字符数，默认截断超长内容。
+            include_line_numbers: 是否在每行前包含行号。
 
         Returns:
             str: 文件文本内容。
@@ -137,7 +476,58 @@ class OpenEagleDefaultTools(Toolkit):
             return f"Error: 文件不存在: {target}"
         if not target.is_file():
             return f"Error: 目标不是文件: {target}"
-        return target.read_text(encoding="utf-8")
+
+        if start_line is not None and start_line < 1:
+            return "Error: start_line 必须 >= 1。"
+        if end_line is not None and end_line < 1:
+            return "Error: end_line 必须 >= 1。"
+        if start_line is not None and end_line is not None and end_line < start_line:
+            return "Error: end_line 不能小于 start_line。"
+        if _is_probably_binary(target):
+            return "Error: 目标看起来是二进制文件，不能作为 UTF-8 文本读取。"
+
+        limit = max(1, int(max_chars))
+        start = start_line or 1
+        pieces: list[str] = []
+        char_count = 0
+        saw_requested_line = False
+        truncated = False
+
+        try:
+            with target.open("r", encoding="utf-8") as handle:
+                for line_number, raw_line in enumerate(handle, start=1):
+                    if line_number < start:
+                        continue
+                    if end_line is not None and line_number > end_line:
+                        break
+                    saw_requested_line = True
+                    line = raw_line.rstrip("\r\n")
+                    if include_line_numbers:
+                        line = f"{line_number}: {line}"
+                    prefix = "" if not pieces else "\n"
+                    next_piece = f"{prefix}{line}"
+                    remaining = limit - char_count
+                    if remaining <= 0:
+                        truncated = True
+                        break
+                    if len(next_piece) > remaining:
+                        pieces.append(next_piece[:remaining])
+                        truncated = True
+                        break
+                    pieces.append(next_piece)
+                    char_count += len(next_piece)
+        except UnicodeDecodeError:
+            return "Error: 目标文件不是有效 UTF-8 文本。"
+        except OSError as exc:
+            return f"Error: 读取文件失败: {exc}"
+
+        if not saw_requested_line:
+            return "(no content in requested line range)"
+
+        content = "".join(pieces)
+        if truncated:
+            return f"{content}\n\n...[truncated at max_chars={limit}]"
+        return content
 
     def write_text_file(self, path: str, content: str) -> str:
         """以 UTF-8 写入工作区内文本文件。
@@ -150,22 +540,75 @@ class OpenEagleDefaultTools(Toolkit):
             str: 写入结果。
         """
         params = {"path": path, "content": content}
-        assessment = assess_tool_action("write_text_file", params, self.workspace_root)
-        if assessment.level == "blocked":
-            return f"Error: {assessment.reason}"
-        if assessment.level == "confirm":
-            return self._create_confirmation("write_text_file", assessment.reason, params)
-        return execute_confirmed_tool(
-            self.workspace_root,
-            PendingToolConfirmation(
-                confirmation_id="auto",
-                request_id=self.request_id or "auto",
-                conversation_id=self.conversation_id or "auto",
-                kind="tool",
-                name="write_text_file",
-                reason=assessment.reason,
-                params=params,
-            ),
+        return self._run_guarded_tool("write_text_file", params)
+
+    def create_directory(self, path: str) -> str:
+        """在工作区内创建目录。
+
+        Args:
+            path: 相对工作区根目录的目录路径。
+
+        Returns:
+            str: 创建结果。
+        """
+        return self._run_guarded_tool("create_directory", {"path": path})
+
+    def copy_path(self, source: str, destination: str, overwrite: bool = False) -> str:
+        """复制工作区内的文件或目录。
+
+        Args:
+            source: 源路径，相对工作区根目录。
+            destination: 目标路径，相对工作区根目录。
+            overwrite: 目标存在时是否覆盖。
+
+        Returns:
+            str: 复制结果。
+        """
+        return self._run_guarded_tool(
+            "copy_path",
+            {
+                "source": source,
+                "destination": destination,
+                "overwrite": overwrite,
+            },
+        )
+
+    def move_path(self, source: str, destination: str, overwrite: bool = False) -> str:
+        """移动或重命名工作区内的文件或目录。
+
+        Args:
+            source: 源路径，相对工作区根目录。
+            destination: 目标路径，相对工作区根目录。
+            overwrite: 目标存在时是否覆盖。
+
+        Returns:
+            str: 移动结果。
+        """
+        return self._run_guarded_tool(
+            "move_path",
+            {
+                "source": source,
+                "destination": destination,
+                "overwrite": overwrite,
+            },
+        )
+
+    def delete_path(self, path: str, recursive: bool = False) -> str:
+        """删除工作区内的文件或目录。
+
+        Args:
+            path: 相对工作区根目录的路径。
+            recursive: 删除目录时是否递归删除。
+
+        Returns:
+            str: 删除结果。
+        """
+        return self._run_guarded_tool(
+            "delete_path",
+            {
+                "path": path,
+                "recursive": recursive,
+            },
         )
 
     def search_files(self, keyword: str, path: str = ".") -> str:
@@ -183,43 +626,198 @@ class OpenEagleDefaultTools(Toolkit):
             return f"Error: 路径不存在: {base_dir}"
         if not base_dir.is_dir():
             return f"Error: 目标不是目录: {base_dir}"
+        if _is_ignored_path(base_dir, self.workspace_root):
+            return "(ignored path)"
+        if not keyword.strip():
+            return "Error: keyword 不能为空。"
 
         keyword_lower = keyword.lower()
-        matches = []
-        for candidate in base_dir.rglob("*"):
+        matches: list[str] = []
+        truncated = False
+        for candidate in _iter_workspace_entries(base_dir, self.workspace_root):
             if keyword_lower in candidate.name.lower():
-                matches.append(str(candidate.relative_to(self.workspace_root)))
-        return "\n".join(matches[:200]) if matches else "(no matches)"
+                matches.append(_relative_path(candidate, self.workspace_root))
+                if len(matches) >= DEFAULT_MAX_LIST_RESULTS:
+                    truncated = True
+                    break
+        if not matches:
+            return "(no matches)"
+        result = "\n".join(matches)
+        if truncated:
+            result += f"\n...[truncated at max_results={DEFAULT_MAX_LIST_RESULTS}]"
+        return result
 
-    def run_command(self, command: str, cwd: str = ".", tail: int = 120) -> str:
+    def search_text(
+        self,
+        query: str,
+        path: str = ".",
+        max_results: int = DEFAULT_MAX_SEARCH_RESULTS,
+        include_globs: list[str] | str | None = None,
+        exclude_globs: list[str] | str | None = None,
+        case_sensitive: bool = False,
+    ) -> str:
+        """在工作区内按文本内容搜索。
+
+        Args:
+            query: 要搜索的文本。
+            path: 搜索起始目录，相对工作区根目录。
+            max_results: 最多返回多少条匹配记录。
+            include_globs: 可选包含 glob，如 ["src/**/*.ts"]。
+            exclude_globs: 可选排除 glob。
+            case_sensitive: 是否区分大小写。
+
+        Returns:
+            str: 命中的相对路径、行号和文本片段。
+        """
+        base_dir = self._resolve_path(path)
+        if not base_dir.exists():
+            return f"Error: 路径不存在: {base_dir}"
+        if not base_dir.is_dir():
+            return f"Error: 目标不是目录: {base_dir}"
+        if _is_ignored_path(base_dir, self.workspace_root):
+            return "(ignored path)"
+        if not query.strip():
+            return "Error: query 不能为空。"
+
+        include_patterns = _normalize_globs(include_globs)
+        exclude_patterns = _normalize_globs(exclude_globs)
+        needle = query if case_sensitive else query.lower()
+        limit = max(1, min(int(max_results), 200))
+        matches: list[str] = []
+        skipped_large = 0
+        skipped_binary = 0
+        truncated = False
+
+        for candidate in _iter_workspace_files(base_dir, self.workspace_root):
+            relative = _relative_path(candidate, self.workspace_root)
+            if include_patterns and not _matches_any_glob(relative, include_patterns):
+                continue
+            if exclude_patterns and _matches_any_glob(relative, exclude_patterns):
+                continue
+
+            try:
+                if candidate.stat().st_size > DEFAULT_MAX_SEARCH_FILE_BYTES:
+                    skipped_large += 1
+                    continue
+            except OSError:
+                continue
+            if _is_probably_binary(candidate):
+                skipped_binary += 1
+                continue
+
+            try:
+                with candidate.open("r", encoding="utf-8") as handle:
+                    for line_number, line in enumerate(handle, start=1):
+                        haystack = line if case_sensitive else line.lower()
+                        if needle in haystack:
+                            matches.append(f"{relative}:{line_number}: {line.strip()}")
+                            if len(matches) >= limit:
+                                truncated = True
+                                raise StopIteration
+            except StopIteration:
+                break
+            except UnicodeDecodeError:
+                skipped_binary += 1
+                continue
+            except OSError:
+                continue
+
+        if not matches:
+            notes = []
+            if skipped_large:
+                notes.append(f"skipped_large={skipped_large}")
+            if skipped_binary:
+                notes.append(f"skipped_binary={skipped_binary}")
+            return "(no matches)" if not notes else f"(no matches; {', '.join(notes)})"
+
+        result = "\n".join(matches)
+        notes = []
+        if truncated:
+            notes.append(f"truncated at max_results={limit}")
+        if skipped_large:
+            notes.append(f"skipped_large={skipped_large}")
+        if skipped_binary:
+            notes.append(f"skipped_binary={skipped_binary}")
+        if notes:
+            result += "\n...[" + ", ".join(notes) + "]"
+        return result
+
+    def replace_text_in_file(
+        self,
+        path: str,
+        old_text: str,
+        new_text: str,
+        expected_occurrences: int = 1,
+    ) -> str:
+        """在单个工作区文件中做精确文本替换。
+
+        Args:
+            path: 相对工作区根目录的文件路径。
+            old_text: 要被替换的原始文本。
+            new_text: 新文本。
+            expected_occurrences: 预期命中次数，默认 1。
+
+        Returns:
+            str: 替换结果。
+        """
+        params = {
+            "path": path,
+            "old_text": old_text,
+            "new_text": new_text,
+            "expected_occurrences": expected_occurrences,
+        }
+        return self._run_guarded_tool("replace_text_in_file", params)
+
+    def apply_text_edits(
+        self,
+        path: str,
+        edits: list[dict[str, object]],
+        expected_sha256: str | None = None,
+    ) -> str:
+        """在单个工作区文件中一次应用多段精确文本替换。
+
+        Args:
+            path: 相对工作区根目录的文件路径。
+            edits: 替换列表，每项包含 old_text、new_text、expected_occurrences。
+            expected_sha256: 可选当前 UTF-8 文本 sha256，用于防止并发覆盖。
+
+        Returns:
+            str: 编辑结果。
+        """
+        return self._run_guarded_tool(
+            "apply_text_edits",
+            {
+                "path": path,
+                "edits": edits,
+                "expected_sha256": expected_sha256 or "",
+            },
+        )
+
+    def run_command(
+        self,
+        command: str,
+        cwd: str = ".",
+        tail: int = DEFAULT_COMMAND_TAIL,
+        timeout_ms: int = DEFAULT_COMMAND_TIMEOUT_MS,
+    ) -> str:
         """在工作区内执行命令并返回输出。
 
         Args:
             command: 要执行的命令字符串。
             cwd: 命令执行目录，相对工作区根目录。
             tail: 最多返回输出的最后多少行。
+            timeout_ms: 命令超时毫秒数。
 
         Returns:
             str: 命令输出或错误信息。
         """
-        params = {"command": command, "cwd": cwd, "tail": tail}
-        assessment = assess_tool_action("run_command", params, self.workspace_root)
-        if assessment.level == "blocked":
-            return f"Error: {assessment.reason}"
-        if assessment.level == "confirm":
-            return self._create_confirmation("run_command", assessment.reason, params)
-        return execute_confirmed_tool(
-            self.workspace_root,
-            PendingToolConfirmation(
-                confirmation_id="auto",
-                request_id=self.request_id or "auto",
-                conversation_id=self.conversation_id or "auto",
-                kind="tool",
-                name="run_command",
-                reason=assessment.reason,
-                params=params,
-            ),
-        )
+        params = {
+            "command": command,
+            "cwd": cwd,
+            "tail": tail,
+            "timeout_ms": timeout_ms,
+        }
+        return self._run_guarded_tool("run_command", params)
 
 
 def build_default_tools(
@@ -227,6 +825,7 @@ def build_default_tools(
     confirmation_store: ToolConfirmationStore | None = None,
     request_id: str | None = None,
     conversation_id: str | None = None,
+    permission_mode: str = "default",
 ) -> OpenEagleDefaultTools:
     root = workspace_root or Path(__file__).resolve().parents[2]
     return OpenEagleDefaultTools(
@@ -234,4 +833,110 @@ def build_default_tools(
         confirmation_store=confirmation_store,
         request_id=request_id,
         conversation_id=conversation_id,
+        permission_mode=permission_mode,
     )
+
+
+def _build_configured_tool_name(tool: ToolConfig) -> str:
+    safe_name = re.sub(r"[^0-9A-Za-z_-]+", "_", tool.name).strip("_").lower() or "custom"
+    safe_id = re.sub(r"[^0-9A-Za-z]+", "", tool.id).lower() or "tool"
+    suffix = safe_id[:8]
+    max_name_length = 64 - len("tool__") - len(suffix)
+    truncated_name = safe_name[:max_name_length].strip("_") or "custom"
+    return f"tool_{truncated_name}_{suffix}"
+
+
+def build_configured_tool_functions(
+    tool_configs: list[ToolConfig],
+    workspace_root: Optional[Path] = None,
+    confirmation_store: ToolConfirmationStore | None = None,
+    request_id: str | None = None,
+    conversation_id: str | None = None,
+    permission_mode: str = "default",
+) -> tuple[list[Function], dict[str, str]]:
+    root = (workspace_root or Path(__file__).resolve().parents[2]).resolve()
+    functions: list[Function] = []
+    name_map: dict[str, str] = {}
+
+    for tool in tool_configs:
+        if not tool.enabled or not tool.command.strip():
+            continue
+
+        function_name = _build_configured_tool_name(tool)
+        display_name = tool.name.strip() or "未命名工具"
+        working_dir = tool.cwd.strip() or "."
+        timeout_ms = int(tool.timeout_ms)
+        tail = int(tool.tail)
+
+        def make_configured_entrypoint(
+            command: str,
+            cwd: str,
+            timeout_ms: int,
+            tail: int,
+            display_name: str,
+            tool_id: str,
+        ):
+            def run_configured_tool() -> str:
+                params = {
+                    "toolId": tool_id,
+                    "toolName": display_name,
+                    "command": command,
+                    "cwd": cwd,
+                    "timeout_ms": timeout_ms,
+                    "tail": tail,
+                }
+                assessment = assess_tool_action("configured_tool", params, root)
+                if assessment.level == "blocked":
+                    return f"Error: {assessment.reason}"
+                if assessment.level == "confirm" and permission_mode != "all":
+                    return create_confirmation_response(
+                        confirmation_store=confirmation_store,
+                        request_id=request_id,
+                        conversation_id=conversation_id,
+                        name=display_name,
+                        reason=assessment.reason,
+                        params=params,
+                    )
+                return execute_confirmed_tool(
+                    root,
+                    PendingToolConfirmation(
+                        confirmation_id="auto",
+                        request_id=request_id or "auto",
+                        conversation_id=conversation_id or "auto",
+                        kind="tool",
+                        name=display_name,
+                        reason=assessment.reason,
+                        params=params,
+                    ),
+                )
+
+            return run_configured_tool
+
+        description_parts = [
+            f"无参数自定义工具，只执行固定工作区命令。原始名称: {display_name}。",
+            f"工作目录: {working_dir}。",
+            f"超时: {timeout_ms}ms；输出尾部行数: {tail}。",
+            f"命令: {tool.command}.",
+            "模型不能传入附加参数，也不能追加 shell 参数。",
+            "命令会先经过工作区边界、风险分级和确认流。",
+        ]
+        if tool.description.strip():
+            description_parts.insert(1, f"说明: {tool.description.strip()}.")
+
+        functions.append(
+            Function(
+                name=function_name,
+                description=" ".join(description_parts),
+                entrypoint=make_configured_entrypoint(
+                    command=tool.command,
+                    cwd=working_dir,
+                    timeout_ms=timeout_ms,
+                    tail=tail,
+                    display_name=display_name,
+                    tool_id=tool.id,
+                ),
+            )
+        )
+        name_map[function_name] = display_name
+
+    return functions, name_map

@@ -8,6 +8,7 @@ export type ConnectionPhase =
   | "disconnected";
 
 export type ThemeMode = "dark" | "light" | "system";
+export type PermissionMode = "default" | "all";
 
 export interface Envelope<TPayload = Record<string, unknown>> {
   type: string;
@@ -85,6 +86,10 @@ export interface AppearanceSettings {
   themeMode: ThemeMode;
 }
 
+export interface PermissionSettings {
+  mode: PermissionMode;
+}
+
 export interface SoloSettings {
   preferredDisplayIndex: number;
 }
@@ -94,6 +99,9 @@ export interface ToolConfig {
   name: string;
   description: string;
   command: string;
+  cwd: string;
+  timeoutMs: number;
+  tail: number;
   enabled: boolean;
 }
 
@@ -118,6 +126,7 @@ export interface AppSettings {
   feishu: FeishuSettings;
   agent: AgentSettings;
   appearance: AppearanceSettings;
+  permissions: PermissionSettings;
   solo: SoloSettings;
   tools: ToolConfig[];
   mcp: McpServerConfig[];
