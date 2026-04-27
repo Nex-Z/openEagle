@@ -1,7 +1,9 @@
-import { useEffect, useState } from "react";
-import { ChatPanel } from "./components/ChatPanel";
-import { SettingsPanel } from "./components/SettingsPanel";
-import { Sidebar } from "./components/Sidebar";
+import { useEffect, useMemo, useState } from "react";
+import { ChatWorkspace } from "./components/chat/ChatWorkspace";
+import { ActivityInspector } from "./components/inspector/ActivityInspector";
+import { AppShell } from "./components/layout/AppShell";
+import { NavigationSidebar } from "./components/layout/NavigationSidebar";
+import { SettingsDrawer, type SettingsSection } from "./components/settings/SettingsDrawer";
 import { useBackendConnection } from "./hooks/useBackendConnection";
 import { useTheme } from "./hooks/useTheme";
 import {
@@ -11,9 +13,13 @@ import {
   savePersistedConversations,
   saveSettings,
 } from "./lib/storage";
-import type { AppSettings, ConversationSummary } from "./types/protocol";
-
-type WorkspaceView = "chat" | "general" | "tools" | "mcp" | "skills";
+import type {
+  AgentExecutionTrace,
+  AppSettings,
+  AssistantMessageBlock,
+  ChatMessage,
+  ConversationSummary,
+} from "./types/protocol";
 
 function createConversation(seed?: Partial<ConversationSummary>): ConversationSummary {
   const now = new Date().toISOString();
@@ -22,6 +28,41 @@ function createConversation(seed?: Partial<ConversationSummary>): ConversationSu
     title: seed?.title ?? "新对话",
     updatedAt: seed?.updatedAt ?? now,
   };
+}
+
+function collectMessageTraces(message: ChatMessage) {
+  const blockTraces =
+    message.blocks?.flatMap((block: AssistantMessageBlock) =>
+      block.kind === "trace" ? [block.trace] : [],
+    ) ?? [];
+  return [...(message.traces ?? []), ...blockTraces];
+}
+
+function collectLatestTraces(messages: ChatMessage[]) {
+  const traceMap = new Map<string, AgentExecutionTrace>();
+  for (const message of messages) {
+    for (const trace of collectMessageTraces(message)) {
+      traceMap.set(trace.id, trace);
+    }
+  }
+
+  return Array.from(traceMap.values()).sort(
+    (left, right) =>
+      new Date(right.completedAt ?? right.startedAt).getTime() -
+      new Date(left.completedAt ?? left.startedAt).getTime(),
+  );
+}
+
+function collectAssetMessages(messages: ChatMessage[]) {
+  return messages
+    .filter((message) => message.imagePath)
+    .map((message) => ({
+      id: message.id,
+      imagePath: message.imagePath!,
+      label: message.label || message.role,
+      createdAt: message.createdAt,
+    }))
+    .reverse();
 }
 
 export default function App() {
@@ -39,8 +80,11 @@ export default function App() {
   const [activeConversationId, setActiveConversationId] = useState(
     () => conversationStore[0].summary.id,
   );
-  const [activeView, setActiveView] = useState<WorkspaceView>("chat");
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
+  const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
+  const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const conversations = conversationStore.map((item) => item.summary);
   const activeConversation =
     conversationStore.find((item) => item.summary.id === activeConversationId) ??
@@ -97,6 +141,7 @@ export default function App() {
       );
     },
   );
+
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
@@ -116,6 +161,11 @@ export default function App() {
     setActiveConversationId(fallback);
   }, [activeConversationId, conversationStore]);
 
+  const traces = useMemo(() => collectLatestTraces(messages), [messages]);
+  const assets = useMemo(() => collectAssetMessages(messages), [messages]);
+  const pendingConfirmationCount =
+    Number(Boolean(soloConfirmation)) + Number(Boolean(toolConfirmation));
+
   const createNewConversation = () => {
     const next = createConversation({
       title: `对话 ${conversations.length + 1}`,
@@ -128,7 +178,7 @@ export default function App() {
       ...current,
     ]);
     setActiveConversationId(next.id);
-    setActiveView("chat");
+    setMobileSidebarOpen(false);
   };
 
   const deleteConversation = (conversationId: string) => {
@@ -148,63 +198,93 @@ export default function App() {
       setActiveConversationId(replacement.summary.id);
       return [replacement];
     });
-    setActiveView("chat");
   };
 
   return (
-    <main className="app-shell">
-      <Sidebar
-        activeView={activeView}
-        activeConversationId={activeConversationId}
-        backend={backend}
-        conversations={conversations}
-        onDeleteConversation={deleteConversation}
-        onNewConversation={createNewConversation}
-        onOpenSettings={(view) => setActiveView(view)}
-        onSelectConversation={(id) => {
-          setActiveConversationId(id);
-          setActiveView("chat");
-        }}
-        statusDetail={statusDetail}
-        statusLine={statusLine}
-      />
-
-      <div className="content-panel">
-        {activeView === "chat" ? (
-          <ChatPanel
-            backend={backend}
-            canSend={canSend}
-            canStartSolo={canStartSolo}
-            messages={messages}
-            onSend={sendMessage}
-            onSoloStart={startSolo}
-            onSoloPause={pauseSolo}
-            onSoloResume={resumeSolo}
-            onSoloStop={stopSolo}
-            onSoloAllowDangerousStep={allowDangerousStep}
-            onSoloRejectDangerousStep={rejectDangerousStep}
-            onToolConfirmationAllow={allowToolConfirmation}
-            onToolConfirmationReject={rejectToolConfirmation}
-            settings={settings}
+    <>
+      <AppShell
+        inspectorCollapsed={inspectorCollapsed}
+        inspectorPanel={
+          <ActivityInspector
+            assets={assets}
+            inspectorCollapsed={inspectorCollapsed}
+            onAllowDangerousStep={allowDangerousStep}
+            onAllowToolConfirmation={allowToolConfirmation}
+            onRejectDangerousStep={rejectDangerousStep}
+            onRejectToolConfirmation={rejectToolConfirmation}
+            onToggleCollapsed={() => setInspectorCollapsed((current) => !current)}
             soloConfirmation={soloConfirmation}
-            toolConfirmation={toolConfirmation}
             soloLastError={soloLastError}
             soloStatus={soloStatus}
             soloStep={soloStep}
             soloTimeline={soloTimeline}
+            toolConfirmation={toolConfirmation}
+            traces={traces}
           />
-        ) : (
-          <SettingsPanel
-            activeSection={activeView}
-            soloDisplays={soloDisplays}
-            onRefreshSoloDisplays={requestSoloDisplays}
-            onChange={setSettings}
-            onClose={() => setActiveView("chat")}
-            onSectionChange={setActiveView}
+        }
+        mainPanel={
+          <ChatWorkspace
+            backend={backend}
+            canSend={canSend}
+            canStartSolo={canStartSolo}
+            inspectorCollapsed={inspectorCollapsed}
+            messages={messages}
+            onAllowDangerousStep={allowDangerousStep}
+            onAllowToolConfirmation={allowToolConfirmation}
+            onOpenInspector={() => setInspectorCollapsed(false)}
+            onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
+            onOpenSettings={() => {
+              setSettingsSection("general");
+              setSettingsDrawerOpen(true);
+            }}
+            onRejectDangerousStep={rejectDangerousStep}
+            onRejectToolConfirmation={rejectToolConfirmation}
+            onSend={sendMessage}
+            onSoloPause={pauseSolo}
+            onSoloResume={resumeSolo}
+            onSoloStart={startSolo}
+            onSoloStop={stopSolo}
+            pendingConfirmationCount={pendingConfirmationCount}
             settings={settings}
+            soloConfirmation={soloConfirmation}
+            soloLastError={soloLastError}
+            soloStatus={soloStatus}
+            toolConfirmation={toolConfirmation}
           />
-        )}
-      </div>
-    </main>
+        }
+        sidebarPanel={
+          <NavigationSidebar
+            activeConversationId={activeConversationId}
+            backend={backend}
+            conversations={conversations}
+            mobileOpen={mobileSidebarOpen}
+            onCloseMobile={() => setMobileSidebarOpen(false)}
+            onDeleteConversation={deleteConversation}
+            onNewConversation={createNewConversation}
+            onOpenSettings={(section) => {
+              setSettingsSection(section);
+              setSettingsDrawerOpen(true);
+            }}
+            onSelectConversation={(id) => {
+              setActiveConversationId(id);
+              setMobileSidebarOpen(false);
+            }}
+            statusDetail={statusDetail}
+            statusLine={statusLine}
+          />
+        }
+      />
+
+      <SettingsDrawer
+        activeSection={settingsSection}
+        onChange={setSettings}
+        onClose={() => setSettingsDrawerOpen(false)}
+        onRefreshSoloDisplays={requestSoloDisplays}
+        onSectionChange={setSettingsSection}
+        open={settingsDrawerOpen}
+        settings={settings}
+        soloDisplays={soloDisplays}
+      />
+    </>
   );
 }
