@@ -291,7 +291,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 session.history.append(
                     {
                         "step": session.step_count + 1,
-                        "system_action": action,
+                        "decision": {"action": action, "source": "system_recovery"},
                         "result": result_summary,
                         "timestamp": utc_now(),
                     }
@@ -467,6 +467,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
         plan = session.current_plan
         if not plan or session.plan_step_index >= len(plan.actions):
+            session.current_plan = None
+            session.replan_count = 0
             session.state = "completed"
             session.completed_at = utc_now()
             session.detail = "计划已执行完毕。"
@@ -485,19 +487,28 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         action = current_action.action
         action_args = current_action.action_args
 
-        if action == "finish" and session.step_count >= 2:
-            session.state = "completed"
-            session.completed_at = utc_now()
-            session.detail = "SOLO 任务完成。"
-            slog(f"request={session.request_id} completed at step={session.step_count}")
-            solo_logger.write("completed", {"step": session.step_count})
-            await emit_solo_status(session)
-            await safe_send(
-                "server:message",
-                session.request_id,
-                session.conversation_id,
-                {"content": "SOLO 任务已完成。"},
+        if action == "finish":
+            if session.step_count >= 2:
+                session.current_plan = None
+                session.replan_count = 0
+                session.state = "completed"
+                session.completed_at = utc_now()
+                session.detail = "SOLO 任务完成。"
+                slog(f"request={session.request_id} completed at step={session.step_count}")
+                solo_logger.write("completed", {"step": session.step_count})
+                await emit_solo_status(session)
+                await safe_send(
+                    "server:message",
+                    session.request_id,
+                    session.conversation_id,
+                    {"content": "SOLO 任务已完成。"},
+                )
+                return
+            slog(
+                f"request={session.request_id} ignored early finish at step={session.step_count}"
             )
+            session.plan_step_index += 1
+            await execute_plan_step(session, screenshot_path)
             return
 
         if action == "replan":
@@ -530,7 +541,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 session.step_count += 1
                 session.plan_step_index += 1
                 session.detail = f"批量执行第 {session.step_count} 步: {action}"
-                session.repeat_action_count = 1
+                if action == session.last_action:
+                    session.repeat_action_count += 1
+                else:
+                    session.repeat_action_count = 1
                 session.last_action = action
 
                 result_summary = {"success": True, "action": action, **execution_result}
@@ -566,11 +580,13 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     await emit_solo_status(session)
                     return
 
-                if action == "execute_command" and execution_result.get("output"):
+                if action == "execute_command" and not execution_result.get("ok"):
+                    fresh_screenshot = await asyncio.to_thread(solo_tools.screenshot)
+                    fresh_path = fresh_screenshot.get("path") if isinstance(fresh_screenshot, dict) else None
                     await replan_and_continue(
                         session,
-                        screenshot_path,
-                        f"命令执行完成，输出: {str(execution_result.get('output', ''))[:200]}",
+                        str(fresh_path) if fresh_path else screenshot_path,
+                        f"命令执行失败: {str(execution_result.get('output', ''))[:200]}",
                     )
                     return
 
@@ -594,53 +610,6 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await emit_solo_status(session)
             return
 
-        assessment = assess_solo_action(action, action_args, workspace_root)
-        if assessment.level == "blocked":
-            session.state = "paused"
-            session.detail = f"动作已阻断: {assessment.reason}"
-            solo_logger.write(
-                "paused",
-                {"reason": session.detail, "action": action, "actionArgs": action_args},
-            )
-            await emit_solo_status(session)
-            return
-
-        permission_mode = runtime_state.get_config().permissions.mode
-        if assessment.level == "confirm" and permission_mode != "all":
-            session.state = "waiting_user_confirmation"
-            session.pending_confirmation = {
-                "action": action,
-                "action_args": action_args,
-                "thought_summary": current_action.description,
-                "expected_outcome": "",
-                "agent_message": "",
-                "risk_level": assessment.level,
-                "reason": assessment.reason,
-            }
-            session.detail = "检测到危险动作，等待用户确认。"
-            slog(
-                f"request={session.request_id} waiting confirmation action={action} reason={assessment.reason}"
-            )
-            solo_logger.write(
-                "confirmation_required",
-                {
-                    "step": session.step_count + 1,
-                    "action": action,
-                    "actionArgs": action_args,
-                    "reason": assessment.reason,
-                },
-            )
-            await emit_solo_status(session)
-            await emit_confirmation(
-                session,
-                step_index=session.step_count + 1,
-                reason=assessment.reason,
-                action=action,
-                action_args=action_args,
-                thought_summary=current_action.description,
-            )
-            return
-
         try:
             app_context = _infer_app_context(session.task)
             decision = await solo_service.decide_next(
@@ -659,6 +628,53 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             final_action = decision.action
             final_args = decision.action_args
+
+            assessment = assess_solo_action(final_action, final_args, workspace_root)
+            if assessment.level == "blocked":
+                session.state = "paused"
+                session.detail = f"动作已阻断: {assessment.reason}"
+                solo_logger.write(
+                    "paused",
+                    {"reason": session.detail, "action": final_action, "actionArgs": final_args},
+                )
+                await emit_solo_status(session)
+                return
+
+            permission_mode = runtime_state.get_config().permissions.mode
+            if assessment.level == "confirm" and permission_mode != "all":
+                session.state = "waiting_user_confirmation"
+                session.pending_confirmation = {
+                    "action": final_action,
+                    "action_args": final_args,
+                    "thought_summary": decision.thought_summary,
+                    "expected_outcome": decision.expected_outcome,
+                    "agent_message": decision.agent_message,
+                    "risk_level": assessment.level,
+                    "reason": assessment.reason,
+                }
+                session.detail = "检测到危险动作，等待用户确认。"
+                slog(
+                    f"request={session.request_id} waiting confirmation action={final_action} reason={assessment.reason}"
+                )
+                solo_logger.write(
+                    "confirmation_required",
+                    {
+                        "step": session.step_count + 1,
+                        "action": final_action,
+                        "actionArgs": final_args,
+                        "reason": assessment.reason,
+                    },
+                )
+                await emit_solo_status(session)
+                await emit_confirmation(
+                    session,
+                    step_index=session.step_count + 1,
+                    reason=assessment.reason,
+                    action=final_action,
+                    action_args=final_args,
+                    thought_summary=decision.thought_summary,
+                )
+                return
 
             slog(
                 f"request={session.request_id} visual_decision action={final_action} "
@@ -711,7 +727,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             session.step_count += 1
             session.plan_step_index += 1
-            session.repeat_action_count = 1
+            if final_action == session.last_action:
+                session.repeat_action_count += 1
+            else:
+                session.repeat_action_count = 1
             session.last_action = final_action
 
             if isinstance(new_screenshot, dict):
@@ -752,6 +771,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     "action": final_action,
                     "result": result_summary,
                 },
+            )
+            await emit_solo_trace(
+                session,
+                "step_result",
+                "completed",
+                f"视觉动作结果: {final_action}",
+                params={"action": final_action, "step": session.step_count},
+                result=result_summary,
             )
             await emit_solo_status(session)
 
@@ -963,15 +990,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         if not is_solo_running(session):
             return
 
-        session.history.append(
-            {
-                "step": session.step_count + 1,
-                "decision": solo_service.decision_dict(decision),
-                "timestamp": utc_now(),
-            }
-        )
-
         if decision.action == "finish" and session.step_count >= 2:
+            session.history.append(
+                {
+                    "step": session.step_count + 1,
+                    "decision": solo_service.decision_dict(decision),
+                    "timestamp": utc_now(),
+                }
+            )
             session.state = "completed"
             session.completed_at = utc_now()
             session.detail = "SOLO 任务完成。"
@@ -1001,6 +1027,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             )
             await execute_solo_step(session, "wait", wait_args)
             return
+
+        session.history.append(
+            {
+                "step": session.step_count + 1,
+                "decision": solo_service.decision_dict(decision),
+                "timestamp": utc_now(),
+            }
+        )
 
         assessment = assess_solo_action(decision.action, decision.action_args, workspace_root)
         if assessment.level == "blocked":
@@ -1246,7 +1280,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         if solo_service is None or not is_solo_running(active_solo):
                             return
                         try:
-                            emit_solo_trace(
+                            await emit_solo_trace(
                                 active_solo,
                                 "planning",
                                 "started",

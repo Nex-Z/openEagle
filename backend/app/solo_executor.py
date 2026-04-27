@@ -404,12 +404,19 @@ class SoloExecutor:
             if not isinstance(command, str) or not command.strip():
                 raise ValueError("execute_command requires non-empty command")
             cwd = action_args.get("cwd", ".")
+            working_dir = (self._workspace_root / str(cwd)).resolve()
+            try:
+                working_dir.relative_to(self._workspace_root)
+            except ValueError as exc:
+                raise ValueError("cwd 超出工作区范围，不允许执行。") from exc
+            if not working_dir.exists() or not working_dir.is_dir():
+                raise ValueError("cwd 无效，必须是工作区内目录。")
             timeout_ms = int(action_args.get("timeout_ms", 30_000))
             tail = int(action_args.get("tail", 120))
             result = run_workspace_command(
                 workspace_root=self._workspace_root,
                 command=command,
-                cwd=cwd,
+                cwd=str(cwd),
                 timeout_ms=timeout_ms,
                 tail=tail,
             )
@@ -417,6 +424,7 @@ class SoloExecutor:
                 "ok": result.returncode == 0 and not result.timed_out,
                 "action": action,
                 "command": command,
+                "cwd": str(working_dir),
                 "exitCode": result.returncode,
                 "output": result.output,
             }

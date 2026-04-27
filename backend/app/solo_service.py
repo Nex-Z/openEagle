@@ -402,13 +402,19 @@ class SoloService:
             alternative="尝试逐步执行",
             actions=[
                 SoloPlanAction(
-                    action="screenshot",
-                    action_args={},
-                    description="先截图确认当前状态",
+                    action="wait",
+                    action_args={"ms": 500},
+                    description="等待后重新获取屏幕状态",
+                    needs_visual=False,
+                ),
+                SoloPlanAction(
+                    action="replan",
+                    action_args={"reason": "规划降级后重新尝试"},
+                    description="重新规划",
                     needs_visual=False,
                 ),
             ],
-            estimated_steps=1,
+            estimated_steps=2,
             agent_message=f"自动规划失败，将切换为逐步执行模式。原因: {error}",
         )
 
