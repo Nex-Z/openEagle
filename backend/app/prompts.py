@@ -29,8 +29,25 @@ def build_chat_instructions(
             "避免整文件覆盖，除非用户明确要求创建或重写文件。修改后用合适命令验证。"
         ),
         (
+            "apply_text_edits 调用示例：\n"
+            '  apply_text_edits(path="src/main.ts", edits=[\n'
+            '    {"old_text": "function foo()", "new_text": "function bar()", "expected_occurrences": 1},\n'
+            '    {"old_text": "const x = 1", "new_text": "const x = 2", "expected_occurrences": 1}\n'
+            "  ])\n"
+            "  edits 中每项必须包含 old_text、new_text、expected_occurrences（命中次数）。"
+        ),
+        (
             "安全策略：只读命令和只读文件工具可直接使用；写入、删除、未知命令或自定义固定命令"
             "可能触发确认，看到 CONFIRMATION_REQUIRED 时等待用户确认，不要循环重试。"
+        ),
+        (
+            "错误恢复：工具返回 Error 时，分析错误原因并尝试替代方案；"
+            "连续 2 次同类错误应换思路或向用户说明情况；"
+            "不要对同一失败操作无限重试。"
+        ),
+        (
+            "意图澄清：当用户指令模糊或可能有多种理解时，先简短确认再执行；"
+            "例如用户说"把这个改好"时，先说明你理解的修改方向，确认后再操作。"
         ),
     ]
 
@@ -98,26 +115,14 @@ def solo_decision_instructions(system_platform: str = "当前系统") -> list[st
             "\"timeout_ms\"?: number, \"tail\"?: number}；cwd 是工作区内相对目录，默认 \".\""
         ),
         (
-            "━━ 能力边界 ━━\n"
+            "━━ 决策优先级与能力边界 ━━\n"
             "Chat Agent 负责工作区代码、文件搜索、编辑、Git、构建和测试；"
-            "SOLO 不要把这些工作伪装成视觉任务。\n"
-            "SOLO 的 execute_command 用于支撑桌面自动化：启动 / 关闭 / 激活应用、"
-            "查询窗口 / 进程 / 系统状态、执行 GUI 辅助脚本，以及必要的本地文件操作。"
-        ),
-        (
-            "━━ 决策优先级 ━━\n"
-            "每一步决策前，按顺序回答以下问题：\n\n"
-            "  Q1: 这件事能用命令行做吗？\n"
-            "      能 → execute_command，不要用鼠标键盘绕路\n"
-            "      不能 → 进入 Q2\n\n"
-            "  Q2: 目标 UI 元素在当前截图中是否清晰可见、可精确定位？\n"
-            "      是 → 使用对应视觉动作\n"
-            "      否 → 先 screenshot 获取当前状态，再决策"
-        ),
-        (
-            "适用 execute_command 的场景（不限于此）：\n"
-            "  启动 / 关闭应用、激活 / 置顶窗口、文件读写移动、\n"
-            "  查询进程 / 窗口句柄 / 系统信息、执行脚本、注册表操作"
+            "SOLO 不要把这些工作伪装成视觉任务。\n\n"
+            "每一步决策前，按顺序回答：\n"
+            "  Q1: 这件事能用命令行做吗？→ 能就用 execute_command，不要用鼠标键盘绕路\n"
+            "  Q2: 目标 UI 元素在截图中清晰可见吗？→ 是就用视觉动作，否就先 screenshot\n\n"
+            "execute_command 适用场景：启动/关闭/激活应用、查询窗口/进程/系统状态、"
+            "执行 GUI 辅助脚本、文件读写移动、注册表操作"
         ),
         (
             "━━ 状态追踪与失败升级 ━━\n"
@@ -136,8 +141,9 @@ def solo_decision_instructions(system_platform: str = "当前系统") -> list[st
         ),
         (
             "━━ 视觉动作规范 ━━\n"
-            "坐标：优先使用 0~1 归一化比例值；点击小目标（如任务栏图标）前\n"
-            "      优先结合命令或截图上下文确认目标位置，避免坐标偏移导致误点\n"
+            "坐标：使用 0~1 归一化比例值，精确到小数点后 3 位（如 0.523）；\n"
+            "      点击小目标（如任务栏图标、菜单项）时，取目标中心点坐标；\n"
+            "      先通过截图确认目标的精确位置，避免坐标偏移导致误点\n"
             "验证：每次执行改变界面的动作后，下一步必须是 wait 或 screenshot"
         ),
         (
@@ -145,17 +151,40 @@ def solo_decision_instructions(system_platform: str = "当前系统") -> list[st
             "任务目标已在截图或命令输出中得到明确确认 → finish + is_task_done=true\n"
             "无法确认时禁止 finish"
         ),
+        (
+            "━━ thought_summary 写作要求 ━━\n"
+            "thought_summary 是决策的核心说明，必须包含：\n"
+            "  1. 当前状态（界面/系统/任务进展）\n"
+            "  2. 上一步结果判断（成功/失败/部分成功及原因）\n"
+            "  3. 本步决策理由\n"
+            "格式不限，但信息必须完整。复杂场景可以自由组织，"
+            "例如遇到应用无响应、需要切换策略等情况时，直接说明即可。"
+        ),
     ]
 
 
 def build_solo_decision_prompt(
     task: str,
     history: list[dict[str, object]],
+    display_index: int | None = None,
+    app_context: str | None = None,
 ) -> str:
-    history_text = json.dumps(history[-8:], ensure_ascii=False)
+    if len(history) <= 8:
+        recent_history = history
+    else:
+        recent_history = history[:2] + history[-6:]
+    history_text = json.dumps(recent_history, ensure_ascii=False)
     step_count = len(history)
+    display_hint = ""
+    if display_index is not None:
+        display_hint = f"当前操作显示器：{display_index}。所有坐标基于此显示器。\n\n"
+    app_hint = ""
+    if app_context:
+        app_hint = f"已知应用信息：{app_context}\n\n"
     return (
         f"用户任务：{task}\n\n"
+        f"{display_hint}"
+        f"{app_hint}"
         f"步骤历史（最新在后，共 {step_count} 步）：\n"
         f"{history_text}\n\n"
         "历史字段说明：decision 是模型上一步决策；result 是该动作的执行摘要，"
@@ -165,10 +194,7 @@ def build_solo_decision_prompt(
         "1. 先判断上一步是否成功（对比历史与预期）\n"
         "2. 若连续 ≥2 步无进展，必须换方案\n"
         "3. 如果需要给用户自然语言说明，写入 agent_message，不要写在 JSON 外\n"
-        "4. thought_summary 格式：\n"
-        "   [状态] 当前界面/系统处于什么状态\n"
-        "   [上步] 上一步是否成功，原因是什么\n"
-        "   [决策] 为什么选择本步动作"
+        "4. thought_summary 按系统指令中的写作要求填写，确保信息完整"
     )
 
 
@@ -178,7 +204,11 @@ def build_solo_repair_prompt(
     raw_output: str,
     error: str,
 ) -> str:
-    history_text = json.dumps(history[-8:], ensure_ascii=False)
+    if len(history) <= 8:
+        recent_history = history
+    else:
+        recent_history = history[:2] + history[-6:]
+    history_text = json.dumps(recent_history, ensure_ascii=False)
     raw_preview = raw_output.strip()
     if len(raw_preview) > 4000:
         raw_preview = raw_preview[-4000:]

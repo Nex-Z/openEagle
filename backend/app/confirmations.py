@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field
 from typing import Any, Literal
 from uuid import uuid4
@@ -7,6 +8,7 @@ from uuid import uuid4
 from .models import utc_now
 
 ToolDecision = Literal["allow", "reject"]
+CONFIRMATION_TTL_SECONDS = 300
 
 
 @dataclass
@@ -19,6 +21,10 @@ class PendingToolConfirmation:
     reason: str
     params: dict[str, Any]
     created_at: str = field(default_factory=utc_now)
+    expires_at: float = field(default_factory=lambda: time.time() + CONFIRMATION_TTL_SECONDS)
+
+    def is_expired(self) -> bool:
+        return time.time() > self.expires_at
 
     def to_payload(self) -> dict[str, Any]:
         return {
@@ -36,6 +42,11 @@ class ToolConfirmationStore:
     def __init__(self) -> None:
         self._pending: dict[str, PendingToolConfirmation] = {}
 
+    def _cleanup_expired(self) -> None:
+        expired_ids = [cid for cid, p in self._pending.items() if p.is_expired()]
+        for cid in expired_ids:
+            del self._pending[cid]
+
     def create(
         self,
         request_id: str,
@@ -45,6 +56,7 @@ class ToolConfirmationStore:
         reason: str,
         params: dict[str, Any],
     ) -> PendingToolConfirmation:
+        self._cleanup_expired()
         pending = PendingToolConfirmation(
             confirmation_id=f"confirm-{uuid4()}",
             request_id=request_id,
@@ -58,7 +70,14 @@ class ToolConfirmationStore:
         return pending
 
     def pop(self, confirmation_id: str) -> PendingToolConfirmation | None:
-        return self._pending.pop(confirmation_id, None)
+        pending = self._pending.pop(confirmation_id, None)
+        if pending and pending.is_expired():
+            return None
+        return pending
 
     def get(self, confirmation_id: str) -> PendingToolConfirmation | None:
-        return self._pending.get(confirmation_id)
+        pending = self._pending.get(confirmation_id)
+        if pending and pending.is_expired():
+            del self._pending[confirmation_id]
+            return None
+        return pending

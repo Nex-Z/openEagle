@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import platform
 import time
 import hashlib
 from datetime import UTC, datetime
@@ -292,7 +293,32 @@ class SoloExecutor:
             text = action_args.get("text")
             if not isinstance(text, str) or not text:
                 raise ValueError("type_text requires text")
-            pyautogui.typewrite(text)
+            if all(ord(c) < 128 for c in text):
+                pyautogui.typewrite(text)
+            else:
+                import subprocess
+                if platform.system() == "Windows":
+                    subprocess.run(
+                        ["clip"],
+                        input=text.encode("utf-16le"),
+                        check=True,
+                        timeout=5,
+                    )
+                elif platform.system() == "Darwin":
+                    subprocess.run(
+                        ["pbcopy"],
+                        input=text.encode("utf-8"),
+                        check=True,
+                        timeout=5,
+                    )
+                else:
+                    subprocess.run(
+                        ["xclip", "-selection", "clipboard"],
+                        input=text.encode("utf-8"),
+                        check=True,
+                        timeout=5,
+                    )
+                pyautogui.hotkey("ctrl", "v")
             return {"ok": True, "action": action}
 
         if action == "press_keys":

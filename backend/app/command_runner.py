@@ -31,8 +31,9 @@ def tail_output(
     returncode: int | None,
     tail: int,
     error_prefix: str | None = None,
+    timed_out: bool = False,
 ) -> str:
-    prefer_stdout = returncode == 0 and error_prefix is None
+    prefer_stdout = returncode == 0 and error_prefix is None and not timed_out
     combined = (stdout if prefer_stdout else stderr or stdout or "").strip()
     if not combined:
         combined = "(no output)"
@@ -40,6 +41,8 @@ def tail_output(
     lines = combined.splitlines()
     tail_lines = "\n".join(lines[-normalize_tail(tail) :])
 
+    if timed_out:
+        return f"[TIMEOUT] Command timed out.\n{tail_lines}"
     if error_prefix:
         return f"{error_prefix}\n{tail_lines}"
     if returncode is not None and returncode != 0:
@@ -53,10 +56,16 @@ def run_workspace_command(
     cwd: str = ".",
     tail: int = DEFAULT_COMMAND_TAIL,
     timeout_ms: int = DEFAULT_COMMAND_TIMEOUT_MS,
+    env: dict[str, str] | None = None,
 ) -> WorkspaceCommandResult:
     working_dir = resolve_workspace_path(workspace_root.resolve(), cwd)
     if not working_dir.exists() or not working_dir.is_dir():
         return WorkspaceCommandResult(f"Error: 无效执行目录: {working_dir}", None)
+
+    import os
+    run_env = os.environ.copy()
+    if env:
+        run_env.update(env)
 
     try:
         completed = subprocess.run(
@@ -68,6 +77,7 @@ def run_workspace_command(
             encoding="utf-8",
             errors="replace",
             timeout=normalize_timeout_ms(timeout_ms) / 1000,
+            env=run_env,
         )
     except subprocess.TimeoutExpired as exc:
         output = tail_output(
@@ -75,7 +85,7 @@ def run_workspace_command(
             exc.stderr,
             None,
             tail,
-            error_prefix=f"Error: command timed out after {normalize_timeout_ms(timeout_ms)}ms.",
+            timed_out=True,
         )
         return WorkspaceCommandResult(output, None, timed_out=True)
 
@@ -89,6 +99,7 @@ def execute_workspace_command(
     cwd: str = ".",
     tail: int = DEFAULT_COMMAND_TAIL,
     timeout_ms: int = DEFAULT_COMMAND_TIMEOUT_MS,
+    env: dict[str, str] | None = None,
 ) -> str:
     return run_workspace_command(
         workspace_root=workspace_root,
@@ -96,4 +107,5 @@ def execute_workspace_command(
         cwd=cwd,
         tail=tail,
         timeout_ms=timeout_ms,
+        env=env,
     ).output

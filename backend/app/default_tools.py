@@ -4,6 +4,7 @@ import re
 import hashlib
 import os
 import shutil
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -19,6 +20,7 @@ from .safety import assess_tool_action, resolve_workspace_path
 DEFAULT_MAX_CHARS = 12_000
 DEFAULT_MAX_SEARCH_RESULTS = 50
 DEFAULT_MAX_SEARCH_FILE_BYTES = 2_000_000
+DEFAULT_SHA256_SIZE_THRESHOLD = 1_000_000
 DEFAULT_MAX_LIST_RESULTS = 200
 DEFAULT_IGNORED_NAMES = {
     ".git",
@@ -308,12 +310,16 @@ def execute_confirmed_tool(workspace_root: Path, pending: PendingToolConfirmatio
         cwd = str(pending.params.get("cwd", "."))
         tail = int(pending.params.get("tail", DEFAULT_COMMAND_TAIL))
         timeout_ms = int(pending.params.get("timeout_ms", DEFAULT_COMMAND_TIMEOUT_MS))
+        env = pending.params.get("env")
+        if env and not isinstance(env, dict):
+            env = None
         return execute_workspace_command(
             workspace_root=root,
             command=command,
             cwd=cwd,
             tail=tail,
             timeout_ms=timeout_ms,
+            env=env,
         )
 
     if pending.params.get("toolId") and pending.params.get("command"):
@@ -326,6 +332,28 @@ def execute_confirmed_tool(workspace_root: Path, pending: PendingToolConfirmatio
         )
 
     return f"Error: unsupported confirmed tool: {pending.name}"
+
+
+_READ_CACHE_TTL = 5.0
+
+
+class _ReadCache:
+    def __init__(self, ttl: float = _READ_CACHE_TTL) -> None:
+        self._ttl = ttl
+        self._store: dict[str, tuple[float, str]] = {}
+
+    def get(self, key: str) -> str | None:
+        entry = self._store.get(key)
+        if entry is None:
+            return None
+        ts, value = entry
+        if time.time() - ts > self._ttl:
+            del self._store[key]
+            return None
+        return value
+
+    def set(self, key: str, value: str) -> None:
+        self._store[key] = (time.time(), value)
 
 
 class OpenEagleDefaultTools(Toolkit):
@@ -342,6 +370,7 @@ class OpenEagleDefaultTools(Toolkit):
         self.request_id = request_id
         self.conversation_id = conversation_id
         self.permission_mode = permission_mode
+        self._read_cache = _ReadCache()
         super().__init__(
             name="open_eagle_default_tools",
             tools=[
@@ -362,8 +391,7 @@ class OpenEagleDefaultTools(Toolkit):
             instructions=(
                 "你可以使用内置默认工具执行工作区内的常用操作：查看文件信息、浏览目录、"
                 "读取文本文件、搜索文件名与文本、执行命令，以及在确认后创建目录、写入、"
-                "复制、移动、删除或精确编辑文件。优先用命令行完成可自动化的搜索、构建、"
-                "测试和 Git 检查；修改文件时优先小步精确编辑。"
+                "复制、移动、删除或精确编辑文件。"
             ),
             add_instructions=True,
         )
@@ -412,6 +440,11 @@ class OpenEagleDefaultTools(Toolkit):
         Returns:
             str: 路径类型、大小、更新时间和文件哈希等信息。
         """
+        cache_key = f"file_info:{path}"
+        cached = self._read_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         target = self._resolve_path(path)
         if not target.exists():
             return f"Error: 路径不存在: {target}"
@@ -425,8 +458,13 @@ class OpenEagleDefaultTools(Toolkit):
             f"ignoredByDefault: {_is_ignored_path(target, self.workspace_root)}",
         ]
         if target.is_file():
-            info.append(f"sha256: {_sha256_file(target)}")
-        return "\n".join(info)
+            if stat.st_size <= DEFAULT_SHA256_SIZE_THRESHOLD:
+                info.append(f"sha256: {_sha256_file(target)}")
+            else:
+                info.append("sha256: (skipped, file too large)")
+        result = "\n".join(info)
+        self._read_cache.set(cache_key, result)
+        return result
 
     def list_directory(self, path: str = ".") -> str:
         """列出工作区内指定目录的文件和子目录。
@@ -437,6 +475,11 @@ class OpenEagleDefaultTools(Toolkit):
         Returns:
             str: 目录内容列表，每行一个条目，目录以 / 结尾。
         """
+        cache_key = f"list_dir:{path}"
+        cached = self._read_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         target = self._resolve_path(path)
         if not target.exists():
             return f"Error: 路径不存在: {target}"
@@ -449,7 +492,9 @@ class OpenEagleDefaultTools(Toolkit):
                 continue
             suffix = "/" if item.is_dir() else ""
             entries.append(f"{item.name}{suffix}")
-        return "\n".join(entries) if entries else "(empty)"
+        result = "\n".join(entries) if entries else "(empty)"
+        self._read_cache.set(cache_key, result)
+        return result
 
     def read_text_file(
         self,
@@ -471,6 +516,11 @@ class OpenEagleDefaultTools(Toolkit):
         Returns:
             str: 文件文本内容。
         """
+        cache_key = f"read_file:{path}:{start_line}:{end_line}:{max_chars}:{include_line_numbers}"
+        cached = self._read_cache.get(cache_key)
+        if cached is not None:
+            return cached
+
         target = self._resolve_path(path)
         if not target.exists():
             return f"Error: 文件不存在: {target}"
@@ -526,8 +576,11 @@ class OpenEagleDefaultTools(Toolkit):
 
         content = "".join(pieces)
         if truncated:
-            return f"{content}\n\n...[truncated at max_chars={limit}]"
-        return content
+            result = f"{content}\n\n...[truncated at max_chars={limit}]"
+        else:
+            result = content
+        self._read_cache.set(cache_key, result)
+        return result
 
     def write_text_file(self, path: str, content: str) -> str:
         """以 UTF-8 写入工作区内文本文件。
@@ -662,8 +715,10 @@ class OpenEagleDefaultTools(Toolkit):
             query: 要搜索的文本。
             path: 搜索起始目录，相对工作区根目录。
             max_results: 最多返回多少条匹配记录。
-            include_globs: 可选包含 glob，如 ["src/**/*.ts"]。
-            exclude_globs: 可选排除 glob。
+            include_globs: 可选包含 glob 过滤，只搜索匹配的文件。
+                支持 Path.match() 语法，如 "*.ts"、"src/**/*.tsx"、"?*.test.*"。
+                可传字符串或列表，如 ["*.ts", "*.tsx"]。
+            exclude_globs: 可选排除 glob 过滤，跳过匹配的文件。语法同上。
             case_sensitive: 是否区分大小写。
 
         Returns:
@@ -687,8 +742,11 @@ class OpenEagleDefaultTools(Toolkit):
         skipped_large = 0
         skipped_binary = 0
         truncated = False
+        limit_reached = False
 
         for candidate in _iter_workspace_files(base_dir, self.workspace_root):
+            if limit_reached:
+                break
             relative = _relative_path(candidate, self.workspace_root)
             if include_patterns and not _matches_any_glob(relative, include_patterns):
                 continue
@@ -713,9 +771,8 @@ class OpenEagleDefaultTools(Toolkit):
                             matches.append(f"{relative}:{line_number}: {line.strip()}")
                             if len(matches) >= limit:
                                 truncated = True
-                                raise StopIteration
-            except StopIteration:
-                break
+                                limit_reached = True
+                                break
             except UnicodeDecodeError:
                 skipped_binary += 1
                 continue
@@ -799,6 +856,7 @@ class OpenEagleDefaultTools(Toolkit):
         cwd: str = ".",
         tail: int = DEFAULT_COMMAND_TAIL,
         timeout_ms: int = DEFAULT_COMMAND_TIMEOUT_MS,
+        env: dict[str, str] | None = None,
     ) -> str:
         """在工作区内执行命令并返回输出。
 
@@ -807,6 +865,7 @@ class OpenEagleDefaultTools(Toolkit):
             cwd: 命令执行目录，相对工作区根目录。
             tail: 最多返回输出的最后多少行。
             timeout_ms: 命令超时毫秒数。
+            env: 可选的环境变量字典，会与当前环境合并。
 
         Returns:
             str: 命令输出或错误信息。
@@ -817,6 +876,8 @@ class OpenEagleDefaultTools(Toolkit):
             "tail": tail,
             "timeout_ms": timeout_ms,
         }
+        if env:
+            params["env"] = env
         return self._run_guarded_tool("run_command", params)
 
 
@@ -868,6 +929,9 @@ def build_configured_tool_functions(
         timeout_ms = int(tool.timeout_ms)
         tail = int(tool.tail)
 
+        placeholders = re.findall(r"\{(\w+)\}", tool.command)
+        has_params = bool(placeholders)
+
         def make_configured_entrypoint(
             command: str,
             cwd: str,
@@ -875,66 +939,121 @@ def build_configured_tool_functions(
             tail: int,
             display_name: str,
             tool_id: str,
+            param_names: list[str],
         ):
-            def run_configured_tool() -> str:
-                params = {
-                    "toolId": tool_id,
-                    "toolName": display_name,
-                    "command": command,
-                    "cwd": cwd,
-                    "timeout_ms": timeout_ms,
-                    "tail": tail,
-                }
-                assessment = assess_tool_action("configured_tool", params, root)
-                if assessment.level == "blocked":
-                    return f"Error: {assessment.reason}"
-                if assessment.level == "confirm" and permission_mode != "all":
-                    return create_confirmation_response(
-                        confirmation_store=confirmation_store,
-                        request_id=request_id,
-                        conversation_id=conversation_id,
-                        name=display_name,
-                        reason=assessment.reason,
-                        params=params,
+            if param_names:
+                def run_configured_tool(**kwargs: str) -> str:
+                    resolved_command = command
+                    for name in param_names:
+                        value = str(kwargs.get(name, ""))
+                        if not value:
+                            return f"Error: 参数 {name} 不能为空。"
+                        resolved_command = resolved_command.replace(f"{{{name}}}", value)
+                    params = {
+                        "toolId": tool_id,
+                        "toolName": display_name,
+                        "command": resolved_command,
+                        "cwd": cwd,
+                        "timeout_ms": timeout_ms,
+                        "tail": tail,
+                    }
+                    assessment = assess_tool_action("configured_tool", params, root)
+                    if assessment.level == "blocked":
+                        return f"Error: {assessment.reason}"
+                    if assessment.level == "confirm" and permission_mode != "all":
+                        return create_confirmation_response(
+                            confirmation_store=confirmation_store,
+                            request_id=request_id,
+                            conversation_id=conversation_id,
+                            name=display_name,
+                            reason=assessment.reason,
+                            params=params,
+                        )
+                    return execute_confirmed_tool(
+                        root,
+                        PendingToolConfirmation(
+                            confirmation_id="auto",
+                            request_id=request_id or "auto",
+                            conversation_id=conversation_id or "auto",
+                            kind="tool",
+                            name=display_name,
+                            reason=assessment.reason,
+                            params=params,
+                        ),
                     )
-                return execute_confirmed_tool(
-                    root,
-                    PendingToolConfirmation(
-                        confirmation_id="auto",
-                        request_id=request_id or "auto",
-                        conversation_id=conversation_id or "auto",
-                        kind="tool",
-                        name=display_name,
-                        reason=assessment.reason,
-                        params=params,
-                    ),
-                )
+            else:
+                def run_configured_tool() -> str:
+                    params = {
+                        "toolId": tool_id,
+                        "toolName": display_name,
+                        "command": command,
+                        "cwd": cwd,
+                        "timeout_ms": timeout_ms,
+                        "tail": tail,
+                    }
+                    assessment = assess_tool_action("configured_tool", params, root)
+                    if assessment.level == "blocked":
+                        return f"Error: {assessment.reason}"
+                    if assessment.level == "confirm" and permission_mode != "all":
+                        return create_confirmation_response(
+                            confirmation_store=confirmation_store,
+                            request_id=request_id,
+                            conversation_id=conversation_id,
+                            name=display_name,
+                            reason=assessment.reason,
+                            params=params,
+                        )
+                    return execute_confirmed_tool(
+                        root,
+                        PendingToolConfirmation(
+                            confirmation_id="auto",
+                            request_id=request_id or "auto",
+                            conversation_id=conversation_id or "auto",
+                            kind="tool",
+                            name=display_name,
+                            reason=assessment.reason,
+                            params=params,
+                        ),
+                    )
 
             return run_configured_tool
 
-        description_parts = [
-            f"无参数自定义工具，只执行固定工作区命令。原始名称: {display_name}。",
-            f"工作目录: {working_dir}。",
-            f"超时: {timeout_ms}ms；输出尾部行数: {tail}。",
-            f"命令: {tool.command}.",
-            "模型不能传入附加参数，也不能追加 shell 参数。",
-            "命令会先经过工作区边界、风险分级和确认流。",
-        ]
+        if has_params:
+            param_desc = "，".join(f"{p}: 字符串参数" for p in placeholders)
+            description_parts = [
+                f"参数化命令工具「{display_name}」，参数: {param_desc}",
+                f"命令模板: {tool.command}",
+                f"工作目录: {working_dir}，超时: {timeout_ms}ms，输出尾部 {tail} 行。",
+                "命令经过工作区边界检查和风险分级。",
+            ]
+        else:
+            description_parts = [
+                f"固定命令工具「{display_name}」，无参数，执行: {tool.command}",
+                f"工作目录: {working_dir}，超时: {timeout_ms}ms，输出尾部 {tail} 行。",
+                "命令经过工作区边界检查和风险分级。",
+            ]
         if tool.description.strip():
             description_parts.insert(1, f"说明: {tool.description.strip()}.")
+
+        entrypoint = make_configured_entrypoint(
+            command=tool.command,
+            cwd=working_dir,
+            timeout_ms=timeout_ms,
+            tail=tail,
+            display_name=display_name,
+            tool_id=tool.id,
+            param_names=placeholders,
+        )
+        if has_params:
+            import inspect
+            sig = inspect.signature(entrypoint)
+            entrypoint.__doc__ = f"执行命令: {tool.command}"
 
         functions.append(
             Function(
                 name=function_name,
                 description=" ".join(description_parts),
-                entrypoint=make_configured_entrypoint(
-                    command=tool.command,
-                    cwd=working_dir,
-                    timeout_ms=timeout_ms,
-                    tail=tail,
-                    display_name=display_name,
-                    tool_id=tool.id,
-                ),
+                entrypoint=entrypoint,
             )
         )
         name_map[function_name] = display_name

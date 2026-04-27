@@ -67,6 +67,7 @@ class AgnoAgentProvider:
         self._confirmation_store = confirmation_store
         self._request_id = request_id
         self._conversation_id = conversation_id
+        self._agent_cache: dict[str, tuple[Agent, dict[str, str]]] = {}
 
     @property
     def _agent_config(self) -> AgentConfig:
@@ -79,6 +80,10 @@ class AgnoAgentProvider:
         selected_mcp: list[McpConfig],
         selected_skills: list[SkillConfig],
     ) -> tuple[Agent, dict[str, str]]:
+        cache_key = conversation_id
+        if cache_key in self._agent_cache:
+            return self._agent_cache[cache_key]
+
         model_id = self._agent_config.model_id or "gpt-5-mini"
 
         if self._agent_config.provider == "openai-like":
@@ -118,12 +123,15 @@ class AgnoAgentProvider:
             permission_mode=self._config.permissions.mode,
         )
 
-        return Agent(
+        agent = Agent(
             model=model,
             markdown=True,
             instructions=instructions,
             tools=[default_toolkit, *configured_functions],
-        ), configured_name_map
+        )
+        result = (agent, configured_name_map)
+        self._agent_cache[cache_key] = result
+        return result
 
     @staticmethod
     def _consume_command(prompt: str, prefix: str, name: str) -> tuple[str, bool]:

@@ -40,10 +40,34 @@ config = load_config()
 runtime_state = RuntimeState()
 runtime_state.update_config(config)
 workspace_root = Path(__file__).resolve().parents[2]
+confirmed_tool_results: dict[str, str] = {}
 
 
 def slog(message: str) -> None:
     print(f"[SOLO] {utc_now()} {message}", flush=True)
+
+
+_APP_KEYWORDS: dict[str, list[str]] = {
+    "VS Code": ["vscode", "vs code", "visual studio code", "代码编辑器"],
+    "Chrome": ["chrome", "谷歌浏览器", "网页", "浏览器"],
+    "Edge": ["edge", "微软浏览器"],
+    "Firefox": ["firefox", "火狐"],
+    "终端": ["终端", "terminal", "cmd", "powershell", "命令行"],
+    "资源管理器": ["资源管理器", "文件管理器", "explorer", "finder"],
+    "Excel": ["excel", "表格", "电子表格"],
+    "Word": ["word", "文档", "文字处理"],
+    "PPT": ["ppt", "powerpoint", "演示文稿"],
+    "微信": ["微信", "wechat"],
+    "钉钉": ["钉钉", "dingtalk"],
+}
+
+
+def _infer_app_context(task: str) -> str | None:
+    task_lower = task.lower()
+    detected = [app for app, keywords in _APP_KEYWORDS.items() if any(kw in task_lower for kw in keywords)]
+    if detected:
+        return f"任务涉及以下应用: {', '.join(detected)}。"
+    return None
 
 
 @app.on_event("startup")
@@ -356,9 +380,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             await emit_solo_status(session)
             return
 
-        if session.repeat_action_count >= 6:
+        if session.repeat_action_count >= 4:
             session.state = "paused"
-            session.detail = "检测到连续重复动作（>=6 次），已自动暂停。"
+            session.detail = "检测到连续重复动作（>=4 次），已自动暂停。"
             solo_logger.write("paused", {"reason": session.detail})
             await emit_solo_status(session)
             return
@@ -443,10 +467,13 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             return
 
         try:
+            app_context = _infer_app_context(session.task)
             decision = await solo_service.decide_next(
                 task=session.task,
                 screenshot_path=screenshot_path,
                 history=session.history,
+                display_index=session.display_index,
+                app_context=app_context,
             )
             if not is_solo_running(session):
                 return
@@ -697,6 +724,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         workspace_root,
                         pending,
                     )
+                    confirmed_tool_results[pending.conversation_id] = (
+                        f"上一轮确认执行的工具 `{pending.name}` 结果：\n{result}"
+                    )
                     completed_at = utc_now()
                     await safe_send(
                         "server:trace",
@@ -795,6 +825,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         else None
                     ),
                     detail="SOLO 已启动，正在分析首帧截图。",
+                    display_index=current_config.solo.preferred_display_index,
                 )
                 active_solo.log_path = solo_logger.start(envelope.request_id, payload.content)
                 await emit_solo_status(active_solo)
@@ -958,6 +989,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 continue
 
             payload = MessagePayload.model_validate(envelope.payload)
+            enhanced_prompt = payload.content
+            prev_result = confirmed_tool_results.pop(envelope.conversation_id, None)
+            if prev_result:
+                enhanced_prompt = f"{prev_result}\n\n用户新消息：{payload.content}"
 
             await safe_send(
                 "server:status",
@@ -978,7 +1013,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             chunks: list[str] = []
             async for event in agent_service.stream_reply(
                 envelope.conversation_id,
-                payload.content,
+                enhanced_prompt,
             ):
                 if isinstance(event, ReplyChunk):
                     chunks.append(event.content)

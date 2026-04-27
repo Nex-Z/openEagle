@@ -39,8 +39,8 @@ ALLOWED_ACTIONS = {
     "execute_command",
 }
 
-MODEL_IMAGE_MAX_LONG_EDGE = 1920
-MODEL_IMAGE_JPEG_QUALITY = 88
+MODEL_IMAGE_MAX_LONG_EDGE = 2560
+MODEL_IMAGE_JPEG_QUALITY = 92
 
 
 def current_system_platform() -> str:
@@ -226,6 +226,7 @@ class SoloSessionState:
     history: list[dict[str, Any]] = field(default_factory=list)
     pending_confirmation: dict[str, Any] | None = None
     log_path: str | None = None
+    display_index: int | None = None
 
 
 class SoloService:
@@ -264,15 +265,6 @@ class SoloService:
     @property
     def model_id(self) -> str:
         return self._agent_config.vl_model_id or "gpt-4.1-mini"
-
-    @staticmethod
-    def _to_data_url(path: str) -> str:
-        target = Path(path)
-        if not target.exists():
-            raise ValueError(f"截图文件不存在: {path}")
-        binary = target.read_bytes()
-        encoded = base64.b64encode(binary).decode("ascii")
-        return f"data:image/png;base64,{encoded}"
 
     @staticmethod
     def _extract_json(text: str) -> str:
@@ -356,11 +348,19 @@ class SoloService:
         task: str,
         screenshot_path: str,
         history: list[dict[str, Any]],
+        display_index: int | None = None,
+        app_context: str | None = None,
     ) -> SoloDecision:
         agent = self._build_agent()
-        prompt = build_solo_decision_prompt(task, history)
+        prompt = build_solo_decision_prompt(task, history, display_index, app_context)
         model_image = prepare_model_image(screenshot_path)
-        image_url = encode_image_data_url(Path(model_image["path"]), str(model_image["mime_type"]))
+        model_image_path = Path(model_image["path"])
+        image_url = encode_image_data_url(model_image_path, str(model_image["mime_type"]))
+        if model_image.get("compressed"):
+            try:
+                model_image_path.unlink(missing_ok=True)
+            except OSError:
+                pass
         started_at = time.perf_counter()
         result = await agent.arun(
             prompt,
