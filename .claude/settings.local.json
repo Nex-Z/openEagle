@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd /d E:\\\\WorkSpace\\\\project\\\\openEagle)",
+      "Bash(npx tsc *)",
+      "Bash(git add *)",
+      "Bash(git commit -m ' *)",
+      "Bash(git push *)",
+      "Bash(python -c \"from backend.app.prompts import solo_decision_instructions, build_solo_decision_prompt, build_solo_repair_prompt; print\\('OK'\\)\")",
+      "Bash(python -c \"from app.prompts import solo_decision_instructions, build_solo_decision_prompt, build_solo_repair_prompt; print\\('prompts OK'\\)\")",
+      "Bash(python -c \"from app.solo_service import SoloService, SoloSessionState; print\\('solo_service OK'\\)\")",
+      "Bash(python -c \"from app.solo_executor import SoloExecutor; print\\('solo_executor OK'\\)\")",
+      "Bash(python -m py_compile app/prompts.py)",
+      "Bash(python -m py_compile app/solo_service.py)",
+      "Bash(python -m py_compile app/solo_executor.py)",
+      "Bash(git commit *)"
+    ]
+  }
+}
