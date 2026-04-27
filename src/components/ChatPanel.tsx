@@ -11,7 +11,6 @@ import type {
   ChatMessage,
   SoloConfirmationPayload,
   SoloStatusPayload,
-  SoloStepPayload,
   ToolConfirmationPayload,
 } from "../types/protocol";
 
@@ -31,7 +30,6 @@ interface ChatPanelProps {
   onToolConfirmationReject: () => boolean;
   settings: AppSettings;
   soloStatus: SoloStatusPayload;
-  soloStep: SoloStepPayload | null;
   soloConfirmation: SoloConfirmationPayload | null;
   toolConfirmation: ToolConfirmationPayload | null;
   soloTimeline: string[];

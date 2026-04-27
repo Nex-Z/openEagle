@@ -72,7 +72,7 @@ class SoloExecutor:
         if system == "Windows":
             ps_cmd = (
                 "Import-Module Microsoft.PowerShell.Utility;"
-                "Set-Clipboard -Value (Get-Content -Path $env:TEMP\\oe_clip.txt -Raw)"
+                "Set-Clipboard -Value (Get-Content -Path $env:TEMP\\oe_clip.txt -Raw -Encoding UTF8)"
             )
             encoded_cmd = base64.b64encode(ps_cmd.encode("utf-16le")).decode("ascii")
             temp_path = Path(tempfile.gettempdir()) / "oe_clip.txt"

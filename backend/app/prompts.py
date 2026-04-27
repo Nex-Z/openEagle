@@ -150,7 +150,9 @@ def solo_decision_instructions(system_platform: str = "当前系统") -> list[st
         (
             "━━ 完成判定 ━━\n"
             "任务目标已在截图或命令输出中得到明确确认 → finish + is_task_done=true\n"
-            "无法确认时禁止 finish"
+            "无法确认时禁止 finish；若结果不满足需求 → replan\n"
+            "finish 时必须在 agent_message 中给出最终结果或答案，"
+            "告诉用户你做了什么、找到了什么、或任务的最终状态"
         ),
         (
             "━━ thought_summary 写作要求 ━━\n"
@@ -271,7 +273,7 @@ def solo_planning_instructions(system_platform: str = "当前系统") -> list[st
             "  press_keys: {\"keys\": string[]}\n"
             "  execute_command: {\"command\": string, \"cwd\"?: string}\n"
             "  wait: {\"ms\": number}\n"
-            "  finish: {}"
+            "  finish: {} （系统会自动触发 VL 最终评估，确认任务完成并给出反馈）"
         ),
         (
             "━━ needs_visual 判定规则 ━━\n"
@@ -282,7 +284,7 @@ def solo_planning_instructions(system_platform: str = "当前系统") -> list[st
             "  - type_text / press_keys（键盘输入，无需视觉）\n"
             "  - execute_command（命令行操作，无需视觉）\n"
             "  - wait（等待，无需视觉）\n"
-            "  - finish（完成，无需视觉）"
+            "  - finish（最终评估由系统自动触发 VL，不需要手动规划视觉步骤）"
         ),
         (
             "━━ 坐标规范 ━━\n"

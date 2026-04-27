@@ -294,6 +294,48 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             {"plan": payload},
         )
 
+    def _build_completion_summary(session: SoloSessionState) -> str:
+        plan = session.current_plan
+        lines: list[str] = []
+
+        if session.last_agent_message:
+            lines.append(session.last_agent_message)
+            lines.append("")
+
+        if plan and plan.actions:
+            completed = []
+            failed = []
+            skipped = []
+            for idx, act in enumerate(plan.actions):
+                status = session.step_statuses.get(idx, "pending")
+                desc = act.description or act.action
+                if status == "completed":
+                    completed.append(desc)
+                elif status == "failed":
+                    failed.append(desc)
+                elif status == "skipped":
+                    skipped.append(desc)
+
+            if completed:
+                lines.append(f"**已完成 ({len(completed)}):**")
+                for item in completed:
+                    lines.append(f"- {item}")
+            if failed:
+                lines.append(f"**失败 ({len(failed)}):**")
+                for item in failed:
+                    lines.append(f"- {item}")
+            if skipped:
+                lines.append(f"**跳过 ({len(skipped)}):**")
+                for item in skipped:
+                    lines.append(f"- {item}")
+
+        if session.replan_count > 0:
+            lines.append(f"\n重新规划了 {session.replan_count} 次。")
+
+        lines.append(f"\n共执行 {session.step_count} 步。")
+
+        return "\n".join(lines) if lines else "任务已完成。"
+
     async def process_step_result(
         session: SoloSessionState,
         result: dict[str, Any],
@@ -504,6 +546,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
         plan = session.current_plan
         if not plan or session.plan_step_index >= len(plan.actions):
+            summary = _build_completion_summary(session)
             session.current_plan = None
             session.replan_count = 0
             session.state = "completed"
@@ -516,7 +559,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 "server:message",
                 session.request_id,
                 session.conversation_id,
-                {"content": "SOLO 任务已完成。"},
+                {"content": f"**SOLO 任务已完成。**\n\n{summary}"},
             )
             return
 
@@ -525,7 +568,53 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         action_args = current_action.action_args
 
         if action == "finish":
-            if session.step_count >= 2:
+            if session.step_count < 2:
+                slog(
+                    f"request={session.request_id} ignored early finish at step={session.step_count}"
+                )
+                session.plan_step_index += 1
+                await execute_plan_step(session, screenshot_path)
+                return
+
+            # Let VL agent do final evaluation: is the task truly done?
+            slog(f"request={session.request_id} finish reached, calling VL for final evaluation")
+            await emit_solo_plan(session, current_index=session.plan_step_index, current_status="in_progress")
+            await emit_solo_step(
+                session,
+                step_index=session.step_count + 1,
+                action="finish",
+                action_args={},
+                thought_summary="计划已执行完毕，正在做最终评估...",
+                expected_outcome="确认任务完成并给出最终反馈",
+                screenshot_path=screenshot_path,
+            )
+            try:
+                app_context = _infer_app_context(session.task)
+                decision = await solo_service.decide_next(
+                    task=session.task,
+                    screenshot_path=screenshot_path,
+                    history=session.history,
+                    display_index=session.display_index,
+                    app_context=app_context,
+                )
+                if not is_solo_running(session):
+                    return
+
+                if decision.agent_message:
+                    session.last_agent_message = decision.agent_message
+
+                if decision.action == "replan":
+                    session.plan_step_index += 1
+                    await replan_and_continue(
+                        session,
+                        screenshot_path,
+                        decision.agent_message or "最终评估未通过，需要重新规划",
+                    )
+                    return
+
+                # VL confirms task is done
+                await emit_solo_plan(session, current_index=session.plan_step_index, current_status="completed")
+                summary = _build_completion_summary(session)
                 session.current_plan = None
                 session.replan_count = 0
                 session.state = "completed"
@@ -538,14 +627,27 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     "server:message",
                     session.request_id,
                     session.conversation_id,
-                    {"content": "SOLO 任务已完成。"},
+                    {"content": f"**SOLO 任务已完成。**\n\n{summary}"},
                 )
-                return
-            slog(
-                f"request={session.request_id} ignored early finish at step={session.step_count}"
-            )
-            session.plan_step_index += 1
-            await execute_plan_step(session, screenshot_path)
+            except Exception as exc:  # noqa: BLE001
+                if not is_solo_running(session):
+                    return
+                slog(f"request={session.request_id} finish VL eval error={exc}")
+                # Fallback: complete anyway with what we have
+                await emit_solo_plan(session, current_index=session.plan_step_index, current_status="completed")
+                summary = _build_completion_summary(session)
+                session.current_plan = None
+                session.replan_count = 0
+                session.state = "completed"
+                session.completed_at = utc_now()
+                session.detail = "SOLO 任务完成。"
+                await emit_solo_status(session)
+                await safe_send(
+                    "server:message",
+                    session.request_id,
+                    session.conversation_id,
+                    {"content": f"**SOLO 任务已完成。**\n\n{summary}"},
+                )
             return
 
         if action == "replan":
@@ -662,6 +764,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             )
             if not is_solo_running(session):
                 return
+
+            if decision.agent_message:
+                session.last_agent_message = decision.agent_message
 
             if decision.action == "replan":
                 await replan_and_continue(session, screenshot_path, decision.agent_message or "模型请求重新规划")
@@ -904,6 +1009,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             session.current_plan = new_plan
             session.plan_step_index = 0
+            if new_plan.agent_message:
+                session.last_agent_message = new_plan.agent_message
             session.detail = f"已重新规划，共 {len(new_plan.actions)} 步。"
             solo_logger.write(
                 "replan",
@@ -961,6 +1068,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             )
             if not is_solo_running(session):
                 return
+            if decision.agent_message:
+                session.last_agent_message = decision.agent_message
             slog(
                 f"request={session.request_id} decision action={decision.action} "
                 f"done={decision.is_task_done} step={session.step_count + 1}"
@@ -1048,6 +1157,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     "timestamp": utc_now(),
                 }
             )
+            summary = _build_completion_summary(session)
             session.state = "completed"
             session.completed_at = utc_now()
             session.detail = "SOLO 任务完成。"
@@ -1058,7 +1168,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 "server:message",
                 session.request_id,
                 session.conversation_id,
-                {"content": "SOLO 任务已完成。"},
+                {"content": f"**SOLO 任务已完成。**\n\n{summary}"},
             )
             return
         if decision.action == "finish" and session.step_count < 2:
@@ -1348,6 +1458,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                                 return
                             active_solo.current_plan = plan
                             active_solo.plan_step_index = 0
+                            if plan.agent_message:
+                                active_solo.last_agent_message = plan.agent_message
                             active_solo.detail = f"规划完成，共 {len(plan.actions)} 步。"
                             slog(
                                 f"request={active_solo.request_id} plan_ready "

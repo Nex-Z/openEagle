@@ -5,7 +5,6 @@ import {
   CheckCircle2,
   ChevronLeft,
   ChevronRight,
-  Clock3,
   Image,
   ListTree,
   ShieldAlert,
@@ -16,7 +15,6 @@ import type {
   SoloConfirmationPayload,
   SoloPlanStatus,
   SoloStatusPayload,
-  SoloStepPayload,
   ToolConfirmationPayload,
 } from "../../types/protocol";
 import { SoloPlanChecklist } from "./SoloPlanChecklist";
@@ -32,7 +30,6 @@ interface ActivityInspectorProps {
   traces: AgentExecutionTrace[];
   assets: AssetMessage[];
   soloStatus: SoloStatusPayload;
-  soloStep: SoloStepPayload | null;
   soloConfirmation: SoloConfirmationPayload | null;
   toolConfirmation: ToolConfirmationPayload | null;
   soloTimeline: string[];
@@ -65,7 +62,6 @@ export function ActivityInspector(props: ActivityInspectorProps) {
     traces,
     assets,
     soloStatus,
-    soloStep,
     soloConfirmation,
     toolConfirmation,
     soloTimeline,
@@ -194,27 +190,6 @@ export function ActivityInspector(props: ActivityInspectorProps) {
                     </div>
                     <span className={`status-badge tone-${statusTone}`}>{soloStatus.state}</span>
                   </div>
-                  <div className="inspector-metrics">
-                    <div>
-                      <span>步数</span>
-                      <strong>
-                        {soloStatus.stepCount}/{soloStatus.maxSteps}
-                      </strong>
-                    </div>
-                    <div>
-                      <span>详情</span>
-                      <strong>{soloStatus.detail || "等待任务"}</strong>
-                    </div>
-                  </div>
-                  {soloStep ? (
-                    <div className="inspector-highlight">
-                      <Clock3 size={15} />
-                      <div>
-                        <strong>{soloStep.action}</strong>
-                        <span>{soloStep.thoughtSummary}</span>
-                      </div>
-                    </div>
-                  ) : null}
                 </section>
 
                 {soloPlan && <SoloPlanChecklist plan={soloPlan} />}

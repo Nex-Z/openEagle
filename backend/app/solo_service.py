@@ -43,7 +43,7 @@ ALLOWED_ACTIONS = {
     "replan",
 }
 
-BATCH_EXECUTABLE_ACTIONS = {"type_text", "press_keys", "execute_command", "wait", "finish"}
+BATCH_EXECUTABLE_ACTIONS = {"type_text", "press_keys", "execute_command", "wait"}
 
 MODEL_IMAGE_MAX_LONG_EDGE = 2560
 MODEL_IMAGE_JPEG_QUALITY = 92
@@ -252,6 +252,7 @@ class SoloSessionState:
     plan_step_index: int = 0
     replan_count: int = 0
     step_statuses: dict[int, str] = field(default_factory=dict)
+    last_agent_message: str | None = None
 
 
 class SoloService:

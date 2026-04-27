@@ -100,7 +100,6 @@ export default function App() {
     statusLine,
     statusDetail,
     soloStatus,
-    soloStep,
     soloConfirmation,
     toolConfirmation,
     soloDisplays,
@@ -215,7 +214,6 @@ export default function App() {
             soloConfirmation={soloConfirmation}
             soloLastError={soloLastError}
             soloStatus={soloStatus}
-            soloStep={soloStep}
             soloTimeline={soloTimeline}
             soloPlan={soloPlan}
             toolConfirmation={toolConfirmation}
