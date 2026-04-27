@@ -64,33 +64,24 @@ class SoloExecutor:
 
     @staticmethod
     def _set_clipboard(text: str) -> None:
+        import base64
         import subprocess
+        import tempfile
 
         system = platform.system()
         if system == "Windows":
-            import ctypes
-
-            CF_UNICODETEXT = 13
-            GMEM_MOVEABLE = 0x0042
-            user32 = ctypes.windll.user32
-            kernel32 = ctypes.windll.kernel32
-
-            if not user32.OpenClipboard(0):
-                raise RuntimeError("无法打开剪贴板")
+            ps_bytes = ("Set-Clipboard -Value (Get-Content -Path $env:TEMP\\oe_clip.txt -Raw)").encode("ascii")
+            encoded_cmd = base64.b64encode(ps_bytes).decode("ascii")
+            temp_path = Path(tempfile.gettempdir()) / "oe_clip.txt"
+            temp_path.write_text(text, encoding="utf-8")
             try:
-                user32.EmptyClipboard()
-                buf = ctypes.create_unicode_buffer(text)
-                size = (len(text) + 1) * 2
-                h_mem = kernel32.GlobalAlloc(GMEM_MOVEABLE, size)
-                if not h_mem:
-                    raise RuntimeError("GlobalAlloc 失败")
-                ptr = kernel32.GlobalLock(h_mem)
-                ctypes.memmove(ptr, buf, size)
-                kernel32.GlobalUnlock(h_mem)
-                if not user32.SetClipboardData(CF_UNICODETEXT, h_mem):
-                    raise RuntimeError("SetClipboardData 失败")
+                subprocess.run(
+                    ["powershell", "-NoProfile", "-NonInteractive", "-EncodedCommand", encoded_cmd],
+                    check=True,
+                    timeout=5,
+                )
             finally:
-                user32.CloseClipboard()
+                temp_path.unlink(missing_ok=True)
             return
 
         if system == "Darwin":
