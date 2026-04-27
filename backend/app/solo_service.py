@@ -50,7 +50,7 @@ class SoloSessionState:
     conversation_id: str
     task: str
     step_count: int = 0
-    max_steps: int = 25
+    max_steps: int = 100
     repeat_action_count: int = 0
     same_screenshot_count: int = 0
     last_action: str | None = None

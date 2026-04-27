@@ -181,7 +181,7 @@ const initialState: BackendState = {
 const idleSoloStatus: SoloStatusPayload = {
   state: "idle",
   stepCount: 0,
-  maxSteps: 25,
+  maxSteps: 100,
 };
 
 export function useBackendConnection(
@@ -870,7 +870,7 @@ export function useBackendConnection(
       state: "running",
       detail: "SOLO 启动中，准备首帧截图。",
       stepCount: 0,
-      maxSteps: 25,
+      maxSteps: 100,
       startedAt: now,
     });
     setSoloStep(null);

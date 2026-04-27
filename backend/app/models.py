@@ -75,7 +75,7 @@ class SoloStatusPayload(BaseModel):
     state: str
     detail: str | None = None
     step_count: int = Field(default=0, alias="stepCount")
-    max_steps: int = Field(default=25, alias="maxSteps")
+    max_steps: int = Field(default=100, alias="maxSteps")
     last_action: str | None = Field(default=None, alias="lastAction")
     last_screenshot_at: str | None = Field(default=None, alias="lastScreenshotAt")
     log_path: str | None = Field(default=None, alias="logPath")
