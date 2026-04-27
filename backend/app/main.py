@@ -521,7 +521,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             try:
                 execution_result = await asyncio.to_thread(
-                    solo_tools.execute_batch_action,
+                    solo_executor.execute_batch_action,
                     action,
                     action_args,
                 )
