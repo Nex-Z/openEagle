@@ -298,9 +298,9 @@ class SoloExecutor:
             else:
                 import subprocess
                 if platform.system() == "Windows":
+                    ps_script = f"Set-Clipboard -Value '{text.replace(chr(39), chr(39)+chr(39))}'"
                     subprocess.run(
-                        ["clip"],
-                        input=text.encode("utf-16le"),
+                        ["powershell", "-NoProfile", "-Command", ps_script],
                         check=True,
                         timeout=5,
                     )
@@ -335,3 +335,83 @@ class SoloExecutor:
             return {"ok": True, "action": action, "keys": normalized}
 
         raise ValueError(f"unsupported action: {action}")
+
+    def execute_batch_action(self, action: str, action_args: dict[str, Any]) -> dict[str, Any]:
+        if action == "wait":
+            wait_ms = max(int(action_args.get("ms", 800)), 150)
+            time.sleep(wait_ms / 1000)
+            return {"ok": True, "action": action, "waitMs": wait_ms}
+
+        if action == "finish":
+            return {"ok": True, "action": action}
+
+        if action == "type_text":
+            text = action_args.get("text")
+            if not isinstance(text, str) or not text:
+                raise ValueError("type_text requires text")
+            pyautogui = self._ensure_pyautogui()
+            if all(ord(c) < 128 for c in text):
+                pyautogui.typewrite(text)
+            else:
+                import subprocess
+                if platform.system() == "Windows":
+                    ps_script = f"Set-Clipboard -Value '{text.replace(chr(39), chr(39)+chr(39))}'"
+                    subprocess.run(
+                        ["powershell", "-NoProfile", "-Command", ps_script],
+                        check=True,
+                        timeout=5,
+                    )
+                elif platform.system() == "Darwin":
+                    subprocess.run(
+                        ["pbcopy"],
+                        input=text.encode("utf-8"),
+                        check=True,
+                        timeout=5,
+                    )
+                else:
+                    subprocess.run(
+                        ["xclip", "-selection", "clipboard"],
+                        input=text.encode("utf-8"),
+                        check=True,
+                        timeout=5,
+                    )
+                pyautogui.hotkey("ctrl", "v")
+            return {"ok": True, "action": action}
+
+        if action == "press_keys":
+            keys = action_args.get("keys")
+            if not isinstance(keys, list) or not keys:
+                raise ValueError("press_keys requires keys")
+            normalized = [self._normalize_key(str(item)) for item in keys if str(item).strip()]
+            if not normalized:
+                raise ValueError("press_keys requires valid keys")
+            pyautogui = self._ensure_pyautogui()
+            if len(normalized) == 1:
+                pyautogui.press(normalized[0])
+            else:
+                pyautogui.hotkey(*normalized)
+            return {"ok": True, "action": action, "keys": normalized}
+
+        if action == "execute_command":
+            command = action_args.get("command")
+            if not isinstance(command, str) or not command.strip():
+                raise ValueError("execute_command requires non-empty command")
+            cwd = action_args.get("cwd", ".")
+            timeout_ms = int(action_args.get("timeout_ms", 30_000))
+            tail = int(action_args.get("tail", 120))
+            result = run_workspace_command(
+                workspace_root=self._workspace_root,
+                command=command,
+                cwd=cwd,
+                timeout_ms=timeout_ms,
+                tail=tail,
+            )
+            return {
+                "ok": result.returncode == 0 and not result.timed_out,
+                "action": action,
+                "command": command,
+                "exitCode": result.returncode,
+                "output": result.output,
+            }
+
+        raise ValueError(f"batch action not supported: {action}")

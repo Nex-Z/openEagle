@@ -32,7 +32,7 @@ from .runtime_state import RuntimeState
 from .safety import assess_solo_action
 from .solo_executor import SoloExecutor
 from .solo_run_logger import SoloRunLogger
-from .solo_service import SoloService, SoloSessionState, summarize_solo_step_result
+from .solo_service import SoloPlan, SoloService, SoloSessionState, summarize_solo_step_result
 from .solo_toolkit import SoloToolkit
 
 app = FastAPI(title="openEagle Agent Backend")
@@ -402,7 +402,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             return
 
         if is_solo_running(session):
-            await decide_and_emit_next_step(session, session.last_screenshot_path)
+            if session.current_plan:
+                await execute_plan_step(session, session.last_screenshot_path)
+            else:
+                await decide_and_emit_next_step(session, session.last_screenshot_path)
 
     async def execute_solo_step(
         session: SoloSessionState,
@@ -453,6 +456,410 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     "screenshot": screenshot_payload,
                 },
             )
+
+    async def execute_plan_step(
+        session: SoloSessionState,
+        screenshot_path: str,
+    ) -> None:
+        nonlocal solo_service
+        if not is_solo_running(session) or solo_service is None:
+            return
+
+        plan = session.current_plan
+        if not plan or session.plan_step_index >= len(plan.actions):
+            session.state = "completed"
+            session.completed_at = utc_now()
+            session.detail = "计划已执行完毕。"
+            slog(f"request={session.request_id} plan completed at step={session.step_count}")
+            solo_logger.write("completed", {"step": session.step_count})
+            await emit_solo_status(session)
+            await safe_send(
+                "server:message",
+                session.request_id,
+                session.conversation_id,
+                {"content": "SOLO 任务已完成。"},
+            )
+            return
+
+        current_action = plan.actions[session.plan_step_index]
+        action = current_action.action
+        action_args = current_action.action_args
+
+        if action == "finish" and session.step_count >= 2:
+            session.state = "completed"
+            session.completed_at = utc_now()
+            session.detail = "SOLO 任务完成。"
+            slog(f"request={session.request_id} completed at step={session.step_count}")
+            solo_logger.write("completed", {"step": session.step_count})
+            await emit_solo_status(session)
+            await safe_send(
+                "server:message",
+                session.request_id,
+                session.conversation_id,
+                {"content": "SOLO 任务已完成。"},
+            )
+            return
+
+        if action == "replan":
+            await replan_and_continue(session, screenshot_path, str(action_args.get("reason", "模型请求重新规划")))
+            return
+
+        if solo_service.is_batch_executable(action):
+            slog(
+                f"request={session.request_id} batch_step step={session.step_count + 1} "
+                f"action={action} plan_idx={session.plan_step_index}"
+            )
+            await emit_solo_step(
+                session,
+                step_index=session.step_count + 1,
+                action=action,
+                action_args=action_args,
+                thought_summary=current_action.description or f"批量执行: {action}",
+                expected_outcome=current_action.description,
+                screenshot_path=screenshot_path,
+            )
+
+            try:
+                execution_result = await asyncio.to_thread(
+                    solo_tools.execute_batch_action,
+                    action,
+                    action_args,
+                )
+                if not is_solo_running(session):
+                    return
+                session.step_count += 1
+                session.plan_step_index += 1
+                session.detail = f"批量执行第 {session.step_count} 步: {action}"
+                session.repeat_action_count = 1
+                session.last_action = action
+
+                result_summary = {"success": True, "action": action, **execution_result}
+                session.history.append(
+                    {
+                        "step": session.step_count,
+                        "decision": {"action": action, "action_args": action_args, "source": "plan_batch"},
+                        "result": result_summary,
+                        "timestamp": utc_now(),
+                    }
+                )
+                slog(
+                    f"request={session.request_id} batch_step_ok step={session.step_count} action={action}"
+                )
+                solo_logger.write(
+                    "batch_step",
+                    {"step": session.step_count, "action": action, "result": result_summary},
+                )
+                await emit_solo_trace(
+                    session,
+                    "step_result",
+                    "completed",
+                    f"批量执行: {action}",
+                    params={"action": action, "step": session.step_count},
+                    result=result_summary,
+                )
+                await emit_solo_status(session)
+
+                if session.step_count >= session.max_steps:
+                    session.state = "paused"
+                    session.detail = f"超过最大步数 {session.max_steps}，已自动暂停。"
+                    solo_logger.write("paused", {"reason": session.detail})
+                    await emit_solo_status(session)
+                    return
+
+                if action == "execute_command" and execution_result.get("output"):
+                    await replan_and_continue(
+                        session,
+                        screenshot_path,
+                        f"命令执行完成，输出: {str(execution_result.get('output', ''))[:200]}",
+                    )
+                    return
+
+                await execute_plan_step(session, screenshot_path)
+
+            except Exception as exc:  # noqa: BLE001
+                if not is_solo_running(session):
+                    return
+                session.state = "paused"
+                session.detail = f"批量执行失败: {exc}"
+                slog(f"request={session.request_id} batch_step error={exc}")
+                solo_logger.write("error", {"action": action, "error": str(exc)})
+                await emit_solo_trace(
+                    session,
+                    "step_result",
+                    "error",
+                    f"批量执行失败: {action}",
+                    params={"action": action},
+                    result=str(exc),
+                )
+                await emit_solo_status(session)
+            return
+
+        assessment = assess_solo_action(action, action_args, workspace_root)
+        if assessment.level == "blocked":
+            session.state = "paused"
+            session.detail = f"动作已阻断: {assessment.reason}"
+            solo_logger.write(
+                "paused",
+                {"reason": session.detail, "action": action, "actionArgs": action_args},
+            )
+            await emit_solo_status(session)
+            return
+
+        permission_mode = runtime_state.get_config().permissions.mode
+        if assessment.level == "confirm" and permission_mode != "all":
+            session.state = "waiting_user_confirmation"
+            session.pending_confirmation = {
+                "action": action,
+                "action_args": action_args,
+                "thought_summary": current_action.description,
+                "expected_outcome": "",
+                "agent_message": "",
+                "risk_level": assessment.level,
+                "reason": assessment.reason,
+            }
+            session.detail = "检测到危险动作，等待用户确认。"
+            slog(
+                f"request={session.request_id} waiting confirmation action={action} reason={assessment.reason}"
+            )
+            solo_logger.write(
+                "confirmation_required",
+                {
+                    "step": session.step_count + 1,
+                    "action": action,
+                    "actionArgs": action_args,
+                    "reason": assessment.reason,
+                },
+            )
+            await emit_solo_status(session)
+            await emit_confirmation(
+                session,
+                step_index=session.step_count + 1,
+                reason=assessment.reason,
+                action=action,
+                action_args=action_args,
+                thought_summary=current_action.description,
+            )
+            return
+
+        try:
+            app_context = _infer_app_context(session.task)
+            decision = await solo_service.decide_next(
+                task=session.task,
+                screenshot_path=screenshot_path,
+                history=session.history,
+                display_index=session.display_index,
+                app_context=app_context,
+            )
+            if not is_solo_running(session):
+                return
+
+            if decision.action == "replan":
+                await replan_and_continue(session, screenshot_path, decision.agent_message or "模型请求重新规划")
+                return
+
+            final_action = decision.action
+            final_args = decision.action_args
+
+            slog(
+                f"request={session.request_id} visual_decision action={final_action} "
+                f"done={decision.is_task_done} step={session.step_count + 1}"
+            )
+            await emit_solo_trace(
+                session,
+                "decision",
+                "completed",
+                f"视觉决策: {final_action}",
+                params={
+                    "thought": decision.thought_summary,
+                    "expected_outcome": decision.expected_outcome,
+                },
+                result=solo_service.decision_dict(decision),
+            )
+
+            session.history.append(
+                {
+                    "step": session.step_count + 1,
+                    "decision": solo_service.decision_dict(decision),
+                    "timestamp": utc_now(),
+                }
+            )
+
+            await emit_solo_step(
+                session,
+                step_index=session.step_count + 1,
+                action=final_action,
+                action_args=final_args,
+                thought_summary=decision.thought_summary,
+                expected_outcome=decision.expected_outcome,
+                agent_message=decision.agent_message,
+                screenshot_path=screenshot_path,
+            )
+
+            execution_result = await asyncio.to_thread(
+                solo_tools.execute,
+                final_action,
+                final_args,
+            )
+            if not is_solo_running(session):
+                return
+
+            new_screenshot = execution_result.get("screenshot")
+            if not isinstance(new_screenshot, dict):
+                new_screenshot = await asyncio.to_thread(solo_tools.screenshot)
+            if not is_solo_running(session):
+                return
+
+            session.step_count += 1
+            session.plan_step_index += 1
+            session.repeat_action_count = 1
+            session.last_action = final_action
+
+            if isinstance(new_screenshot, dict):
+                new_path = new_screenshot.get("path")
+                new_hash = new_screenshot.get("contentHash")
+                if isinstance(new_path, str):
+                    session.last_screenshot_path = new_path
+                if isinstance(new_hash, str):
+                    if new_hash == session.last_screenshot_hash:
+                        session.same_screenshot_count += 1
+                    else:
+                        session.same_screenshot_count = 0
+                    session.last_screenshot_hash = new_hash
+
+            if session.same_screenshot_count >= 3:
+                await replan_and_continue(
+                    session,
+                    session.last_screenshot_path or screenshot_path,
+                    "连续截图无变化，需要重新规划",
+                )
+                return
+
+            if session.step_count >= session.max_steps:
+                session.state = "paused"
+                session.detail = f"超过最大步数 {session.max_steps}，已自动暂停。"
+                solo_logger.write("paused", {"reason": session.detail})
+                await emit_solo_status(session)
+                return
+
+            result_summary = summarize_solo_step_result(
+                {"success": True, "action": final_action, "executionResult": execution_result, "screenshot": new_screenshot}
+            )
+            session.history[-1]["result"] = result_summary
+            solo_logger.write(
+                "action_result",
+                {
+                    "step": session.step_count,
+                    "action": final_action,
+                    "result": result_summary,
+                },
+            )
+            await emit_solo_status(session)
+
+            next_screenshot = session.last_screenshot_path or screenshot_path
+            await execute_plan_step(session, next_screenshot)
+
+        except Exception as exc:  # noqa: BLE001
+            if not is_solo_running(session):
+                return
+            session.state = "paused"
+            session.detail = f"视觉决策失败: {exc}"
+            slog(f"request={session.request_id} visual_decision error={exc}")
+            solo_logger.write("error", {"reason": session.detail})
+            await emit_solo_trace(
+                session,
+                "decision",
+                "error",
+                "视觉决策失败",
+                result=str(exc),
+            )
+            await emit_solo_status(session)
+
+    async def replan_and_continue(
+        session: SoloSessionState,
+        screenshot_path: str,
+        failure_reason: str,
+    ) -> None:
+        nonlocal solo_service
+        if not is_solo_running(session) or solo_service is None:
+            return
+
+        session.replan_count += 1
+        if session.replan_count > 3:
+            session.state = "paused"
+            session.detail = f"已重新规划 {session.replan_count} 次，任务可能无法完成。"
+            solo_logger.write("paused", {"reason": session.detail})
+            await emit_solo_status(session)
+            return
+
+        slog(f"request={session.request_id} replan count={session.replan_count} reason={failure_reason}")
+        await emit_solo_trace(
+            session,
+            "replan",
+            "started",
+            f"第 {session.replan_count} 次重新规划: {failure_reason}",
+            params={"reason": failure_reason},
+        )
+
+        try:
+            app_context = _infer_app_context(session.task)
+            completed = [
+                h.get("decision", {})
+                for h in session.history
+                if isinstance(h.get("decision"), dict)
+            ]
+            remaining = (
+                session.current_plan.actions[session.plan_step_index:]
+                if session.current_plan
+                else []
+            )
+            remaining_dicts = [
+                {"action": a.action, "action_args": a.action_args, "description": a.description}
+                for a in remaining
+            ]
+
+            new_plan = await solo_service.decide_plan(
+                task=session.task,
+                screenshot_path=screenshot_path,
+                display_index=session.display_index,
+                app_context=app_context,
+            )
+            if not is_solo_running(session):
+                return
+
+            session.current_plan = new_plan
+            session.plan_step_index = 0
+            session.detail = f"已重新规划，共 {len(new_plan.actions)} 步。"
+            solo_logger.write(
+                "replan",
+                {
+                    "count": session.replan_count,
+                    "reason": failure_reason,
+                    "planSteps": len(new_plan.actions),
+                    "analysis": new_plan.task_analysis,
+                },
+            )
+            await emit_solo_trace(
+                session,
+                "replan",
+                "completed",
+                f"重新规划完成，共 {len(new_plan.actions)} 步",
+                params={
+                    "analysis": new_plan.task_analysis,
+                    "alternative": new_plan.alternative,
+                    "agentMessage": new_plan.agent_message,
+                },
+            )
+            await emit_solo_status(session)
+            await execute_plan_step(session, screenshot_path)
+
+        except Exception as exc:  # noqa: BLE001
+            if not is_solo_running(session):
+                return
+            session.state = "error"
+            session.detail = f"重新规划失败: {exc}"
+            slog(f"request={session.request_id} replan error={exc}")
+            solo_logger.write("error", {"reason": session.detail})
+            await emit_solo_status(session)
 
     async def decide_and_emit_next_step(session: SoloSessionState, screenshot_path: str) -> None:
         nonlocal solo_service
@@ -834,12 +1241,67 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     active_solo.detail = "首帧截图失败，无法启动 SOLO。"
                     await emit_solo_status(active_solo)
                 else:
-                    schedule_solo_task(
-                        decide_and_emit_next_step(
-                            active_solo,
-                            active_solo.last_screenshot_path,
-                        )
-                    )
+                    async def _plan_and_start() -> None:
+                        nonlocal solo_service
+                        if solo_service is None or not is_solo_running(active_solo):
+                            return
+                        try:
+                            emit_solo_trace(
+                                active_solo,
+                                "planning",
+                                "started",
+                                "正在分析任务并制定执行计划...",
+                            )
+                            await emit_solo_status(active_solo)
+                            app_context = _infer_app_context(active_solo.task)
+                            plan = await solo_service.decide_plan(
+                                task=active_solo.task,
+                                screenshot_path=active_solo.last_screenshot_path,
+                                display_index=active_solo.display_index,
+                                app_context=app_context,
+                            )
+                            if not is_solo_running(active_solo):
+                                return
+                            active_solo.current_plan = plan
+                            active_solo.plan_step_index = 0
+                            active_solo.detail = f"规划完成，共 {len(plan.actions)} 步。"
+                            slog(
+                                f"request={active_solo.request_id} plan_ready "
+                                f"steps={len(plan.actions)} analysis={plan.task_analysis[:100]}"
+                            )
+                            solo_logger.write(
+                                "plan",
+                                {
+                                    "taskAnalysis": plan.task_analysis,
+                                    "alternative": plan.alternative,
+                                    "estimatedSteps": plan.estimated_steps,
+                                    "actualSteps": len(plan.actions),
+                                    "agentMessage": plan.agent_message,
+                                },
+                            )
+                            await emit_solo_trace(
+                                active_solo,
+                                "planning",
+                                "completed",
+                                f"执行计划已制定: {len(plan.actions)} 步",
+                                params={
+                                    "taskAnalysis": plan.task_analysis,
+                                    "alternative": plan.alternative,
+                                    "agentMessage": plan.agent_message,
+                                },
+                            )
+                            await emit_solo_status(active_solo)
+                            await execute_plan_step(active_solo, active_solo.last_screenshot_path)
+                        except Exception as exc:  # noqa: BLE001
+                            if not is_solo_running(active_solo):
+                                return
+                            active_solo.state = "error"
+                            active_solo.detail = f"规划失败: {exc}"
+                            slog(f"request={active_solo.request_id} planning error={exc}")
+                            solo_logger.write("error", {"reason": active_solo.detail})
+                            await emit_solo_status(active_solo)
+
+                    schedule_solo_task(_plan_and_start())
                 continue
 
             if envelope.type == "client:solo_control":
@@ -890,7 +1352,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         )
                         await emit_solo_status(active_solo)
                         schedule_solo_task(
-                            decide_and_emit_next_step(
+                            execute_plan_step(
                                 active_solo,
                                 active_solo.last_screenshot_path,
                             )
