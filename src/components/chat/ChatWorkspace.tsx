@@ -1,15 +1,13 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import {
+  ChevronDown,
   CircleAlert,
   MonitorSmartphone,
   PanelLeftOpen,
-  PanelRightOpen,
   Play,
   SendHorizonal,
   ShieldAlert,
   ShieldCheck,
-  Sparkles,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -17,7 +15,6 @@ import type {
   AgentExecutionTrace,
   AssistantMessageBlock,
   AppSettings,
-  BackendState,
   ChatMessage,
   PermissionMode,
   SoloConfirmationPayload,
@@ -26,12 +23,9 @@ import type {
 } from "../../types/protocol";
 
 interface ChatWorkspaceProps {
-  backend: BackendState;
   messages: ChatMessage[];
   canSend: boolean;
   canStartSolo: boolean;
-  inspectorCollapsed: boolean;
-  pendingConfirmationCount: number;
   onSend: (content: string) => void;
   onSoloStart: (content: string) => Promise<boolean>;
   onSoloPause: () => boolean;
@@ -42,9 +36,7 @@ interface ChatWorkspaceProps {
   onAllowToolConfirmation: () => boolean;
   onRejectToolConfirmation: () => boolean;
   onPermissionModeChange: (mode: PermissionMode) => void;
-  onOpenSettings: () => void;
   onOpenMobileSidebar: () => void;
-  onOpenInspector: () => void;
   settings: AppSettings;
   soloStatus: SoloStatusPayload;
   soloConfirmation: SoloConfirmationPayload | null;
@@ -167,19 +159,109 @@ function traceKeyFromMessage(message: ChatMessage, trace: AgentExecutionTrace) {
   return `${message.id}:${trace.id}`;
 }
 
-function TraceItem(props: {
+type RenderedAssistantBlock =
+  | AssistantMessageBlock
+  | {
+      id: string;
+      kind: "trace-group";
+      traces: AgentExecutionTrace[];
+    };
+
+function compactTraceTitle(trace: AgentExecutionTrace) {
+  const command = trace.params?.command;
+  if (typeof command === "string" && command.trim()) {
+    return command.trim();
+  }
+  return trace.name;
+}
+
+function traceGroupLabel(traces: AgentExecutionTrace[]) {
+  if (traces.length === 1) {
+    return `Run ${compactTraceTitle(traces[0])}`;
+  }
+
+  const allTools = traces.every((trace) => trace.kind === "tool");
+  const allMcp = traces.every((trace) => trace.kind === "mcp");
+  const allSkills = traces.every((trace) => trace.kind === "skill");
+  if (allTools) {
+    return `Run ${traces.length} commands`;
+  }
+  if (allMcp) {
+    return `Run ${traces.length} MCP calls`;
+  }
+  if (allSkills) {
+    return `Run ${traces.length} skills`;
+  }
+  return `Run ${traces.length} calls`;
+}
+
+function messageHasTrace(message: ChatMessage) {
+  return Boolean(
+    (message.traces && message.traces.length > 0) ||
+      message.blocks?.some((block) => block.kind === "trace"),
+  );
+}
+
+function shouldShowMessageLabel(message: ChatMessage) {
+  if (!message.label) {
+    return false;
+  }
+  return !(message.role === "tool" && messageHasTrace(message));
+}
+
+function groupAssistantBlocks(blocks: AssistantMessageBlock[]) {
+  const grouped: RenderedAssistantBlock[] = [];
+  let traceBuffer: AgentExecutionTrace[] = [];
+
+  const flushTraceBuffer = () => {
+    if (traceBuffer.length === 0) {
+      return;
+    }
+    const first = traceBuffer[0];
+    const last = traceBuffer[traceBuffer.length - 1];
+    grouped.push({
+      id: `trace-group-${first.id}-${last.id}`,
+      kind: "trace-group",
+      traces: traceBuffer,
+    });
+    traceBuffer = [];
+  };
+
+  for (const block of blocks) {
+    if (block.kind === "trace") {
+      traceBuffer.push(block.trace);
+      continue;
+    }
+    flushTraceBuffer();
+    grouped.push(block);
+  }
+
+  flushTraceBuffer();
+  return grouped;
+}
+
+function TraceGroup(props: {
   message: ChatMessage;
-  trace: AgentExecutionTrace;
+  group: Extract<RenderedAssistantBlock, { kind: "trace-group" }>;
   expandedTraceIds: Set<string>;
   onToggleTrace: (traceKey: string) => void;
 }) {
-  const { message, trace, expandedTraceIds, onToggleTrace } = props;
-  const traceKey = traceKeyFromMessage(message, trace);
+  const { message, group, expandedTraceIds, onToggleTrace } = props;
+  const traceKey = `${message.id}:${group.id}`;
   const isExpanded = expandedTraceIds.has(traceKey);
+  const hasError = group.traces.some((trace) => trace.status === "error");
+  const isRunning = group.traces.some((trace) => trace.status === "started");
 
   return (
     <div
-      className={isExpanded ? "trace-row is-expanded" : "trace-row"}
+      className={[
+        "trace-group-row",
+        isExpanded ? "is-expanded" : "",
+        hasError ? "has-error" : "",
+        isRunning ? "is-running" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       onClick={() => onToggleTrace(traceKey)}
       onKeyDown={(event) => {
         if (event.key === "Enter" || event.key === " ") {
@@ -190,32 +272,37 @@ function TraceItem(props: {
       role="button"
       tabIndex={0}
     >
-      <div className="trace-row-head">
-        <span className={`trace-chip trace-chip-${trace.kind}`}>{trace.kind.toUpperCase()}</span>
-        <strong>{trace.name}</strong>
-        <span>{formatTraceDuration(trace.startedAt, trace.completedAt)}</span>
-        <span className={`trace-status trace-status-${trace.status}`}>{trace.status}</span>
+      <div className="trace-group-summary">
+        <span>{traceGroupLabel(group.traces)}</span>
+        <ChevronDown size={15} />
       </div>
       {isExpanded ? (
-        <div className="trace-row-body">
-          {trace.params ? (
-            <div className="trace-stack">
-              <span>入参</span>
-              <pre>{formatTraceValue(trace.params)}</pre>
+        <div className="trace-group-body">
+          {group.traces.map((trace) => (
+            <div key={trace.id} className="trace-compact-item">
+              <div className="trace-compact-line">
+                <span>
+                  {trace.status === "started"
+                    ? "正在运行"
+                    : trace.status === "error"
+                      ? "运行失败"
+                      : "已运行"}
+                </span>
+                <strong>{compactTraceTitle(trace)}</strong>
+                <small>{formatTraceDuration(trace.startedAt, trace.completedAt)}</small>
+              </div>
+              {trace.result || trace.params ? (
+                <div className="trace-compact-result">
+                  <div className="trace-compact-result-head">
+                    <span>{trace.name}</span>
+                    <span>{trace.status === "completed" ? "成功" : trace.status}</span>
+                  </div>
+                  {trace.result ? <pre>{formatTraceValue(trace.result)}</pre> : null}
+                  {!trace.result && trace.params ? <pre>{formatTraceValue(trace.params)}</pre> : null}
+                </div>
+              ) : null}
             </div>
-          ) : null}
-          {trace.result ? (
-            <div className="trace-stack">
-              <span>结果</span>
-              <pre>{formatTraceValue(trace.result)}</pre>
-            </div>
-          ) : null}
-          {trace.status === "error" && !trace.result ? (
-            <div className="trace-stack">
-              <span>错误信息</span>
-              <pre>{trace.summary || "执行失败"}</pre>
-            </div>
-          ) : null}
+          ))}
         </div>
       ) : null}
     </div>
@@ -224,12 +311,9 @@ function TraceItem(props: {
 
 export function ChatWorkspace(props: ChatWorkspaceProps) {
   const {
-    backend,
     messages,
     canSend,
     canStartSolo,
-    inspectorCollapsed,
-    pendingConfirmationCount,
     onSend,
     onSoloStart,
     onSoloPause,
@@ -240,9 +324,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     onAllowToolConfirmation,
     onRejectToolConfirmation,
     onPermissionModeChange,
-    onOpenSettings,
     onOpenMobileSidebar,
-    onOpenInspector,
     settings,
     soloStatus,
     soloConfirmation,
@@ -253,7 +335,6 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
   const [activeIndex, setActiveIndex] = useState(0);
   const [expandedTraceIds, setExpandedTraceIds] = useState<Set<string>>(new Set());
   const [composerMode, setComposerMode] = useState<"chat" | "solo">("chat");
-  const [imageDataUrls, setImageDataUrls] = useState<Record<string, string>>({});
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const streamRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
@@ -296,6 +377,10 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     : !settings.agent.vlApiKey.trim()
       ? "缺少 VL API Key"
       : null;
+  const visibleMessages = useMemo(
+    () => messages.filter((message) => !(message.mode === "solo" && message.imagePath)),
+    [messages],
+  );
 
   useEffect(() => {
     const element = textareaRef.current;
@@ -306,43 +391,6 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     const nextHeight = Math.min(Math.max(element.scrollHeight, 78), 164);
     element.style.height = `${nextHeight}px`;
   }, [draft]);
-
-  useEffect(() => {
-    const imagePaths = Array.from(
-      new Set(messages.map((message) => message.imagePath).filter(Boolean) as string[]),
-    );
-    const missing = imagePaths.filter((path) => !imageDataUrls[path]);
-    if (missing.length === 0) {
-      return;
-    }
-    let cancelled = false;
-    void Promise.all(
-      missing.map(async (path) => {
-        try {
-          const dataUrl = await invoke<string>("read_image_data_url", { path });
-          return { path, dataUrl };
-        } catch {
-          return null;
-        }
-      }),
-    ).then((entries) => {
-      if (cancelled) {
-        return;
-      }
-      setImageDataUrls((current) => {
-        const next = { ...current };
-        for (const entry of entries) {
-          if (entry) {
-            next[entry.path] = entry.dataUrl;
-          }
-        }
-        return next;
-      });
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [imageDataUrls, messages]);
 
   useEffect(() => {
     const stream = streamRef.current;
@@ -361,7 +409,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
 
   useEffect(() => {
     const stream = streamRef.current;
-    const latestMessage = messages[messages.length - 1];
+    const latestMessage = visibleMessages[visibleMessages.length - 1];
     const forceScrollForSolo = latestMessage?.mode === "solo";
     if (!stream || (!shouldStickToBottomRef.current && !forceScrollForSolo)) {
       return;
@@ -369,7 +417,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     requestAnimationFrame(() => {
       stream.scrollTo({ top: stream.scrollHeight, behavior: "auto" });
     });
-  }, [messages, soloStatus.state]);
+  }, [soloStatus.state, visibleMessages]);
 
   const toggleTrace = (traceKey: string) => {
     setExpandedTraceIds((current) => {
@@ -485,26 +533,11 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
           </div>
         </div>
 
-        <div className="workspace-header-side">
-          <div className="backend-pill">
-            <span className={`backend-dot phase-${backend.phase}`} />
-            <span>{backend.phase === "connected" ? "已连接" : "未就绪"}</span>
-          </div>
-          <button className="secondary-button desktop-only" onClick={onOpenSettings} type="button">
-            <Sparkles size={16} />
-            <span>设置</span>
-          </button>
-          <button className="icon-button" onClick={onOpenInspector} type="button">
-            <PanelRightOpen size={16} />
-            {inspectorCollapsed && pendingConfirmationCount > 0 ? (
-              <span className="icon-badge">{pendingConfirmationCount}</span>
-            ) : null}
-          </button>
-        </div>
+        <div className="workspace-header-side" />
       </header>
 
       <div ref={streamRef} className="message-stream">
-        {messages.length === 0 ? (
+        {visibleMessages.length === 0 ? (
           <div className="empty-message-state">
             <div className="empty-message-icon">
               <MonitorSmartphone size={24} />
@@ -513,7 +546,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
             <p>输入 `/` 可快速插入 Tool、MCP 和 Skill 指令，右侧 Inspector 会展示更完整的执行细节。</p>
           </div>
         ) : (
-          messages.map((message) => (
+          visibleMessages.map((message) => (
             <article
               key={message.id}
               className={`message-shell role-${message.role} ${message.mode === "solo" ? "mode-solo" : ""}`}
@@ -531,20 +564,30 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
                 <span>{new Date(message.createdAt).toLocaleTimeString()}</span>
               </div>
 
-              {message.label ? <div className="message-label">{message.label}</div> : null}
+              {shouldShowMessageLabel(message) ? (
+                <div className="message-label">{message.label}</div>
+              ) : null}
 
               {message.blocks && message.blocks.length > 0 ? (
                 <div className="assistant-blocks">
-                  {message.blocks.map((block: AssistantMessageBlock) =>
+                  {groupAssistantBlocks(message.blocks).map((block) =>
                     block.kind === "text" ? (
                       block.content ? <div key={block.id}>{renderMessageMarkdown(block.content)}</div> : null
-                    ) : (
-                      <TraceItem
+                    ) : block.kind === "trace-group" ? (
+                      <TraceGroup
                         key={block.id}
                         expandedTraceIds={expandedTraceIds}
+                        group={block}
                         message={message}
                         onToggleTrace={toggleTrace}
-                        trace={block.trace}
+                      />
+                    ) : (
+                      <TraceGroup
+                        key={block.id}
+                        expandedTraceIds={expandedTraceIds}
+                        group={{ id: `trace-group-${block.trace.id}`, kind: "trace-group", traces: [block.trace] }}
+                        message={message}
+                        onToggleTrace={toggleTrace}
                       />
                     ),
                   )}
@@ -553,30 +596,19 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
                 renderMessageMarkdown(message.content)
               ) : null}
 
-              {message.imagePath ? (
-                <div className="screenshot-preview">
-                  <img
-                    alt={message.label || "SOLO screenshot"}
-                    src={imageDataUrls[message.imagePath] ?? convertFileSrc(message.imagePath)}
-                  />
-                  <small>{message.imagePath}</small>
-                </div>
-              ) : null}
-
               {(!message.blocks || message.blocks.length === 0) &&
               message.traces &&
               message.traces.length > 0 ? (
-                <div className="trace-list">
-                  {message.traces.map((trace) => (
-                    <TraceItem
-                      key={trace.id}
-                      expandedTraceIds={expandedTraceIds}
-                      message={message}
-                      onToggleTrace={toggleTrace}
-                      trace={trace}
-                    />
-                  ))}
-                </div>
+                <TraceGroup
+                  expandedTraceIds={expandedTraceIds}
+                  group={{
+                    id: `trace-group-${message.traces[0]?.id ?? message.id}`,
+                    kind: "trace-group",
+                    traces: message.traces,
+                  }}
+                  message={message}
+                  onToggleTrace={toggleTrace}
+                />
               ) : null}
 
               {message.role === "assistant" && message.status === "pending" ? (

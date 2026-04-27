@@ -92,6 +92,7 @@ class SoloStepPayload(BaseModel):
     action: str
     action_args: dict[str, Any] = Field(default_factory=dict, alias="actionArgs")
     thought_summary: str = Field(alias="thoughtSummary")
+    agent_message: str | None = Field(default=None, alias="agentMessage")
     expected_outcome: str | None = Field(default=None, alias="expectedOutcome")
     screenshot_path: str | None = Field(default=None, alias="screenshotPath")
     timestamp: str

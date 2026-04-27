@@ -8,6 +8,7 @@ import type {
   SkillConfig,
   ToolConfig,
 } from "../types/protocol";
+import { SecretInput } from "./settings/SecretInput";
 import { ThemeToggle } from "./ThemeToggle";
 
 type SettingsSection = "general" | "tools" | "mcp" | "skills";
@@ -293,18 +294,17 @@ function renderGeneralSection(
         </label>
         <label className="field">
           <span>文本 API Key</span>
-          <input
-            onChange={(event) =>
+          <SecretInput
+            onChange={(value) =>
               onChange({
                 ...settings,
                 agent: {
                   ...settings.agent,
-                  apiKey: event.target.value,
+                  apiKey: value,
                 },
               })
             }
             placeholder="OpenAI 或兼容平台的 API Key"
-            type="password"
             value={settings.agent.apiKey}
           />
         </label>
@@ -363,18 +363,17 @@ function renderGeneralSection(
         </label>
         <label className="field">
           <span>VL API Key</span>
-          <input
-            onChange={(event) =>
+          <SecretInput
+            onChange={(value) =>
               onChange({
                 ...settings,
                 agent: {
                   ...settings.agent,
-                  vlApiKey: event.target.value,
+                  vlApiKey: value,
                 },
               })
             }
             placeholder="用于视觉理解模型调用"
-            type="password"
             value={settings.agent.vlApiKey}
           />
         </label>

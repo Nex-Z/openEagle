@@ -10,9 +10,21 @@ from pathlib import Path
 from app.config import ToolConfig
 from app.confirmations import ToolConfirmationStore
 from app.default_tools import build_configured_tool_functions, build_default_tools
-from app.prompts import build_chat_instructions, solo_decision_instructions
+from app.prompts import (
+    build_chat_instructions,
+    build_solo_decision_prompt,
+    build_solo_repair_prompt,
+    solo_decision_instructions,
+)
 from app.safety import assess_solo_action, assess_tool_action, classify_command_risk
 from app.solo_executor import SoloExecutor
+from app.solo_service import (
+    MODEL_IMAGE_MAX_LONG_EDGE,
+    SoloDecision,
+    SoloService,
+    prepare_model_image,
+    summarize_solo_step_result,
+)
 
 
 class SafetyAssessmentTest(unittest.TestCase):
@@ -386,6 +398,104 @@ class ScreenshotHashTest(unittest.TestCase):
             self.assertNotEqual(SoloExecutor.content_hash(first), SoloExecutor.content_hash(second))
 
 
+class SoloModelImageTest(unittest.TestCase):
+    def test_model_image_is_resized_jpeg_without_touching_source(self) -> None:
+        from PIL import Image as PillowImage
+
+        with tempfile.TemporaryDirectory() as tmp:
+            source = Path(tmp) / "large.png"
+            image = PillowImage.new("RGB", (2400, 1200), color=(245, 245, 245))
+            image.save(source)
+
+            prepared = prepare_model_image(source.as_posix(), max_long_edge=1200)
+
+            self.assertEqual(prepared["mime_type"], "image/jpeg")
+            self.assertTrue(prepared["compressed"])
+            self.assertLessEqual(max(prepared["model_width"], prepared["model_height"]), 1200)
+            self.assertEqual(prepared["source_width"], 2400)
+            self.assertEqual(prepared["source_height"], 1200)
+            self.assertTrue(Path(prepared["path"]).exists())
+            self.assertTrue(source.exists())
+
+    def test_default_model_image_long_edge_stays_readable_size(self) -> None:
+        self.assertGreaterEqual(MODEL_IMAGE_MAX_LONG_EDGE, 1920)
+
+
+class SoloResultSummaryTest(unittest.TestCase):
+    def test_solo_result_summary_keeps_decision_signal_without_full_output(self) -> None:
+        summary = summarize_solo_step_result(
+            {
+                "success": True,
+                "action": "execute_command",
+                "executionResult": {
+                    "ok": False,
+                    "command": "dir",
+                    "cwd": "E:/workspace",
+                    "exitCode": 1,
+                    "output": "0123456789abcdef",
+                },
+                "screenshot": {
+                    "path": "C:/temp/shot.png",
+                    "contentHash": "abc",
+                    "capturedAt": "2026-04-27T00:00:00Z",
+                    "width": 1920,
+                    "height": 1080,
+                    "displayIndex": 1,
+                },
+            },
+            max_output_chars=6,
+        )
+
+        self.assertEqual(summary["command"], "dir")
+        self.assertEqual(summary["exitCode"], 1)
+        self.assertEqual(summary["outputTail"], "abcdef")
+        self.assertTrue(summary["outputTruncated"])
+        self.assertEqual(summary["screenshot"]["contentHash"], "abc")
+        self.assertNotIn("path", summary["screenshot"])
+
+
+class SoloDecisionParsingTest(unittest.TestCase):
+    def test_solo_json_can_be_extracted_from_natural_language_wrapper(self) -> None:
+        decision = SoloService._normalize_decision(
+            '我准备执行下一步：{"thought_summary":"[状态] ok [上步] 上一步是否成功：是 [决策] 继续",'
+            '"action":"screenshot","action_args":{},"expected_outcome":"刷新截图",'
+            '"is_task_done":false,"agent_message":"我先看一下当前界面。"}'
+        )
+
+        self.assertEqual(decision.action, "screenshot")
+        self.assertEqual(decision.agent_message, "我先看一下当前界面。")
+
+    def test_solo_fallback_decision_preserves_natural_language(self) -> None:
+        decision = SoloService._fallback_decision_from_text(
+            "我会先打开 QQ 音乐。",
+            ValueError("bad json"),
+        )
+
+        self.assertEqual(decision.action, "screenshot")
+        self.assertTrue(decision.used_parse_fallback)
+        self.assertIn("我会先打开 QQ 音乐", decision.agent_message)
+        self.assertIn("上一步是否成功", decision.thought_summary)
+
+    def test_plain_language_output_skips_remote_repair(self) -> None:
+        self.assertFalse(SoloService._should_attempt_json_repair("我会先打开 QQ 音乐。"))
+        self.assertTrue(SoloService._should_attempt_json_repair('说明 {"action": "wait"}'))
+
+    def test_decision_dict_keeps_agent_message_but_hides_raw_output(self) -> None:
+        decision = SoloDecision(
+            thought_summary="[状态] ok [上步] 上一步是否成功：是 [决策] done",
+            action="wait",
+            action_args={"ms": 800},
+            expected_outcome="等待",
+            is_task_done=False,
+            agent_message="我会等一下。",
+            raw_model_output="raw",
+        )
+
+        payload = SoloService.decision_dict(decision)
+        self.assertEqual(payload["agent_message"], "我会等一下。")
+        self.assertNotIn("raw_model_output", payload)
+
+
 class PromptPolicyTest(unittest.TestCase):
     def test_chat_prompt_contains_command_first_and_visual_boundary(self) -> None:
         instructions = "\n".join(build_chat_instructions("conv", [], [], []))
@@ -395,11 +505,49 @@ class PromptPolicyTest(unittest.TestCase):
         self.assertIn("CONFIRMATION_REQUIRED", instructions)
 
     def test_solo_prompt_contains_visual_boundary_and_json_contract(self) -> None:
-        instructions = "\n".join(solo_decision_instructions())
-        self.assertIn("必须仅输出 JSON", instructions)
-        self.assertIn("优先使用 execute_command", instructions)
-        self.assertIn("视觉动作", instructions)
-        self.assertIn("归一化比例坐标", instructions)
+        instructions = "\n".join(solo_decision_instructions("Windows 11"))
+        self.assertIn("Windows 11 桌面", instructions)
+        self.assertIn("仅输出合法 JSON", instructions)
+        self.assertIn("thought_summary", instructions)
+        self.assertIn("agent_message", instructions)
+        self.assertIn("禁止写在 JSON 外", instructions)
+        self.assertIn("Q1: 这件事能用命令行做吗", instructions)
+        self.assertIn("execute_command，不要用鼠标键盘绕路", instructions)
+        self.assertIn("action_args 参数规范", instructions)
+        self.assertIn("Chat Agent 负责工作区代码", instructions)
+        self.assertIn("execute_command: {\"command\": string", instructions)
+        self.assertIn("同一动作或同一思路连续执行 ≥3 次", instructions)
+        self.assertIn("归一化比例值", instructions)
+        self.assertIn("命令或截图上下文确认目标位置", instructions)
+
+    def test_solo_dynamic_prompt_contains_step_history_requirements(self) -> None:
+        prompt = build_solo_decision_prompt(
+            "打开记事本",
+            [{"step": 1, "decision": {"action": "execute_command"}}],
+        )
+        self.assertIn("用户任务：打开记事本", prompt)
+        self.assertIn("步骤历史（最新在后，共 1 步）", prompt)
+        self.assertIn("历史字段说明", prompt)
+        self.assertIn("outputTail", prompt)
+        self.assertIn("screenshot.contentHash", prompt)
+        self.assertIn("agent_message", prompt)
+        self.assertIn("先判断上一步是否成功", prompt)
+        self.assertIn("[状态]", prompt)
+        self.assertIn("[上步]", prompt)
+        self.assertIn("[决策]", prompt)
+
+    def test_solo_repair_prompt_converts_natural_language_to_json_decision(self) -> None:
+        prompt = build_solo_repair_prompt(
+            "播放 QQ 音乐",
+            [],
+            "我会打开 QQ 音乐。",
+            "VL 输出不包含可解析 JSON。",
+        )
+
+        self.assertIn("无法解析为动作决策 JSON", prompt)
+        self.assertIn("agent_message", prompt)
+        self.assertIn("仅返回一个合法 JSON 对象", prompt)
+        self.assertIn("action 仅可取", prompt)
 
 
 if __name__ == "__main__":

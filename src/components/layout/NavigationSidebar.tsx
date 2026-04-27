@@ -1,5 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { CirclePlus, PanelLeftClose, Settings2, Sparkles, Wifi, WifiOff } from "lucide-react";
+import {
+  CirclePlus,
+  MoreHorizontal,
+  Settings2,
+  Sparkles,
+  Trash2,
+  Wifi,
+  WifiOff,
+  X,
+} from "lucide-react";
 import type { BackendState, ConversationSummary } from "../../types/protocol";
 import type { SettingsSection } from "../settings/SettingsDrawer";
 
@@ -63,14 +72,16 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
               <strong>openEagle</strong>
             </div>
           </div>
-          <button
-            aria-label="关闭侧边栏"
-            className="icon-button mobile-only"
-            onClick={onCloseMobile}
-            type="button"
-          >
-            <PanelLeftClose size={16} />
-          </button>
+          {mobileOpen ? (
+            <button
+              aria-label="关闭侧边栏"
+              className="icon-button mobile-only"
+              onClick={onCloseMobile}
+              type="button"
+            >
+              <X size={16} />
+            </button>
+          ) : null}
         </header>
 
         <button className="primary-button sidebar-create" onClick={onNewConversation} type="button">
@@ -119,9 +130,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                       }}
                       type="button"
                     >
-                      <span />
-                      <span />
-                      <span />
+                      <MoreHorizontal size={16} />
                     </button>
 
                     {openMenuId === conversation.id ? (
@@ -136,6 +145,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                           role="menuitem"
                           type="button"
                         >
+                          <Trash2 size={14} />
                           删除会话
                         </button>
                       </div>

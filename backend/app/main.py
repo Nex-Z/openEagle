@@ -32,7 +32,7 @@ from .runtime_state import RuntimeState
 from .safety import assess_solo_action
 from .solo_executor import SoloExecutor
 from .solo_run_logger import SoloRunLogger
-from .solo_service import SoloService, SoloSessionState
+from .solo_service import SoloService, SoloSessionState, summarize_solo_step_result
 from .solo_toolkit import SoloToolkit
 
 app = FastAPI(title="openEagle Agent Backend")
@@ -191,6 +191,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         action_args: dict[str, Any],
         thought_summary: str,
         expected_outcome: str,
+        agent_message: str | None = None,
         screenshot_path: str | None = None,
     ) -> None:
         payload = SoloStepPayload(
@@ -198,6 +199,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             action=action,
             actionArgs=action_args,
             thoughtSummary=thought_summary,
+            agentMessage=agent_message,
             expectedOutcome=expected_outcome,
             screenshotPath=screenshot_path,
             timestamp=utc_now(),
@@ -255,6 +257,21 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 screenshot_at = captured_at_value
             if isinstance(content_hash_value, str):
                 screenshot_hash = content_hash_value
+
+        result_summary = summarize_solo_step_result(result)
+        if session.history:
+            last_decision = session.history[-1].get("decision")
+            if isinstance(last_decision, dict) and last_decision.get("action") == action:
+                session.history[-1]["result"] = result_summary
+            else:
+                session.history.append(
+                    {
+                        "step": session.step_count + 1,
+                        "system_action": action,
+                        "result": result_summary,
+                        "timestamp": utc_now(),
+                    }
+                )
 
         if screenshot_path:
             session.last_screenshot_path = screenshot_path
@@ -454,8 +471,46 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     "step": session.step_count + 1,
                     "decision": solo_service.decision_dict(decision),
                     "screenshotPath": screenshot_path,
+                    "modelElapsedMs": decision.model_elapsed_ms,
+                    "repairElapsedMs": decision.repair_elapsed_ms,
+                    "imageBytes": decision.image_bytes,
+                    "sourceImageBytes": decision.source_image_bytes,
+                    "modelImagePath": decision.model_image_path,
+                    "modelImageWidth": decision.model_image_width,
+                    "modelImageHeight": decision.model_image_height,
+                    "modelImageScale": decision.model_image_scale,
                 },
             )
+            if decision.raw_model_output:
+                solo_logger.write(
+                    "decision_parse_recovery",
+                    {
+                        "step": session.step_count + 1,
+                        "usedFallback": decision.used_parse_fallback,
+                        "rawOutput": decision.raw_model_output,
+                        "repairOutput": decision.repair_model_output,
+                    },
+                )
+                await emit_solo_trace(
+                    session,
+                    "decision_repair",
+                    "completed",
+                    (
+                        "VL 输出不是标准 JSON，已保留自然语言并生成保守动作。"
+                        if decision.used_parse_fallback
+                        else "VL 输出不是标准 JSON，已修复为动作决策。"
+                    ),
+                    params={
+                        "usedFallback": decision.used_parse_fallback,
+                        "modelElapsedMs": decision.model_elapsed_ms,
+                        "repairElapsedMs": decision.repair_elapsed_ms,
+                        "imageBytes": decision.image_bytes,
+                        "sourceImageBytes": decision.source_image_bytes,
+                        "modelImageWidth": decision.model_image_width,
+                        "modelImageHeight": decision.model_image_height,
+                        "modelImageScale": decision.model_image_scale,
+                    },
+                )
         except Exception as exc:  # noqa: BLE001
             session.state = "error"
             session.detail = f"VL 推理失败: {exc}"
@@ -536,6 +591,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 "action_args": decision.action_args,
                 "thought_summary": decision.thought_summary,
                 "expected_outcome": decision.expected_outcome,
+                "agent_message": decision.agent_message,
                 "risk_level": assessment.level,
                 "reason": assessment.reason,
             }
@@ -570,6 +626,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             action_args=decision.action_args,
             thought_summary=decision.thought_summary,
             expected_outcome=decision.expected_outcome,
+            agent_message=decision.agent_message,
             screenshot_path=screenshot_path,
         )
         await execute_solo_step(session, decision.action, decision.action_args)
@@ -855,6 +912,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         action_args=pending["action_args"],
                         thought_summary=pending["thought_summary"],
                         expected_outcome=pending["expected_outcome"],
+                        agent_message=str(pending.get("agent_message") or "") or None,
                         screenshot_path=active_solo.last_screenshot_path,
                     )
                     schedule_solo_task(

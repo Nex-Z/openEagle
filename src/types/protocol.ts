@@ -172,6 +172,7 @@ export interface SoloStepPayload {
   action: string;
   actionArgs?: Record<string, unknown>;
   thoughtSummary: string;
+  agentMessage?: string;
   expectedOutcome?: string;
   screenshotPath?: string;
   timestamp: string;

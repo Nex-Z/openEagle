@@ -163,8 +163,6 @@ export default function App() {
 
   const traces = useMemo(() => collectLatestTraces(messages), [messages]);
   const assets = useMemo(() => collectAssetMessages(messages), [messages]);
-  const pendingConfirmationCount =
-    Number(Boolean(soloConfirmation)) + Number(Boolean(toolConfirmation));
 
   const createNewConversation = () => {
     const next = createConversation({
@@ -224,19 +222,12 @@ export default function App() {
         }
         mainPanel={
           <ChatWorkspace
-            backend={backend}
             canSend={canSend}
             canStartSolo={canStartSolo}
-            inspectorCollapsed={inspectorCollapsed}
             messages={messages}
             onAllowDangerousStep={allowDangerousStep}
             onAllowToolConfirmation={allowToolConfirmation}
-            onOpenInspector={() => setInspectorCollapsed(false)}
             onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
-            onOpenSettings={() => {
-              setSettingsSection("general");
-              setSettingsDrawerOpen(true);
-            }}
             onPermissionModeChange={(mode) =>
               setSettings((current) => ({
                 ...current,
@@ -253,7 +244,6 @@ export default function App() {
             onSoloResume={resumeSolo}
             onSoloStart={startSolo}
             onSoloStop={stopSolo}
-            pendingConfirmationCount={pendingConfirmationCount}
             settings={settings}
             soloConfirmation={soloConfirmation}
             soloLastError={soloLastError}

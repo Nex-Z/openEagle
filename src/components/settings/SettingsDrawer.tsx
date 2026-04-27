@@ -9,6 +9,7 @@ import type {
   SoloDisplayOption,
   ToolConfig,
 } from "../../types/protocol";
+import { SecretInput } from "./SecretInput";
 
 export type SettingsSection =
   | "general"
@@ -346,17 +347,16 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                   </label>
                   <label className="form-field">
                     <span>App Secret</span>
-                    <input
-                      onChange={(event) =>
+                    <SecretInput
+                      onChange={(value) =>
                         onChange({
                           ...settings,
                           feishu: {
                             ...settings.feishu,
-                            appSecret: event.target.value,
+                            appSecret: value,
                           },
                         })
                       }
-                      type="password"
                       value={settings.feishu.appSecret}
                     />
                   </label>
@@ -425,17 +425,16 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                   </label>
                   <label className="form-field">
                     <span>API Key</span>
-                    <input
-                      onChange={(event) =>
+                    <SecretInput
+                      onChange={(value) =>
                         onChange({
                           ...settings,
                           agent: {
                             ...settings.agent,
-                            apiKey: event.target.value,
+                            apiKey: value,
                           },
                         })
                       }
-                      type="password"
                       value={settings.agent.apiKey}
                     />
                   </label>
@@ -499,17 +498,16 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                   </label>
                   <label className="form-field">
                     <span>API Key</span>
-                    <input
-                      onChange={(event) =>
+                    <SecretInput
+                      onChange={(value) =>
                         onChange({
                           ...settings,
                           agent: {
                             ...settings.agent,
-                            vlApiKey: event.target.value,
+                            vlApiKey: value,
                           },
                         })
                       }
-                      type="password"
                       value={settings.agent.vlApiKey}
                     />
                   </label>

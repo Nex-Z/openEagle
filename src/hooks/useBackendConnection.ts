@@ -655,16 +655,17 @@ export function useBackendConnection(
 
       if (envelope.type === "server:solo_step" && envelope.payload.step) {
         const step = envelope.payload.step;
+        const visibleText = step.agentMessage?.trim() || step.thoughtSummary;
         activeSoloRequestIdRef.current = envelope.requestId;
         setSoloStep(step);
         appendSoloTimeline(
-          `第 ${step.stepIndex} 步: ${step.action} · ${step.thoughtSummary}`,
+          `第 ${step.stepIndex} 步: ${step.action} · ${visibleText}`,
         );
         appendSoloMessage(
           createChatMessage({
             role: "assistant",
             label: `第 ${step.stepIndex} 步`,
-            content: `${step.thoughtSummary}\n\n计划动作: \`${step.action}\`\n\n预期结果: ${step.expectedOutcome ?? "未提供"}`,
+            content: visibleText,
             createdAt: step.timestamp,
             requestId: envelope.requestId,
             mode: "solo",

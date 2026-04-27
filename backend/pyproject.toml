@@ -10,7 +10,8 @@ dependencies = [
   "mss>=10.1.0",
   "pyautogui>=0.9.54",
   "uvicorn[standard]>=0.34.0",
-  "pydantic>=2.11.1"
+  "pydantic>=2.11.1",
+  "pillow>=11.0.0",
 ]
 
 [project.optional-dependencies]

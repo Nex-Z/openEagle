@@ -79,12 +79,13 @@ export function ActivityInspector(props: ActivityInspectorProps) {
   const [imageDataUrls, setImageDataUrls] = useState<Record<string, string>>({});
 
   useEffect(() => {
-    const imagePaths = Array.from(new Set(assets.map((asset) => asset.imagePath)));
+    const imagePaths = Array.from(
+      new Set(assets.map((asset) => asset.imagePath).filter(Boolean)),
+    );
     const missing = imagePaths.filter((path) => !imageDataUrls[path]);
     if (missing.length === 0) {
       return;
     }
-
     let cancelled = false;
     void Promise.all(
       missing.map(async (path) => {
@@ -102,9 +103,10 @@ export function ActivityInspector(props: ActivityInspectorProps) {
       setImageDataUrls((current) => {
         const next = { ...current };
         for (const entry of entries) {
-          if (entry) {
-            next[entry.path] = entry.dataUrl;
+          if (!entry) {
+            continue;
           }
+          next[entry.path] = entry.dataUrl;
         }
         return next;
       });
@@ -383,6 +385,7 @@ export function ActivityInspector(props: ActivityInspectorProps) {
                       <figure key={asset.id} className="asset-card">
                         <img
                           alt={asset.label}
+                          loading="lazy"
                           src={imageDataUrls[asset.imagePath] ?? convertFileSrc(asset.imagePath)}
                         />
                         <figcaption>
