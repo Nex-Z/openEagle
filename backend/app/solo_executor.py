@@ -70,8 +70,11 @@ class SoloExecutor:
 
         system = platform.system()
         if system == "Windows":
-            ps_bytes = ("Set-Clipboard -Value (Get-Content -Path $env:TEMP\\oe_clip.txt -Raw)").encode("ascii")
-            encoded_cmd = base64.b64encode(ps_bytes).decode("ascii")
+            ps_cmd = (
+                "Import-Module Microsoft.PowerShell.Utility;"
+                "Set-Clipboard -Value (Get-Content -Path $env:TEMP\\oe_clip.txt -Raw)"
+            )
+            encoded_cmd = base64.b64encode(ps_cmd.encode("utf-16le")).decode("ascii")
             temp_path = Path(tempfile.gettempdir()) / "oe_clip.txt"
             temp_path.write_text(text, encoding="utf-8")
             try:
