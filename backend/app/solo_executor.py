@@ -62,6 +62,64 @@ class SoloExecutor:
         self._pyautogui = pyautogui
         return pyautogui
 
+    @staticmethod
+    def _set_clipboard(text: str) -> None:
+        import subprocess
+
+        system = platform.system()
+        if system == "Windows":
+            import ctypes
+
+            CF_UNICODETEXT = 13
+            GMEM_MOVEABLE = 0x0042
+            user32 = ctypes.windll.user32
+            kernel32 = ctypes.windll.kernel32
+
+            if not user32.OpenClipboard(0):
+                raise RuntimeError("无法打开剪贴板")
+            try:
+                user32.EmptyClipboard()
+                buf = ctypes.create_unicode_buffer(text)
+                size = (len(text) + 1) * 2
+                h_mem = kernel32.GlobalAlloc(GMEM_MOVEABLE, size)
+                if not h_mem:
+                    raise RuntimeError("GlobalAlloc 失败")
+                ptr = kernel32.GlobalLock(h_mem)
+                ctypes.memmove(ptr, buf, size)
+                kernel32.GlobalUnlock(h_mem)
+                if not user32.SetClipboardData(CF_UNICODETEXT, h_mem):
+                    raise RuntimeError("SetClipboardData 失败")
+            finally:
+                user32.CloseClipboard()
+            return
+
+        if system == "Darwin":
+            tools = [("pbcopy", [])]
+        else:
+            tools = [("xclip", ["-selection", "clipboard"]), ("xsel", ["--clipboard", "--input"])]
+
+        last_error: Exception | None = None
+        for cmd, args in tools:
+            try:
+                subprocess.run(
+                    [cmd, *args],
+                    input=text.encode("utf-8"),
+                    check=True,
+                    timeout=5,
+                )
+                return
+            except FileNotFoundError:
+                continue
+            except subprocess.SubprocessError as exc:
+                last_error = exc
+                continue
+
+        available = ", ".join(t for t, _ in tools)
+        raise RuntimeError(
+            f"未找到剪贴板工具（已尝试: {available}）。请安装 xclip 或 xsel。"
+            + (f" 最后错误: {last_error}" if last_error else "")
+        )
+
     def set_preferred_display_index(self, index: int) -> None:
         self._preferred_display_index = max(int(index), 1)
 
@@ -296,38 +354,7 @@ class SoloExecutor:
             if all(ord(c) < 128 for c in text):
                 pyautogui.typewrite(text)
             else:
-                if platform.system() == "Windows":
-                    import ctypes
-
-                    CF_UNICODETEXT = 13
-                    user32 = ctypes.windll.user32
-                    kernel32 = ctypes.windll.kernel32
-
-                    user32.OpenClipboard(0)
-                    user32.EmptyClipboard()
-                    text_buf = ctypes.create_unicode_buffer(text)
-                    h_mem = kernel32.GlobalAlloc(0x0042, (len(text) + 1) * 2)
-                    ptr = kernel32.GlobalLock(h_mem)
-                    ctypes.memmove(ptr, text_buf, (len(text) + 1) * 2)
-                    kernel32.GlobalUnlock(h_mem)
-                    user32.SetClipboardData(CF_UNICODETEXT, h_mem)
-                    user32.CloseClipboard()
-                elif platform.system() == "Darwin":
-                    import subprocess
-                    subprocess.run(
-                        ["pbcopy"],
-                        input=text.encode("utf-8"),
-                        check=True,
-                        timeout=5,
-                    )
-                else:
-                    import subprocess
-                    subprocess.run(
-                        ["xclip", "-selection", "clipboard"],
-                        input=text.encode("utf-8"),
-                        check=True,
-                        timeout=5,
-                    )
+                self._set_clipboard(text)
                 pyautogui.hotkey("ctrl", "v")
             return {"ok": True, "action": action}
 
@@ -363,38 +390,7 @@ class SoloExecutor:
             if all(ord(c) < 128 for c in text):
                 pyautogui.typewrite(text)
             else:
-                if platform.system() == "Windows":
-                    import ctypes
-
-                    CF_UNICODETEXT = 13
-                    user32 = ctypes.windll.user32
-                    kernel32 = ctypes.windll.kernel32
-
-                    user32.OpenClipboard(0)
-                    user32.EmptyClipboard()
-                    text_buf = ctypes.create_unicode_buffer(text)
-                    h_mem = kernel32.GlobalAlloc(0x0042, (len(text) + 1) * 2)
-                    ptr = kernel32.GlobalLock(h_mem)
-                    ctypes.memmove(ptr, text_buf, (len(text) + 1) * 2)
-                    kernel32.GlobalUnlock(h_mem)
-                    user32.SetClipboardData(CF_UNICODETEXT, h_mem)
-                    user32.CloseClipboard()
-                elif platform.system() == "Darwin":
-                    import subprocess
-                    subprocess.run(
-                        ["pbcopy"],
-                        input=text.encode("utf-8"),
-                        check=True,
-                        timeout=5,
-                    )
-                else:
-                    import subprocess
-                    subprocess.run(
-                        ["xclip", "-selection", "clipboard"],
-                        input=text.encode("utf-8"),
-                        check=True,
-                        timeout=5,
-                    )
+                self._set_clipboard(text)
                 pyautogui.hotkey("ctrl", "v")
             return {"ok": True, "action": action}
 
