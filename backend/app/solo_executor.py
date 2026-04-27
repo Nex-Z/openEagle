@@ -296,15 +296,24 @@ class SoloExecutor:
             if all(ord(c) < 128 for c in text):
                 pyautogui.typewrite(text)
             else:
-                import subprocess
                 if platform.system() == "Windows":
-                    ps_script = f"Set-Clipboard -Value '{text.replace(chr(39), chr(39)+chr(39))}'"
-                    subprocess.run(
-                        ["powershell", "-NoProfile", "-Command", ps_script],
-                        check=True,
-                        timeout=5,
-                    )
+                    import ctypes
+
+                    CF_UNICODETEXT = 13
+                    user32 = ctypes.windll.user32
+                    kernel32 = ctypes.windll.kernel32
+
+                    user32.OpenClipboard(0)
+                    user32.EmptyClipboard()
+                    text_buf = ctypes.create_unicode_buffer(text)
+                    h_mem = kernel32.GlobalAlloc(0x0042, (len(text) + 1) * 2)
+                    ptr = kernel32.GlobalLock(h_mem)
+                    ctypes.memmove(ptr, text_buf, (len(text) + 1) * 2)
+                    kernel32.GlobalUnlock(h_mem)
+                    user32.SetClipboardData(CF_UNICODETEXT, h_mem)
+                    user32.CloseClipboard()
                 elif platform.system() == "Darwin":
+                    import subprocess
                     subprocess.run(
                         ["pbcopy"],
                         input=text.encode("utf-8"),
@@ -312,6 +321,7 @@ class SoloExecutor:
                         timeout=5,
                     )
                 else:
+                    import subprocess
                     subprocess.run(
                         ["xclip", "-selection", "clipboard"],
                         input=text.encode("utf-8"),
@@ -353,15 +363,24 @@ class SoloExecutor:
             if all(ord(c) < 128 for c in text):
                 pyautogui.typewrite(text)
             else:
-                import subprocess
                 if platform.system() == "Windows":
-                    ps_script = f"Set-Clipboard -Value '{text.replace(chr(39), chr(39)+chr(39))}'"
-                    subprocess.run(
-                        ["powershell", "-NoProfile", "-Command", ps_script],
-                        check=True,
-                        timeout=5,
-                    )
+                    import ctypes
+
+                    CF_UNICODETEXT = 13
+                    user32 = ctypes.windll.user32
+                    kernel32 = ctypes.windll.kernel32
+
+                    user32.OpenClipboard(0)
+                    user32.EmptyClipboard()
+                    text_buf = ctypes.create_unicode_buffer(text)
+                    h_mem = kernel32.GlobalAlloc(0x0042, (len(text) + 1) * 2)
+                    ptr = kernel32.GlobalLock(h_mem)
+                    ctypes.memmove(ptr, text_buf, (len(text) + 1) * 2)
+                    kernel32.GlobalUnlock(h_mem)
+                    user32.SetClipboardData(CF_UNICODETEXT, h_mem)
+                    user32.CloseClipboard()
                 elif platform.system() == "Darwin":
+                    import subprocess
                     subprocess.run(
                         ["pbcopy"],
                         input=text.encode("utf-8"),
@@ -369,6 +388,7 @@ class SoloExecutor:
                         timeout=5,
                     )
                 else:
+                    import subprocess
                     subprocess.run(
                         ["xclip", "-selection", "clipboard"],
                         input=text.encode("utf-8"),
