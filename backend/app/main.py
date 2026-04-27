@@ -20,6 +20,8 @@ from .models import (
     MessagePayload,
     SoloConfirmationPayload,
     SoloControlPayload,
+    SoloPlanItemPayload,
+    SoloPlanStatusPayload,
     SoloStartPayload,
     SoloStatusPayload,
     SoloStepPayload,
@@ -255,6 +257,41 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             session.request_id,
             session.conversation_id,
             {"confirmation": payload},
+        )
+
+    async def emit_solo_plan(
+        session: SoloSessionState,
+        current_index: int | None = None,
+        current_status: str | None = None,
+    ) -> None:
+        plan = session.current_plan
+        if not plan:
+            return
+        if current_index is not None and current_status is not None:
+            session.step_statuses[current_index] = current_status
+        items = []
+        for idx, act in enumerate(plan.actions):
+            status = session.step_statuses.get(idx, "pending")
+            items.append(
+                SoloPlanItemPayload(
+                    index=idx,
+                    action=act.action,
+                    description=act.description or act.action,
+                    status=status,
+                )
+            )
+        payload = SoloPlanStatusPayload(
+            items=items,
+            taskAnalysis=plan.task_analysis,
+            alternative=plan.alternative,
+            agentMessage=plan.agent_message,
+            replanCount=session.replan_count,
+        ).model_dump(by_alias=True)
+        await safe_send(
+            "server:solo_plan",
+            session.request_id,
+            session.conversation_id,
+            {"plan": payload},
         )
 
     async def process_step_result(
@@ -516,6 +553,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             return
 
         if solo_service.is_batch_executable(action):
+            await emit_solo_plan(session, current_index=session.plan_step_index, current_status="in_progress")
             slog(
                 f"request={session.request_id} batch_step step={session.step_count + 1} "
                 f"action={action} plan_idx={session.plan_step_index}"
@@ -572,6 +610,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     result=result_summary,
                 )
                 await emit_solo_status(session)
+                await emit_solo_plan(session, current_index=session.plan_step_index - 1, current_status="completed")
 
                 if session.step_count >= session.max_steps:
                     session.state = "paused"
@@ -608,9 +647,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     result=str(exc),
                 )
                 await emit_solo_status(session)
+                await emit_solo_plan(session, current_index=session.plan_step_index, current_status="failed")
             return
 
         try:
+            await emit_solo_plan(session, current_index=session.plan_step_index, current_status="in_progress")
             app_context = _infer_app_context(session.task)
             decision = await solo_service.decide_next(
                 task=session.task,
@@ -781,6 +822,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 result=result_summary,
             )
             await emit_solo_status(session)
+            await emit_solo_plan(session, current_index=session.plan_step_index - 1, current_status="completed")
 
             next_screenshot = session.last_screenshot_path or screenshot_path
             await execute_plan_step(session, next_screenshot)
@@ -800,6 +842,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 result=str(exc),
             )
             await emit_solo_status(session)
+            await emit_solo_plan(session, current_index=session.plan_step_index, current_status="failed")
 
     async def replan_and_continue(
         session: SoloSessionState,
@@ -817,6 +860,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             solo_logger.write("paused", {"reason": session.detail})
             await emit_solo_status(session)
             return
+
+        if session.current_plan:
+            for idx in range(session.plan_step_index, len(session.current_plan.actions)):
+                if session.step_statuses.get(idx) not in ("completed", "failed"):
+                    session.step_statuses[idx] = "skipped"
+            await emit_solo_plan(session)
 
         slog(f"request={session.request_id} replan count={session.replan_count} reason={failure_reason}")
         await emit_solo_trace(
@@ -877,6 +926,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 },
             )
             await emit_solo_status(session)
+            await emit_solo_plan(session)
             await execute_plan_step(session, screenshot_path)
 
         except Exception as exc:  # noqa: BLE001
@@ -1325,6 +1375,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                                 },
                             )
                             await emit_solo_status(active_solo)
+                            await emit_solo_plan(active_solo)
                             await execute_plan_step(active_solo, active_solo.last_screenshot_path)
                         except Exception as exc:  # noqa: BLE001
                             if not is_solo_running(active_solo):

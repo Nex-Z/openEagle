@@ -102,6 +102,25 @@ class SoloStepPayload(BaseModel):
     }
 
 
+class SoloPlanItemPayload(BaseModel):
+    index: int
+    action: str
+    description: str
+    status: str = "pending"
+
+
+class SoloPlanStatusPayload(BaseModel):
+    items: list[SoloPlanItemPayload]
+    task_analysis: str = Field(default="", alias="taskAnalysis")
+    alternative: str = ""
+    agent_message: str = Field(default="", alias="agentMessage")
+    replan_count: int = Field(default=0, alias="replanCount")
+
+    model_config = {
+        "populate_by_name": True,
+    }
+
+
 class SoloConfirmationPayload(BaseModel):
     step_index: int = Field(alias="stepIndex")
     risk_level: str = Field(default="confirm", alias="riskLevel")

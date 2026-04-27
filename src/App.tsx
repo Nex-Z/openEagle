@@ -106,6 +106,7 @@ export default function App() {
     soloDisplays,
     soloTimeline,
     soloLastError,
+    soloPlan,
     canStartSolo,
     startSolo,
     requestSoloDisplays,
@@ -216,6 +217,7 @@ export default function App() {
             soloStatus={soloStatus}
             soloStep={soloStep}
             soloTimeline={soloTimeline}
+            soloPlan={soloPlan}
             toolConfirmation={toolConfirmation}
             traces={traces}
           />

@@ -251,6 +251,7 @@ class SoloSessionState:
     current_plan: SoloPlan | None = None
     plan_step_index: int = 0
     replan_count: int = 0
+    step_statuses: dict[int, str] = field(default_factory=dict)
 
 
 class SoloService:

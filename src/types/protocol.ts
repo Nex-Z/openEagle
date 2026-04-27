@@ -209,6 +209,21 @@ export interface SoloControlPayload {
   result?: Record<string, unknown>;
 }
 
+export interface SoloPlanItem {
+  index: number;
+  action: string;
+  description: string;
+  status: "pending" | "in_progress" | "completed" | "failed" | "skipped";
+}
+
+export interface SoloPlanStatus {
+  items: SoloPlanItem[];
+  taskAnalysis: string;
+  alternative: string;
+  agentMessage: string;
+  replanCount: number;
+}
+
 export interface ConversationSummary {
   id: string;
   title: string;

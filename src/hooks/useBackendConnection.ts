@@ -12,6 +12,7 @@ import type {
   SoloConfirmationPayload,
   SoloDisplayOption,
   SoloControlPayload,
+  SoloPlanStatus,
   SoloStatusPayload,
   SoloStepPayload,
   StatusPayload,
@@ -203,6 +204,7 @@ export function useBackendConnection(
   const [soloDisplays, setSoloDisplays] = useState<SoloDisplayOption[]>([]);
   const [soloTimeline, setSoloTimeline] = useState<string[]>([]);
   const [soloLastError, setSoloLastError] = useState<string | null>(null);
+  const [soloPlan, setSoloPlan] = useState<SoloPlanStatus | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
@@ -724,6 +726,11 @@ export function useBackendConnection(
         return;
       }
 
+      if (envelope.type === "server:solo_plan" && (envelope.payload as unknown as Record<string, unknown>).plan) {
+        setSoloPlan((envelope.payload as unknown as Record<string, unknown>).plan as SoloPlanStatus);
+        return;
+      }
+
       if (
         envelope.type === "server:solo_confirmation_required" &&
         envelope.payload.confirmation
@@ -878,6 +885,7 @@ export function useBackendConnection(
     setSoloConfirmation(null);
     setSoloTimeline([]);
     setSoloLastError(null);
+    setSoloPlan(null);
     appendSoloTimeline("SOLO 启动，请求已发送，等待后端截图与决策");
 
     setMessages((current) => [
@@ -975,6 +983,7 @@ export function useBackendConnection(
     soloDisplays,
     soloTimeline,
     soloLastError,
+    soloPlan,
     canStartSolo,
     startSolo,
     requestSoloDisplays,

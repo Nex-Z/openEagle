@@ -14,10 +14,12 @@ import {
 import type {
   AgentExecutionTrace,
   SoloConfirmationPayload,
+  SoloPlanStatus,
   SoloStatusPayload,
   SoloStepPayload,
   ToolConfirmationPayload,
 } from "../../types/protocol";
+import { SoloPlanChecklist } from "./SoloPlanChecklist";
 
 interface AssetMessage {
   id: string;
@@ -35,6 +37,7 @@ interface ActivityInspectorProps {
   toolConfirmation: ToolConfirmationPayload | null;
   soloTimeline: string[];
   soloLastError: string | null;
+  soloPlan: SoloPlanStatus | null;
   inspectorCollapsed: boolean;
   onToggleCollapsed: () => void;
   onAllowDangerousStep: () => boolean;
@@ -67,6 +70,7 @@ export function ActivityInspector(props: ActivityInspectorProps) {
     toolConfirmation,
     soloTimeline,
     soloLastError,
+    soloPlan,
     inspectorCollapsed,
     onToggleCollapsed,
     onAllowDangerousStep,
@@ -212,6 +216,8 @@ export function ActivityInspector(props: ActivityInspectorProps) {
                     </div>
                   ) : null}
                 </section>
+
+                {soloPlan && <SoloPlanChecklist plan={soloPlan} />}
 
                 <section className="inspector-card">
                   <div className="inspector-card-head">
