@@ -369,25 +369,21 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             )
 
             # ━━ STEP 2: Check completion ━━
-            # Guards: reject premature is_task_done if the agent hasn't made real progress.
+            # Guard: reject is_task_done if the agent has collected zero information.
+            #
+            # is_task_done is a passive signal — the model says "I think I'm done" while
+            # also picking a next action. If findings is empty, the agent hasn't actually
+            # extracted any information for the user, which means it has nothing to report.
+            # Tasks that don't need findings (e.g. "open notepad") should use action="finish".
+            #
+            # action="finish" is ALWAYS honored — the model explicitly chose to end.
             premature_finish = False
             if decision.is_task_done and decision.action != "finish":
-                no_findings = not session.findings
-                # Guard 1: passive actions (wait/screenshot) with no findings — model hallucinates
-                # completion because the screen didn't change after a no-op.
-                if session.last_action in {"wait", "screenshot"} and no_findings and session.step_count < 5:
+                if not session.findings:
                     premature_finish = True
                     slog(
-                        f"request={session.request_id} rejecting premature is_task_done "
-                        f"after passive action={session.last_action} step={session.step_count}"
-                    )
-                # Guard 2: execute_command returned data but agent never extracted findings.
-                # The raw output is in history but the agent didn't translate it for the user.
-                if session.last_action == "execute_command" and no_findings and session.step_count < 10:
-                    premature_finish = True
-                    slog(
-                        f"request={session.request_id} rejecting premature is_task_done "
-                        f"after execute_command with no findings step={session.step_count}"
+                        f"request={session.request_id} rejecting is_task_done "
+                        f"with empty findings step={session.step_count} last_action={session.last_action}"
                     )
 
             if (decision.is_task_done or decision.action == "finish") and not premature_finish:
