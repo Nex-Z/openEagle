@@ -5,6 +5,7 @@ import hashlib
 import os
 import shutil
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -374,6 +375,7 @@ class OpenEagleDefaultTools(Toolkit):
         super().__init__(
             name="open_eagle_default_tools",
             tools=[
+                self.get_current_time,
                 self.get_file_info,
                 self.list_directory,
                 self.read_text_file,
@@ -430,6 +432,17 @@ class OpenEagleDefaultTools(Toolkit):
                 params=params,
             ),
         )
+
+    def get_current_time(self) -> str:
+        """返回当前系统日期和时间。
+
+        Returns:
+            str: 当前日期时间，格式如 "2026-04-28 15:30:45 (周一)"。
+        """
+        now = datetime.now()
+        weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
+        weekday = weekday_names[now.weekday()]
+        return now.strftime(f"%Y-%m-%d %H:%M:%S ({weekday})")
 
     def get_file_info(self, path: str) -> str:
         """返回工作区内路径的基础信息。
