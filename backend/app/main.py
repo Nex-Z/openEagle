@@ -300,16 +300,17 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
 
     def _build_final_report(session: SoloSessionState, decision: "SoloDecision | None" = None) -> str:
-        lines: list[str] = []
-
-        if decision and decision.agent_message:
-            lines.append(decision.agent_message)
-        elif decision and getattr(decision, "finish_report", ""):
-            lines.append(decision.finish_report)
-        elif session.last_agent_message:
-            lines.append(session.last_agent_message)
-
-        return "\n".join(lines) if lines else "抱歉，任务执行过程中出现了问题，未能完成。"
+        # finish_report is the full final report; agent_message is often just a teaser.
+        # Always prefer the richer content.
+        if decision:
+            finish = getattr(decision, "finish_report", "") or ""
+            agent = decision.agent_message or ""
+            best = finish if len(finish) >= len(agent) else agent
+            if best:
+                return best
+        if session.last_agent_message:
+            return session.last_agent_message
+        return "抱歉，任务执行过程中出现了问题，未能完成。"
 
     async def execute_solo_step(
         session: SoloSessionState,
@@ -552,9 +553,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 solo_logger.write("completed", {"step": session.step_count, "source": "agent_loop"})
                 await emit_solo_plan(session, solo_kernel)
                 await emit_solo_status(session)
+                # Send with a fresh requestId so the frontend appends a new chat message
+                # instead of upserting into an existing solo step message.
                 await safe_send(
                     "server:message",
-                    session.request_id,
+                    f"{session.request_id}-done",
                     session.conversation_id,
                     {"content": report},
                 )
