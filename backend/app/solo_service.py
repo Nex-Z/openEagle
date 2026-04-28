@@ -320,18 +320,14 @@ class SoloService:
     def _fallback_decision_from_text(raw_text: str, error: Exception) -> SoloDecision:
         raw_preview = trim_model_output(raw_text, 500)
         if raw_preview.startswith("RunResponse("):
-            visible = "模型返回了非结构化内容，我先重新获取屏幕状态。"
+            visible = "让我重新看一下屏幕，确认当前状态。"
         else:
-            visible = raw_preview or "模型没有返回可展示文字，我先重新获取屏幕状态。"
+            visible = raw_preview or "让我重新看一下屏幕，确认当前状态。"
         return SoloDecision(
-            thought_summary=(
-                "[状态] VL 模型返回了非标准决策内容，当前界面状态需要重新确认。"
-                "[上步] 上一步是否成功：无法确认，因为模型输出没有可执行 JSON。"
-                "[决策] 先执行 screenshot 获取真实状态，避免直接报错中断。"
-            ),
+            thought_summary="上一步输出无法解析，先截图确认当前状态再继续。",
             action="screenshot",
             action_args={},
-            progress="获取当前桌面截图，用于下一步重新决策。",
+            progress="重新获取屏幕状态。",
             is_task_done=False,
             agent_message=visible,
             raw_model_output=trim_model_output(raw_text),

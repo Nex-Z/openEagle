@@ -645,7 +645,7 @@ export function ChatPanel(props: ChatPanelProps) {
             placeholder={
               canSend
                 ? composerMode === "solo"
-                  ? "SOLO: 描述你要自动操作电脑完成的任务..."
+                  ? "直接告诉我你想做什么，我来操作电脑帮你完成..."
                   : "输入任务，或使用 / 调出 Tool / MCP / Skill..."
                 : "等待后端启动完成..."
             }

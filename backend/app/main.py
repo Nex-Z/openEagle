@@ -261,23 +261,21 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     def _build_final_report(session: SoloSessionState, decision: "SoloDecision | None" = None) -> str:
         lines: list[str] = []
 
-        # Use the agent's final message if available
         if decision and decision.agent_message:
             lines.append(decision.agent_message)
         elif session.last_agent_message:
             lines.append(session.last_agent_message)
 
-        # Append accumulated findings
+        # If the agent didn't integrate findings into its message, append them
         if session.findings:
-            lines.append("")
-            lines.append("**收集到的信息：**")
-            for i, finding in enumerate(session.findings, 1):
-                lines.append(f"{i}. {finding}")
+            agent_msg = (decision.agent_message if decision else "") or session.last_agent_message or ""
+            findings_mentioned = all(f in agent_msg for f in session.findings[-3:])
+            if not findings_mentioned:
+                lines.append("")
+                for finding in session.findings:
+                    lines.append(f"- {finding}")
 
-        lines.append("")
-        lines.append(f"共执行 {session.step_count} 步。")
-
-        return "\n".join(lines) if lines else "任务已完成。"
+        return "\n".join(lines) if lines else "抱歉，任务执行过程中出现了问题，未能完成。"
 
     async def execute_solo_step(
         session: SoloSessionState,
