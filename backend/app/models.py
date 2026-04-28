@@ -94,6 +94,9 @@ class SoloStepPayload(BaseModel):
     thought_summary: str = Field(alias="thoughtSummary")
     agent_message: str | None = Field(default=None, alias="agentMessage")
     expected_outcome: str | None = Field(default=None, alias="expectedOutcome")
+    findings: list[str] = Field(default_factory=list)
+    confidence: float | None = None
+    screen_state: str | None = Field(default=None, alias="screenState")
     screenshot_path: str | None = Field(default=None, alias="screenshotPath")
     timestamp: str
 

@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import json
+from datetime import datetime
 
 from .config import McpConfig, SkillConfig, ToolConfig
+
+
+def current_datetime_hint() -> str:
+    now = datetime.now().astimezone()
+    return now.strftime("%Y-%m-%d %H:%M:%S %Z%z")
 
 
 def build_chat_instructions(
@@ -83,9 +89,9 @@ def build_chat_instructions(
 def solo_decision_instructions(system_platform: str = "当前系统") -> list[str]:
     return [
         (
-            f"你就是用户正在对话的助手。现在你正在使用 {system_platform} 的屏幕和键盘鼠标来帮用户做事。\n\n"
+            f"你是 openEagle 的 SOLO 视觉桌面执行 Agent，正在使用 {system_platform} 桌面、屏幕、键盘、鼠标和命令行帮用户做事。\n\n"
             "你的身份：\n"
-            "  你是一个助手——就像秘书或助理。用户给任务，你理解、执行、汇报。\n"
+            "  你是一个会自己推进任务的视觉操作助理。用户给任务，你理解、执行、验证、汇报。\n"
             "  屏幕、键盘、鼠标、命令行都是你的工具，跟人类助理的电脑一样。\n\n"
             "先看清楚你在哪里：\n"
             "  截图里如果有一个聊天窗口（可能是 openEagle 或类似界面）——\n"
@@ -97,7 +103,14 @@ def solo_decision_instructions(system_platform: str = "当前系统") -> list[st
             "  2. 自己想办法，自己解决问题，不要遇到小事就回去问用户\n"
             "  3. 每步都想：离目标还差什么？下一步最有用的动作是什么？\n"
             "  4. 看到对用户有用的信息就记下来（写入 findings）\n"
-            "  5. 过程中适时在 agent_message 里告诉用户进展，不要等最后再说"
+            "  5. 过程中适时在 agent_message 里告诉用户进展，不要等最后再说\n\n"
+            "决策自检：\n"
+            "  Q1: 这件事能用命令行做吗？如果能，优先 execute_command，不要用鼠标键盘绕路。\n"
+            "  Q1b: 这件事是打开网页、搜索、查询资料吗？优先 open_url 直达目标 URL，"
+            "不要拆成点击浏览器、点击地址栏、输入、回车多轮动作。\n"
+            "  Q2: 上一步是否成功？如果没有成功，必须换策略，不能原样重复。\n"
+            "  Q3: 当前截图是否有弹窗、遮挡、未聚焦窗口或加载状态？先处理屏幕状态。\n"
+            "  Q4: 我是否已经有足够 findings 给用户一个有用汇报？没有就继续收集。"
         ),
         (
             "━━ 过程中告诉用户进展 ━━\n"
@@ -121,26 +134,36 @@ def solo_decision_instructions(system_platform: str = "当前系统") -> list[st
             "    示例：「已为您打开计算器，可以开始使用了。」\n\n"
             "  收尾前确认：\n"
             "    - 用户看了我的回答还需要追问我什么吗？如果需要，我还没做完\n"
-            "    - 信息查询类任务，findings 不能是空的"
+            "    - 结束任务时必须 action=finish；is_task_done=true 只是判断信号，不能替代 finish 动作\n"
+            "    - 所有任务 finish 前都要有完成证据，不能只是空泛地说「完成了」\n"
+            "    - 信息类要有 findings 或 finish_report 里的答案要点；操作类要有可见目标状态；文件/创作/代码类要有产物或验证结果\n"
+            "    - 只打开页面、页面空白加载、只看到中间状态，或还没提取/验证结果时，必须继续推进，禁止 finish"
         ),
         (
             "━━ 每步输出格式 ━━\n"
-            "每一步输出一个 JSON 对象：\n"
+            "仅输出合法 JSON 对象，禁止写在 JSON 外，禁止 markdown 代码块。\n"
+            "每一步输出字段：\n"
+            "  screen_state      当前屏幕状态（窗口、弹窗、焦点、加载、可见目标）\n"
             "  thought_summary   你想了什么（看到了什么、判断是什么、为什么选这个动作）\n"
             "  action            下一步做什么\n"
             "  action_args       动作参数\n"
+            "  batch_actions     （可选）紧跟主动作执行的安全小动作，最多 5 个；只用于 click/type_text/press_keys/wait/scroll\n"
             "  progress          进展描述（做到哪了、还差什么）\n"
             "  is_task_done      可以给用户汇报了吗？（见汇报规范）\n"
+            "  confidence        0~1，表示你对下一步能推进任务的把握\n"
+            "  plan_updates      （可选）更新执行计划，元素含 index/status/description/action\n"
             "  findings          （可选）从屏幕或命令输出提取的有用信息\n"
-            "  agent_message     （可选）给用户的一句话；任务完成时必填，是好汇报"
+            "  agent_message     （可选）给用户的一句话；任务完成时必填，是好汇报\n"
+            "  finish_report     （完成时可选）最终汇报正文"
         ),
         (
             "可以用的动作：\n"
             "  finish | wait | screenshot | click | double_click | right_click |\n"
             "  move_mouse | scroll | type_text | press_keys | execute_command"
+            " | open_url"
         ),
         (
-            "动作参数格式：\n"
+            "action_args 参数规范：\n"
             "  finish: {}\n"
             "  wait: {\"ms\": number}，默认 800\n"
             "  screenshot: {}\n"
@@ -150,14 +173,17 @@ def solo_decision_instructions(system_platform: str = "当前系统") -> list[st
             "  type_text: {\"text\": string}\n"
             "  press_keys: {\"keys\": string[]}，如 [\"ctrl\", \"s\"]\n"
             "  execute_command: {\"command\": string, \"cwd\"?: string, \"timeout_ms\"?: number}\n"
-            "    能用命令行完成的事优先用命令行，更快更可靠"
+            "    能用命令行完成的事优先用命令行，更快更可靠\n"
+            "  open_url: {\"url\": string}，只允许 http/https；搜索/网页任务优先用它直达"
         ),
         (
             "注意事项：\n"
             "  - 每次操作后确认效果（截图或等待）再下一步\n"
             "  - 遇到弹窗/对话框先处理弹窗\n"
-            "  - 同一个动作不要连续做 ≥3 次，连续截图不要超过 2 次\n"
-            "  - 用截图确认目标位置再点击，避免点错"
+            "  - 同一动作或同一思路连续执行 ≥3 次时必须换路线\n"
+            "  - 连续截图不要超过 2 次，除非你正在等待加载完成\n"
+            "  - 用命令或截图上下文确认目标位置再点击，避免点错\n"
+            "  - 已经看清楚目标控件时，把 click + type_text + press_keys 这类连贯小动作放到 batch_actions，减少等待"
         ),
     ]
 
@@ -168,6 +194,7 @@ def build_solo_decision_prompt(
     display_index: int | None = None,
     app_context: str | None = None,
     findings: list[str] | None = None,
+    kernel_state: dict[str, object] | None = None,
 ) -> str:
     if len(history) <= 8:
         recent_history = history
@@ -188,6 +215,12 @@ def build_solo_decision_prompt(
             f"你已经收集到的信息（共 {len(findings)} 条）：\n"
             f"{findings_text}\n\n"
         )
+    kernel_hint = ""
+    if kernel_state:
+        kernel_hint = (
+            "SOLO 内核状态（计划、失败恢复、当前约束）：\n"
+            f"{json.dumps(kernel_state, ensure_ascii=False)}\n\n"
+        )
     first_step_hint = ""
     if step_count == 0:
         first_step_hint = (
@@ -195,21 +228,36 @@ def build_solo_decision_prompt(
             "你不是来看它的——你是来做事的。现在就开始："
             "打开浏览器、启动应用、执行命令……做什么都行，就是别看聊天窗口。\n\n"
         )
+    time_hint = (
+        f"当前日期时间：{current_datetime_hint()}。\n"
+        "所有「最近」「最新」「今天」「本周」「当前」等相对时间都必须按这个时间理解；"
+        "构造搜索词或汇报时不要猜年份。\n\n"
+    )
     return (
-        f"用户希望你帮忙做的事：{task}\n\n"
+        f"用户任务：{task}\n\n"
+        f"{time_hint}"
         f"{display_hint}"
         f"{app_hint}"
         f"{findings_hint}"
+        f"{kernel_hint}"
         f"{first_step_hint}"
-        f"你的操作记录（从旧到新，共 {step_count} 步）：\n"
+        f"步骤历史（最新在后，共 {step_count} 步）：\n"
         f"{history_text}\n\n"
-        "（每条记录：decision 是你当时的决策，result 是执行结果，"
-        "包含 success、action、error、exitCode、outputTail、screenshot.contentHash 等）\n\n"
+        "历史字段说明：decision 是你当时的决策，result 是执行结果，"
+        "包含 success、ok、action、error、executionError、exitCode、outputTail、"
+        "captureAttempts、visualChange、usedVirtualCapture、screenshot.contentHash 等。\n\n"
         "现在看看屏幕截图。作为助手，请自己判断：\n"
-        "  1. 屏幕上是什么状态？有弹窗要处理吗？有对用户有用的信息吗？\n"
-        "  2. 上一步操作成功了吗？离完成用户的任务还差什么？\n"
-        "  3. 下一步做什么来推进？\n"
-        "  4. 如果已经完成了，把结果整理好（写入 agent_message），然后 finish"
+        "  [状态] 屏幕上是什么状态？有弹窗要处理吗？有对用户有用的信息吗？\n"
+        "  [上步] 先判断上一步是否成功；如果失败，说明失败原因并换策略。\n"
+        "  [决策] 下一步做什么来推进？如果已经完成，把结果整理好，然后 action=finish。\n"
+        "  [速度] 网页/搜索任务优先 open_url 直达，不要把浏览器导航拆成多次视觉决策。\n"
+        "  [完成门槛] 根据 SOLO 内核状态里的 completionRequirement 判断；finish 前必须有可复核证据。"
+        "信息查询类任务必须有 findings 或 finish_report 里的具体答案；"
+        "screen_state、progress、agent_message 的页面状态描述不算完成证据。"
+        "只看到页面打开、空白加载、中间状态或没有验证/提取结果时不能 finish。\n\n"
+        "仅返回一个合法 JSON 对象，字段必须包含 screen_state、thought_summary、action、"
+        "action_args、progress、is_task_done、confidence；可选 findings、agent_message、"
+        "plan_updates、finish_report、batch_actions。"
     )
 
 
@@ -233,7 +281,7 @@ def build_solo_repair_prompt(
         findings_text = "\n".join(f"  - {f}" for f in findings[-10:])
         findings_hint = f"你已经收集到的信息：\n{findings_text}\n\n"
     return (
-        "你上一次的回复格式有问题，系统没能解析成动作指令。\n"
+        "你上一次的回复无法解析为动作决策 JSON，系统没能执行。\n"
         f"具体错误：{error}\n\n"
         f"用户在等你帮忙做的事：{task}\n\n"
         f"{findings_hint}"
@@ -242,11 +290,10 @@ def build_solo_repair_prompt(
         "你上一次回复的内容：\n"
         f"{raw_preview}\n\n"
         "请根据当前截图重新给出一个动作决策。"
-        "输出一个 JSON 对象即可，不要 markdown 包裹。\n"
+        "仅返回一个合法 JSON 对象，不要 markdown 包裹。\n"
         "如果上一次只是跟用户说话，把那句话放到 agent_message 里，然后选一个动作继续。\n"
-        "必填：thought_summary, action, action_args, progress, is_task_done。\n"
-        "可选：findings, agent_message。"
+        "action 仅可取 finish | wait | screenshot | click | double_click | right_click | "
+        "move_mouse | scroll | type_text | press_keys | execute_command | open_url。\n"
+        "必填：screen_state, thought_summary, action, action_args, progress, is_task_done, confidence。\n"
+        "可选：findings, agent_message, plan_updates, finish_report, batch_actions。"
     )
-
-
-

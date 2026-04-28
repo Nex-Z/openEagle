@@ -13,6 +13,7 @@ import type {
   SoloDisplayOption,
   SoloControlPayload,
   SoloPlanStatus,
+  SoloScreenshotPayload,
   SoloStatusPayload,
   SoloStepPayload,
   StatusPayload,
@@ -434,6 +435,8 @@ export function useBackendConnection(
           step?: SoloStepPayload;
           confirmation?: SoloConfirmationPayload | ToolConfirmationPayload;
           displays?: SoloDisplayOption[];
+          screenshot?: SoloScreenshotPayload;
+          label?: string;
           preferredDisplayIndex?: number;
         } & ErrorPayload &
           StatusPayload
@@ -607,6 +610,24 @@ export function useBackendConnection(
       if (envelope.type === "server:solo_displays") {
         setSoloDisplays(
           Array.isArray(envelope.payload.displays) ? envelope.payload.displays : [],
+        );
+        return;
+      }
+
+      if (envelope.type === "server:solo_screenshot" && envelope.payload.screenshot) {
+        const screenshot = envelope.payload.screenshot;
+        activeSoloRequestIdRef.current = envelope.requestId;
+        appendSoloMessage(
+          createChatMessage({
+            role: "tool",
+            label: envelope.payload.label || "截图预览",
+            content: `SOLO 已捕获新的屏幕状态。`,
+            createdAt: screenshot.capturedAt ?? envelope.timestamp,
+            requestId: envelope.requestId,
+            mode: "solo",
+            imagePath: screenshot.path,
+            status: "done",
+          }),
         );
         return;
       }

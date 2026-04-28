@@ -31,6 +31,7 @@ from .providers.base import ReplyChunk, ReplyToolConfirmation, ReplyTrace
 from .runtime_state import RuntimeState
 from .safety import assess_solo_action
 from .solo_executor import SoloExecutor
+from .solo_kernel import SoloAgentKernel
 from .solo_run_logger import SoloRunLogger
 from .solo_service import SoloService, SoloSessionState, summarize_solo_step_result
 from .solo_toolkit import SoloToolkit
@@ -41,6 +42,19 @@ runtime_state = RuntimeState()
 runtime_state.update_config(config)
 workspace_root = Path(__file__).resolve().parents[2]
 confirmed_tool_results: dict[str, str] = {}
+
+POST_ACTION_CAPTURE_DELAYS_MS: dict[str, list[int]] = {
+    "click": [180, 420, 800],
+    "double_click": [240, 520, 900],
+    "right_click": [180, 420, 800],
+    "move_mouse": [80, 180],
+    "scroll": [180, 420, 800],
+    "type_text": [160, 360, 700],
+    "press_keys": [260, 620, 1000],
+    "execute_command": [420, 900, 1400],
+    "open_url": [700, 1400, 2200],
+    "wait": [0],
+}
 
 
 def slog(message: str) -> None:
@@ -110,6 +124,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     active_solo: SoloSessionState | None = None
     active_solo_task: asyncio.Task[None] | None = None
     solo_service: SoloService | None = None
+    solo_kernel: SoloAgentKernel | None = None
     solo_executor = SoloExecutor()
     solo_tools = SoloToolkit(solo_executor)
     solo_logger = SoloRunLogger(workspace_root)
@@ -208,6 +223,26 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             {"status": payload},
         )
 
+    async def emit_solo_plan(session: SoloSessionState, kernel: SoloAgentKernel) -> None:
+        await safe_send(
+            "server:solo_plan",
+            session.request_id,
+            session.conversation_id,
+            {"plan": kernel.plan_payload()},
+        )
+
+    async def emit_solo_screenshot(
+        session: SoloSessionState,
+        screenshot: dict[str, Any],
+        label: str,
+    ) -> None:
+        await safe_send(
+            "server:solo_screenshot",
+            session.request_id,
+            session.conversation_id,
+            {"screenshot": screenshot, "label": label},
+        )
+
     async def emit_solo_step(
         session: SoloSessionState,
         step_index: int,
@@ -217,6 +252,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         expected_outcome: str,
         agent_message: str | None = None,
         screenshot_path: str | None = None,
+        findings: list[str] | None = None,
+        confidence: float | None = None,
+        screen_state: str | None = None,
     ) -> None:
         payload = SoloStepPayload(
             stepIndex=step_index,
@@ -225,6 +263,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             thoughtSummary=thought_summary,
             agentMessage=agent_message,
             expectedOutcome=expected_outcome,
+            findings=findings or [],
+            confidence=confidence,
+            screenState=screen_state,
             screenshotPath=screenshot_path,
             timestamp=utc_now(),
         ).model_dump(by_alias=True)
@@ -261,7 +302,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     def _build_final_report(session: SoloSessionState, decision: "SoloDecision | None" = None) -> str:
         lines: list[str] = []
 
-        if decision and decision.agent_message:
+        if decision and getattr(decision, "finish_report", ""):
+            lines.append(decision.finish_report)
+        elif decision and decision.agent_message:
             lines.append(decision.agent_message)
         elif session.last_agent_message:
             lines.append(session.last_agent_message)
@@ -281,6 +324,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         session: SoloSessionState,
         action: str,
         action_args: dict[str, Any],
+        capture_after: bool = True,
     ) -> dict[str, Any]:
         """Execute a single SOLO action and return the execution result dict.
 
@@ -300,31 +344,92 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             if not is_solo_running(session):
                 return {"success": False, "action": action, "executionError": "session stopped"}
             screenshot = execution_result.get("screenshot")
+            capture_attempts = 1 if isinstance(screenshot, dict) else 0
+            post_action_delay_ms = 0
+            visual_change = None
+            used_virtual_capture = False
+            if not capture_after:
+                return {
+                    "success": True,
+                    "action": action,
+                    "executionResult": execution_result,
+                    "screenshot": screenshot,
+                    "captureAttempts": capture_attempts,
+                    "postActionDelayMs": post_action_delay_ms,
+                    "visualChange": visual_change,
+                    "usedVirtualCapture": used_virtual_capture,
+                }
             if not isinstance(screenshot, dict):
-                screenshot = await asyncio.to_thread(solo_tools.screenshot)
-            return {"success": True, "action": action, "executionResult": execution_result, "screenshot": screenshot}
+                delays = POST_ACTION_CAPTURE_DELAYS_MS.get(action, [220, 520, 900])
+                for delay_ms in delays:
+                    post_action_delay_ms = delay_ms
+                    if delay_ms > 0:
+                        await asyncio.sleep(delay_ms / 1000)
+                    screenshot = await asyncio.to_thread(solo_tools.screenshot)
+                    capture_attempts += 1
+                    if not is_solo_running(session):
+                        return {"success": False, "action": action, "executionError": "session stopped"}
+                    if not isinstance(screenshot, dict):
+                        continue
+                    new_hash = screenshot.get("contentHash")
+                    if not session.last_screenshot_hash or new_hash != session.last_screenshot_hash:
+                        visual_change = True
+                        break
+                    visual_change = False
+                if visual_change is False:
+                    solo_executor.set_capture_all_displays(True)
+                    used_virtual_capture = True
+                    await asyncio.sleep(0.2)
+                    screenshot = await asyncio.to_thread(solo_tools.screenshot)
+                    capture_attempts += 1
+                    if isinstance(screenshot, dict):
+                        new_hash = screenshot.get("contentHash")
+                        if not session.last_screenshot_hash or new_hash != session.last_screenshot_hash:
+                            visual_change = True
+            return {
+                "success": True,
+                "action": action,
+                "executionResult": execution_result,
+                "screenshot": screenshot,
+                "captureAttempts": capture_attempts,
+                "postActionDelayMs": post_action_delay_ms,
+                "visualChange": visual_change,
+                "usedVirtualCapture": used_virtual_capture,
+            }
         except Exception as exc:  # noqa: BLE001
             if not is_solo_running(session):
                 return {"success": False, "action": action, "executionError": "session stopped"}
             screenshot_payload: dict[str, Any] | None = None
             try:
+                await asyncio.sleep(0.25)
                 screenshot_payload = await asyncio.to_thread(solo_tools.screenshot)
             except Exception:  # noqa: BLE001
                 screenshot_payload = None
-            return {"success": False, "action": action, "executionError": str(exc), "screenshot": screenshot_payload}
+            return {
+                "success": False,
+                "action": action,
+                "executionError": str(exc),
+                "screenshot": screenshot_payload,
+                "captureAttempts": 1 if screenshot_payload else 0,
+                "postActionDelayMs": 250,
+                "visualChange": False,
+            }
 
     async def agent_loop(
         session: SoloSessionState,
         screenshot_path: str,
     ) -> None:
         """Core observe→think→act loop. Replaces execute_plan_step + replan_and_continue + decide_and_emit_next_step."""
-        nonlocal solo_service
+        nonlocal solo_service, solo_kernel
         if solo_service is None:
             session.state = "error"
             session.detail = "SOLO 服务未初始化。"
             solo_logger.write("error", {"reason": session.detail})
             await emit_solo_status(session)
             return
+        if solo_kernel is None:
+            solo_kernel = SoloAgentKernel.create(session.task)
+            await emit_solo_plan(session, solo_kernel)
 
         while is_solo_running(session):
             # ━━ STEP 1: VL reasons and decides ━━
@@ -337,6 +442,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     display_index=session.display_index,
                     app_context=app_context,
                     findings=session.findings,
+                    kernel_state=solo_kernel.prompt_context(),
                 )
             except Exception as exc:  # noqa: BLE001
                 if not is_solo_running(session):
@@ -359,38 +465,101 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             # Accumulate findings
             if decision.findings:
-                session.findings.extend(decision.findings)
+                for finding in decision.findings:
+                    if finding not in session.findings:
+                        session.findings.append(finding)
+
+            if decision.is_task_done and decision.action != "finish":
+                slog(
+                    f"request={session.request_id} ignoring passive is_task_done "
+                    f"for non-finish action={decision.action}"
+                )
+                decision = decision.model_copy(update={"is_task_done": False})
+
+            # ━━ STEP 2: Check completion ━━
+            # Guard: reject finish/is_task_done if the task has no completion evidence.
+            # The kernel decides what evidence means for this task: answer content for
+            # information tasks, artifact/verifier details for file/code tasks, and a
+            # visible target state for app/GUI tasks.
+            #
+            # This keeps SOLO from ending with "page opened" or an empty "done" report.
+            premature_finish = False
+            finish_requested = decision.action == "finish"
+            if finish_requested and not solo_kernel.has_completion_evidence(session.findings, decision):
+                premature_finish = True
+                reason = solo_kernel.completion_block_reason()
+                slog(
+                    f"request={session.request_id} rejecting finish "
+                    f"without completion evidence step={session.step_count} last_action={session.last_action}"
+                )
+                if solo_kernel.reject_premature_finish(reason):
+                    await emit_solo_plan(session, solo_kernel)
+                await emit_solo_trace(
+                    session,
+                    "decision",
+                    "error",
+                    "拒绝空结果完成",
+                    params={
+                        "action": decision.action,
+                        "is_task_done": decision.is_task_done,
+                        "completion_mode": solo_kernel.completion_mode(),
+                        "completion_requirement": solo_kernel.completion_requirement(),
+                    },
+                    result=reason,
+                )
+                decision = solo_service._fallback_decision_from_text(
+                    "premature finish rejected",
+                    ValueError(reason),
+                )
+                decision.agent_message = "完成证据还不够，我会继续观察、执行并验证结果。"
+                decision.progress = reason
+
+            if solo_kernel.record_decision(decision):
+                await emit_solo_plan(session, solo_kernel)
 
             slog(
                 f"request={session.request_id} decision action={decision.action} "
                 f"done={decision.is_task_done} step={session.step_count + 1}"
             )
 
-            # ━━ STEP 2: Check completion ━━
-            # Guard: reject is_task_done if the agent has collected zero information.
-            #
-            # is_task_done is a passive signal — the model says "I think I'm done" while
-            # also picking a next action. If findings is empty, the agent hasn't actually
-            # extracted any information for the user, which means it has nothing to report.
-            # Tasks that don't need findings (e.g. "open notepad") should use action="finish".
-            #
-            # action="finish" is ALWAYS honored — the model explicitly chose to end.
-            premature_finish = False
-            if decision.is_task_done and decision.action != "finish":
-                if not session.findings:
-                    premature_finish = True
-                    slog(
-                        f"request={session.request_id} rejecting is_task_done "
-                        f"with empty findings step={session.step_count} last_action={session.last_action}"
-                    )
-
             if (decision.is_task_done or decision.action == "finish") and not premature_finish:
+                await emit_solo_trace(
+                    session,
+                    "decision",
+                    "completed",
+                    f"视觉决策: {decision.action}",
+                    params={
+                        "thought": decision.thought_summary,
+                        "expected_outcome": decision.progress or decision.expected_outcome,
+                        "screen_state": decision.screen_state,
+                        "confidence": decision.confidence,
+                    },
+                    result=solo_service.decision_dict(decision),
+                )
+                solo_logger.write(
+                    "decision",
+                    {
+                        "step": session.step_count + 1,
+                        "decision": solo_service.decision_dict(decision),
+                        "screenshotPath": screenshot_path,
+                        "modelElapsedMs": decision.model_elapsed_ms,
+                        "repairElapsedMs": decision.repair_elapsed_ms,
+                        "imageBytes": decision.image_bytes,
+                        "sourceImageBytes": decision.source_image_bytes,
+                        "modelImagePath": decision.model_image_path,
+                        "modelImageWidth": decision.model_image_width,
+                        "modelImageHeight": decision.model_image_height,
+                        "modelImageScale": decision.model_image_scale,
+                        "completion": True,
+                    },
+                )
                 report = _build_final_report(session, decision)
                 session.state = "completed"
                 session.completed_at = utc_now()
                 session.detail = "SOLO 任务完成。"
                 slog(f"request={session.request_id} completed at step={session.step_count}")
                 solo_logger.write("completed", {"step": session.step_count, "source": "agent_loop"})
+                await emit_solo_plan(session, solo_kernel)
                 await emit_solo_status(session)
                 await safe_send(
                     "server:message",
@@ -400,32 +569,60 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 )
                 return
 
-            # If premature finish was rejected, override with a screenshot to get fresh state
-            if premature_finish:
-                decision = solo_service._fallback_decision_from_text(
-                    "premature finish rejected", ValueError("premature is_task_done after passive action")
+            planned_actions = [
+                {"action": decision.action, "action_args": decision.action_args, "batch_index": 0}
+            ]
+            for batch_index, item in enumerate(decision.batch_actions, start=1):
+                planned_actions.append(
+                    {
+                        "action": str(item["action"]),
+                        "action_args": dict(item.get("action_args") or {}),
+                        "batch_index": batch_index,
+                    }
                 )
-                # decision.action is "screenshot" — will be executed normally below
 
             # ━━ STEP 3: Safety checks ━━
-            assessment = assess_solo_action(decision.action, decision.action_args, workspace_root)
+            blocking_action: dict[str, Any] | None = None
+            assessment = None
+            for planned_action in planned_actions:
+                current_assessment = assess_solo_action(
+                    str(planned_action["action"]),
+                    dict(planned_action["action_args"]),
+                    workspace_root,
+                )
+                if current_assessment.level == "blocked":
+                    blocking_action = planned_action
+                    assessment = current_assessment
+                    break
+                if current_assessment.level == "confirm" and assessment is None:
+                    blocking_action = planned_action
+                    assessment = current_assessment
+
+            if assessment is None:
+                assessment = assess_solo_action(decision.action, decision.action_args, workspace_root)
 
             if assessment.level == "blocked":
                 session.state = "paused"
                 session.detail = f"动作已阻断: {assessment.reason}"
+                blocked_action = blocking_action or planned_actions[0]
                 solo_logger.write(
                     "paused",
-                    {"reason": session.detail, "action": decision.action, "actionArgs": decision.action_args},
+                    {
+                        "reason": session.detail,
+                        "action": blocked_action["action"],
+                        "actionArgs": blocked_action["action_args"],
+                    },
                 )
                 await emit_solo_status(session)
                 return
 
             permission_mode = runtime_state.get_config().permissions.mode
             if assessment.level == "confirm" and permission_mode != "all":
+                confirm_action = blocking_action or planned_actions[0]
                 session.state = "waiting_user_confirmation"
                 session.pending_confirmation = {
-                    "action": decision.action,
-                    "action_args": decision.action_args,
+                    "action": confirm_action["action"],
+                    "action_args": confirm_action["action_args"],
                     "thought_summary": decision.thought_summary,
                     "expected_outcome": decision.progress or decision.expected_outcome,
                     "agent_message": decision.agent_message,
@@ -435,14 +632,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 session.detail = "检测到危险动作，等待用户确认。"
                 slog(
                     f"request={session.request_id} waiting confirmation "
-                    f"action={decision.action} reason={assessment.reason}"
+                    f"action={confirm_action['action']} reason={assessment.reason}"
                 )
                 solo_logger.write(
                     "confirmation_required",
                     {
                         "step": session.step_count + 1,
-                        "action": decision.action,
-                        "actionArgs": decision.action_args,
+                        "action": confirm_action["action"],
+                        "actionArgs": confirm_action["action_args"],
                         "reason": assessment.reason,
                     },
                 )
@@ -451,8 +648,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     session,
                     step_index=session.step_count + 1,
                     reason=assessment.reason,
-                    action=decision.action,
-                    action_args=decision.action_args,
+                    action=str(confirm_action["action"]),
+                    action_args=dict(confirm_action["action_args"]),
                     thought_summary=decision.thought_summary,
                 )
                 return  # Wait for user; resume will re-enter agent_loop
@@ -466,6 +663,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 params={
                     "thought": decision.thought_summary,
                     "expected_outcome": decision.progress or decision.expected_outcome,
+                    "screen_state": decision.screen_state,
+                    "confidence": decision.confidence,
                 },
                 result=solo_service.decision_dict(decision),
             )
@@ -516,119 +715,141 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     },
                 )
 
-            session.history.append(
-                {
-                    "step": session.step_count + 1,
-                    "decision": solo_service.decision_dict(decision),
-                    "timestamp": utc_now(),
-                }
-            )
+            # ━━ STEP 5: Execute one or more planned actions and assess outcome ━━
+            for planned_offset, planned_action in enumerate(planned_actions):
+                current_action = str(planned_action["action"])
+                current_args = dict(planned_action["action_args"])
+                is_primary_action = planned_offset == 0
+                is_last_action = planned_offset == len(planned_actions) - 1
+                current_decision = decision.model_copy(
+                    update={
+                        "action": current_action,
+                        "action_args": current_args,
+                        "batch_actions": [],
+                    }
+                )
+                if not is_primary_action:
+                    current_decision.thought_summary = (
+                        f"{decision.thought_summary}\n[批处理] 连续执行第 "
+                        f"{planned_offset + 1}/{len(planned_actions)} 个动作：{current_action}"
+                    )
+                    current_decision.agent_message = ""
+                    current_decision.findings = []
 
-            await emit_solo_step(
-                session,
-                step_index=session.step_count + 1,
-                action=decision.action,
-                action_args=decision.action_args,
-                thought_summary=decision.thought_summary,
-                expected_outcome=decision.progress or decision.expected_outcome,
-                agent_message=decision.agent_message,
-                screenshot_path=screenshot_path,
-            )
+                session.history.append(
+                    {
+                        "step": session.step_count + 1,
+                        "decision": solo_service.decision_dict(current_decision),
+                        "timestamp": utc_now(),
+                    }
+                )
 
-            # ━━ STEP 5: Execute action ━━
-            try:
-                execution_result = await asyncio.to_thread(
-                    solo_tools.execute,
-                    decision.action,
-                    decision.action_args,
+                await emit_solo_step(
+                    session,
+                    step_index=session.step_count + 1,
+                    action=current_action,
+                    action_args=current_args,
+                    thought_summary=current_decision.thought_summary,
+                    expected_outcome=decision.progress or decision.expected_outcome,
+                    agent_message=decision.agent_message if is_primary_action else None,
+                    screenshot_path=screenshot_path,
+                    findings=decision.findings if is_primary_action else [],
+                    confidence=decision.confidence,
+                    screen_state=decision.screen_state,
+                )
+
+                result = await execute_solo_step(
+                    session,
+                    current_action,
+                    current_args,
+                    capture_after=is_last_action,
                 )
                 if not is_solo_running(session):
                     return
 
-                new_screenshot = execution_result.get("screenshot")
-                if not isinstance(new_screenshot, dict):
-                    new_screenshot = await asyncio.to_thread(solo_tools.screenshot)
-                if not is_solo_running(session):
-                    return
-
-                # Update session state
                 session.step_count += 1
-                if decision.action == session.last_action:
+                if current_action == session.last_action:
                     session.repeat_action_count += 1
                 else:
                     session.repeat_action_count = 1
-                session.last_action = decision.action
+                session.last_action = current_action
 
-                # Update screenshot tracking
+                new_screenshot = result.get("screenshot")
                 if isinstance(new_screenshot, dict):
                     new_path = new_screenshot.get("path")
                     new_hash = new_screenshot.get("contentHash")
+                    captured_at = new_screenshot.get("capturedAt")
                     if isinstance(new_path, str):
                         session.last_screenshot_path = new_path
                         screenshot_path = new_path
+                    if isinstance(captured_at, str):
+                        session.last_screenshot_at = captured_at
                     if isinstance(new_hash, str):
                         if new_hash == session.last_screenshot_hash:
                             session.same_screenshot_count += 1
                         else:
                             session.same_screenshot_count = 0
                         session.last_screenshot_hash = new_hash
+                    await emit_solo_screenshot(
+                        session,
+                        new_screenshot,
+                        f"第 {session.step_count} 步后截图",
+                    )
 
-                # Record result
-                result_summary = summarize_solo_step_result(
-                    {"success": True, "action": decision.action, "executionResult": execution_result, "screenshot": new_screenshot}
-                )
+                result_summary = summarize_solo_step_result(result)
                 session.history[-1]["result"] = result_summary
+                outcome = solo_kernel.assess_step(
+                    current_decision,
+                    result_summary,
+                    repeat_action_count=session.repeat_action_count,
+                    same_screenshot_count=session.same_screenshot_count,
+                )
+                if outcome.recovery_hint:
+                    session.detail = f"SOLO 正在恢复: {outcome.recovery_hint}"
                 solo_logger.write(
                     "action_result",
-                    {"step": session.step_count, "action": decision.action, "result": result_summary},
+                    {
+                        "step": session.step_count,
+                        "action": current_action,
+                        "batchIndex": planned_offset if planned_offset else None,
+                        "result": result_summary,
+                        "semanticSuccess": outcome.semantic_success,
+                        "recoveryHint": outcome.recovery_hint,
+                    },
                 )
                 await emit_solo_trace(
                     session,
                     "step_result",
-                    "completed",
-                    f"视觉动作结果: {decision.action}",
-                    params={"action": decision.action, "step": session.step_count},
+                    "completed" if outcome.semantic_success else "error",
+                    f"视觉动作结果: {current_action}",
+                    params={
+                        "action": current_action,
+                        "step": session.step_count,
+                        "batchIndex": planned_offset if planned_offset else None,
+                    },
                     result=result_summary,
                 )
+                if outcome.plan_changed:
+                    await emit_solo_plan(session, solo_kernel)
                 await emit_solo_status(session)
 
-            except Exception as exc:  # noqa: BLE001
-                if not is_solo_running(session):
+                if outcome.should_pause:
+                    session.state = "paused"
+                    session.detail = f"SOLO 连续恢复失败，已暂停: {outcome.pause_reason}"
+                    solo_logger.write("paused", {"reason": session.detail, "action": current_action})
+                    await emit_solo_status(session)
                     return
-                session.step_count += 1
-                session.history[-1]["result"] = {"success": False, "error": str(exc)}
-                session.state = "paused"
-                session.detail = f"动作执行失败: {exc}"
-                slog(f"request={session.request_id} action error={exc}")
-                solo_logger.write("error", {"reason": session.detail, "action": decision.action})
-                await emit_solo_status(session)
-                return
 
-            # ━━ STEP 6: Safety rails ━━
-            if session.step_count >= session.max_steps:
-                session.state = "paused"
-                session.detail = f"超过最大步数 {session.max_steps}，已自动暂停。"
-                solo_logger.write("paused", {"reason": session.detail})
-                await emit_solo_status(session)
-                return
-
-            if session.repeat_action_count >= 4:
-                session.state = "paused"
-                session.detail = "检测到连续重复动作（>=4 次），已自动暂停。"
-                solo_logger.write("paused", {"reason": session.detail})
-                await emit_solo_status(session)
-                return
-
-            if session.same_screenshot_count >= 3:
-                session.state = "paused"
-                session.detail = "检测到连续截图无变化（>=3 次），已自动暂停。"
-                solo_logger.write("paused", {"reason": session.detail})
-                await emit_solo_status(session)
-                return
+                # ━━ STEP 6: Safety rails ━━
+                if session.step_count >= session.max_steps:
+                    session.state = "paused"
+                    session.detail = f"超过最大步数 {session.max_steps}，已自动暂停。"
+                    solo_logger.write("paused", {"reason": session.detail})
+                    await emit_solo_plan(session, solo_kernel)
+                    await emit_solo_status(session)
+                    return
 
             # ━━ STEP 7: Loop continues naturally (observe → think → act) ━━
-
-        await execute_solo_step(session, decision.action, decision.action_args)
 
     try:
         while True:
@@ -773,6 +994,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 payload = SoloStartPayload.model_validate(envelope.payload)
                 current_config = runtime_state.get_config()
                 solo_service = SoloService(current_config.agent)
+                solo_kernel = SoloAgentKernel.create(payload.content)
                 solo_executor.set_preferred_display_index(
                     current_config.solo.preferred_display_index
                 )
@@ -800,6 +1022,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     display_index=current_config.solo.preferred_display_index,
                 )
                 active_solo.log_path = solo_logger.start(envelope.request_id, payload.content)
+                await emit_solo_plan(active_solo, solo_kernel)
                 await emit_solo_status(active_solo)
                 if not active_solo.last_screenshot_path:
                     active_solo.state = "error"

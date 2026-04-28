@@ -146,6 +146,15 @@ export interface SoloDisplayOption {
   capturedAt?: string;
 }
 
+export interface SoloScreenshotPayload {
+  path: string;
+  width?: number;
+  height?: number;
+  capturedAt?: string;
+  contentHash?: string;
+  displayIndex?: number;
+}
+
 export type SoloRunState =
   | "idle"
   | "running"
@@ -177,6 +186,8 @@ export interface SoloStepPayload {
   screenshotPath?: string;
   timestamp: string;
   findings?: string[];
+  confidence?: number;
+  screenState?: string;
 }
 
 export interface SoloConfirmationPayload {

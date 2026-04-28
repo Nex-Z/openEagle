@@ -4,6 +4,7 @@ import re
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Literal
+from urllib.parse import urlparse
 
 RiskLevel = Literal["safe", "confirm", "blocked"]
 
@@ -17,6 +18,7 @@ SAFE_SOLO_ACTIONS = {
     "move_mouse",
     "scroll",
     "type_text",
+    "open_url",
 }
 DANGEROUS_KEYS = {"ctrl", "alt", "meta", "win", "f4", "delete", "backspace", "enter"}
 SAFE_COMMAND_PATTERNS = [
@@ -134,6 +136,13 @@ def assess_command_action(
 
 
 def assess_solo_action(action: str, action_args: dict[str, Any], workspace_root: Path) -> RiskAssessment:
+    if action == "open_url":
+        url = str(action_args.get("url", "")).strip()
+        parsed = urlparse(url)
+        if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+            return RiskAssessment("blocked", "open_url 只允许 http/https URL。")
+        return RiskAssessment("safe", "打开网页 URL，可自动执行。")
+
     if action in SAFE_SOLO_ACTIONS:
         return RiskAssessment("safe", "常规桌面动作，可自动执行。")
 

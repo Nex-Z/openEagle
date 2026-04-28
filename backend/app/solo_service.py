@@ -37,12 +37,13 @@ ALLOWED_ACTIONS = {
     "type_text",
     "press_keys",
     "execute_command",
+    "open_url",
 }
 
-BATCH_EXECUTABLE_ACTIONS = {"type_text", "press_keys", "execute_command", "wait"}
+BATCH_EXECUTABLE_ACTIONS = {"click", "double_click", "scroll", "type_text", "press_keys", "wait"}
 
-MODEL_IMAGE_MAX_LONG_EDGE = 2560
-MODEL_IMAGE_JPEG_QUALITY = 92
+MODEL_IMAGE_MAX_LONG_EDGE = 1920
+MODEL_IMAGE_JPEG_QUALITY = 85
 
 
 def current_system_platform() -> str:
@@ -112,7 +113,7 @@ def prepare_model_image(
             target,
             format="JPEG",
             quality=jpeg_quality,
-            subsampling=0,
+            subsampling=2,
             optimize=True,
         )
 
@@ -158,9 +159,14 @@ def summarize_solo_step_result(
         if isinstance(value, str) and value:
             summary[key] = value
 
+    for key in ("captureAttempts", "postActionDelayMs", "visualChange", "usedVirtualCapture"):
+        value = result.get(key)
+        if value is not None:
+            summary[key] = value
+
     execution = result.get("executionResult")
     if isinstance(execution, dict):
-        for key in ("ok", "action", "command", "cwd", "exitCode", "waitMs", "delta", "keys"):
+        for key in ("ok", "action", "command", "cwd", "exitCode", "waitMs", "delta", "keys", "url"):
             value = execution.get(key)
             if value is not None:
                 summary[key] = value
@@ -194,6 +200,11 @@ class SoloDecision(BaseModel):
     findings: list[str] = Field(default_factory=list, alias="findings")
     is_task_done: bool = Field(default=False, alias="is_task_done")
     agent_message: str = Field(default="", alias="agent_message")
+    screen_state: str = Field(default="", alias="screen_state")
+    confidence: float | None = Field(default=None, alias="confidence")
+    plan_updates: list[dict[str, Any]] = Field(default_factory=list, alias="plan_updates")
+    finish_report: str = Field(default="", alias="finish_report")
+    batch_actions: list[dict[str, Any]] = Field(default_factory=list, alias="batch_actions")
     # Backward compat: VL may still output expected_outcome
     expected_outcome: str = Field(default="", alias="expected_outcome")
     # Internal metadata (excluded from wire)
@@ -301,13 +312,46 @@ class SoloService:
     def _normalize_decision(raw_text: str) -> SoloDecision:
         payload_text = SoloService._extract_json(raw_text)
         payload = json.loads(payload_text)
-        # Accept new field names from VL model
+        # Accept alternate field names from VL model
         if "analysis" in payload and "thought_summary" not in payload:
             payload["thought_summary"] = payload.pop("analysis")
+        if "next_action" in payload and "action" not in payload:
+            payload["action"] = payload.pop("next_action")
+        if "next_action_args" in payload and "action_args" not in payload:
+            payload["action_args"] = payload.pop("next_action_args")
+        if "screenState" in payload and "screen_state" not in payload:
+            payload["screen_state"] = payload.pop("screenState")
+        if "planUpdates" in payload and "plan_updates" not in payload:
+            payload["plan_updates"] = payload.pop("planUpdates")
+        if "finishReport" in payload and "finish_report" not in payload:
+            payload["finish_report"] = payload.pop("finishReport")
+        for alias in ("batchActions", "next_actions", "nextActions"):
+            if alias in payload and "batch_actions" not in payload:
+                payload["batch_actions"] = payload.pop(alias)
         decision = SoloDecision.model_validate(payload)
         if decision.action not in ALLOWED_ACTIONS:
             raise ValueError(f"不支持的动作: {decision.action}")
+        decision.batch_actions = SoloService._normalize_batch_actions(decision.batch_actions)
         return decision
+
+    @staticmethod
+    def _normalize_batch_actions(actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        normalized: list[dict[str, Any]] = []
+        for item in actions[:5]:
+            if not isinstance(item, dict):
+                continue
+            action = str(item.get("action") or "").strip()
+            action_args = item.get("action_args")
+            if action_args is None:
+                action_args = item.get("actionArgs")
+            if not isinstance(action_args, dict):
+                action_args = {}
+            if action not in ALLOWED_ACTIONS:
+                raise ValueError(f"不支持的批处理动作: {action}")
+            if action not in BATCH_EXECUTABLE_ACTIONS:
+                raise ValueError(f"批处理不支持动作: {action}")
+            normalized.append({"action": action, "action_args": action_args})
+        return normalized
 
     @staticmethod
     def _result_text(result: Any) -> str:
@@ -324,7 +368,7 @@ class SoloService:
         else:
             visible = raw_preview or "让我重新看一下屏幕，确认当前状态。"
         return SoloDecision(
-            thought_summary="上一步输出无法解析，先截图确认当前状态再继续。",
+            thought_summary="[状态] 输出格式异常 [上步] 上一步是否成功：无法判断 [决策] 先截图确认当前状态再继续。",
             action="screenshot",
             action_args={},
             progress="重新获取屏幕状态。",
@@ -364,9 +408,17 @@ class SoloService:
         display_index: int | None = None,
         app_context: str | None = None,
         findings: list[str] | None = None,
+        kernel_state: dict[str, Any] | None = None,
     ) -> SoloDecision:
         agent = self._build_agent()
-        prompt = build_solo_decision_prompt(task, history, display_index, app_context, findings)
+        prompt = build_solo_decision_prompt(
+            task,
+            history,
+            display_index,
+            app_context,
+            findings,
+            kernel_state,
+        )
         model_image = prepare_model_image(screenshot_path)
         model_image_path = Path(model_image["path"])
         image_url = encode_image_data_url(model_image_path, str(model_image["mime_type"]))
@@ -466,6 +518,16 @@ class SoloService:
             payload["findings"] = decision.findings
         if decision.agent_message:
             payload["agent_message"] = decision.agent_message
+        if decision.screen_state:
+            payload["screen_state"] = decision.screen_state
+        if decision.confidence is not None:
+            payload["confidence"] = decision.confidence
+        if decision.plan_updates:
+            payload["plan_updates"] = decision.plan_updates
+        if decision.finish_report:
+            payload["finish_report"] = decision.finish_report
+        if decision.batch_actions:
+            payload["batch_actions"] = decision.batch_actions
         return payload
 
     @staticmethod

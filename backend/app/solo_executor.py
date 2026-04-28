@@ -3,10 +3,12 @@ from __future__ import annotations
 import platform
 import time
 import hashlib
+import webbrowser
 from datetime import UTC, datetime
 from pathlib import Path
 from tempfile import gettempdir
 from typing import Any
+from urllib.parse import urlparse
 from uuid import uuid4
 
 from .command_runner import run_workspace_command
@@ -18,6 +20,7 @@ class SoloExecutor:
         self._workspace_root = Path(__file__).resolve().parents[2]
         self._last_capture_region: dict[str, int] | None = None
         self._preferred_display_index = 1
+        self._capture_all_displays = False
 
     @staticmethod
     def _now_iso() -> str:
@@ -116,12 +119,20 @@ class SoloExecutor:
 
     def set_preferred_display_index(self, index: int) -> None:
         self._preferred_display_index = max(int(index), 1)
+        self._capture_all_displays = False
+
+    def set_capture_all_displays(self, enabled: bool) -> None:
+        self._capture_all_displays = enabled
 
     def _pick_monitor(
         self,
         monitors: list[dict[str, Any]],
         preferred_index: int | None = None,
+        allow_virtual: bool = False,
     ) -> tuple[int, dict[str, Any]]:
+        if allow_virtual and self._capture_all_displays and monitors:
+            return 0, monitors[0]
+
         physical_count = max(len(monitors) - 1, 0)
         if physical_count <= 0:
             return 0, monitors[0]
@@ -220,7 +231,7 @@ class SoloExecutor:
             raise RuntimeError("缺少依赖 mss，请先安装并重启后端。") from exc
 
         with mss.mss() as sct:
-            display_index, monitor = self._pick_monitor(sct.monitors)
+            display_index, monitor = self._pick_monitor(sct.monitors, allow_virtual=True)
             screenshot = self._capture_monitor(
                 sct,
                 monitor,
@@ -262,6 +273,14 @@ class SoloExecutor:
         if action == "screenshot":
             screenshot = self.capture_screenshot()
             return {"ok": True, "action": action, "screenshot": screenshot}
+
+        if action == "open_url":
+            url = str(action_args.get("url", "")).strip()
+            parsed = urlparse(url)
+            if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+                raise ValueError("open_url 只允许打开 http/https URL")
+            opened = webbrowser.open(url, new=2)
+            return {"ok": bool(opened), "action": action, "url": url}
 
         if action == "execute_command":
             command = action_args.get("command")

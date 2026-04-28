@@ -23,6 +23,7 @@ class SoloToolkit(Toolkit):
                 self.press_keys,
                 self.wait,
                 self.execute_command,
+                self.open_url,
             ],
             instructions=(
                 "这些是桌面动作工具定义，执行前必须确认参数合法。"
@@ -90,6 +91,9 @@ class SoloToolkit(Toolkit):
             },
         )
 
+    def open_url(self, url: str) -> dict[str, Any]:
+        return self._executor.execute_action("open_url", {"url": url})
+
     def execute(self, action: str, action_args: dict[str, Any]) -> dict[str, Any]:
         if action == "screenshot":
             return self.screenshot()
@@ -132,4 +136,6 @@ class SoloToolkit(Toolkit):
                 timeout_ms=timeout_ms,
                 tail=tail,
             )
+        if action == "open_url":
+            return self.open_url(url=str(action_args.get("url", "")))
         raise ValueError(f"unsupported action: {action}")

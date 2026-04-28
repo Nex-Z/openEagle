@@ -14,10 +14,12 @@ from app.prompts import (
     build_chat_instructions,
     build_solo_decision_prompt,
     build_solo_repair_prompt,
+    current_datetime_hint,
     solo_decision_instructions,
 )
 from app.safety import assess_solo_action, assess_tool_action, classify_command_risk
 from app.solo_executor import SoloExecutor
+from app.solo_kernel import SoloAgentKernel
 from app.solo_service import (
     MODEL_IMAGE_MAX_LONG_EDGE,
     SoloDecision,
@@ -51,6 +53,15 @@ class SafetyAssessmentTest(unittest.TestCase):
 
             unknown = assess_solo_action("unknown", {}, root)
             self.assertEqual(unknown.level, "blocked")
+
+    def test_solo_open_url_allows_only_http_urls(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            safe = assess_solo_action("open_url", {"url": "https://www.google.com/search?q=news"}, root)
+            blocked = assess_solo_action("open_url", {"url": "file:///C:/Windows/System32/calc.exe"}, root)
+
+        self.assertEqual(safe.level, "safe")
+        self.assertEqual(blocked.level, "blocked")
 
     def test_tool_confirm_and_blocked_actions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -427,6 +438,10 @@ class SoloResultSummaryTest(unittest.TestCase):
             {
                 "success": True,
                 "action": "execute_command",
+                "captureAttempts": 3,
+                "postActionDelayMs": 900,
+                "visualChange": False,
+                "usedVirtualCapture": True,
                 "executionResult": {
                     "ok": False,
                     "command": "dir",
@@ -450,8 +465,200 @@ class SoloResultSummaryTest(unittest.TestCase):
         self.assertEqual(summary["exitCode"], 1)
         self.assertEqual(summary["outputTail"], "abcdef")
         self.assertTrue(summary["outputTruncated"])
+        self.assertEqual(summary["captureAttempts"], 3)
+        self.assertEqual(summary["postActionDelayMs"], 900)
+        self.assertFalse(summary["visualChange"])
+        self.assertTrue(summary["usedVirtualCapture"])
         self.assertEqual(summary["screenshot"]["contentHash"], "abc")
         self.assertNotIn("path", summary["screenshot"])
+
+    def test_solo_result_summary_keeps_open_url_signal(self) -> None:
+        summary = summarize_solo_step_result(
+            {
+                "success": True,
+                "action": "open_url",
+                "executionResult": {"ok": True, "action": "open_url", "url": "https://example.com"},
+            }
+        )
+
+        self.assertEqual(summary["url"], "https://example.com")
+
+
+class SoloAgentKernelTest(unittest.TestCase):
+    def test_kernel_initializes_plan_and_prompt_context(self) -> None:
+        kernel = SoloAgentKernel.create("打开记事本")
+        payload = kernel.plan_payload()
+
+        self.assertEqual(payload["items"][0]["status"], "in_progress")
+        self.assertIn("应用操作任务", payload["taskAnalysis"])
+        self.assertIn("plan", kernel.prompt_context())
+        self.assertIn("completionRequirement", kernel.prompt_context())
+        self.assertFalse(kernel.prompt_context()["requiresFindings"])
+
+    def test_kernel_requires_findings_for_news_tasks_before_finish(self) -> None:
+        kernel = SoloAgentKernel.create("最近有哪些值得关注的新闻")
+        decision = SoloDecision(
+            screen_state="搜索结果页可见",
+            thought_summary="[状态] 页面可见 [上步] 成功 [决策] 收尾",
+            action="finish",
+            action_args={},
+            progress="准备结束",
+            is_task_done=True,
+            confidence=0.8,
+            agent_message="已打开新闻搜索结果。",
+        )
+
+        self.assertTrue(kernel.requires_findings())
+        self.assertFalse(kernel.has_completion_evidence([], decision))
+        self.assertTrue(kernel.reject_premature_finish("需要先提取 findings"))
+        self.assertFalse(all(item.status == "completed" for item in kernel.plan))
+        self.assertIn("完成证据", kernel.agent_message)
+
+    def test_kernel_information_finish_ignores_screen_state_and_agent_message(self) -> None:
+        kernel = SoloAgentKernel.create("最近有哪些值得关注的新闻")
+        decision = SoloDecision(
+            screen_state="百度搜索结果页已经打开，页面显示若干结果但尚未提取新闻标题。",
+            thought_summary="[状态] 页面可见 [上步] 搜索成功 [决策] 错误收尾",
+            action="finish",
+            action_args={},
+            progress="搜索成功，页面已打开。",
+            is_task_done=True,
+            confidence=0.8,
+            agent_message="已打开搜索结果页面，搜索请求提交成功。",
+        )
+
+        self.assertFalse(kernel.has_completion_evidence([], decision))
+
+    def test_kernel_information_finish_accepts_real_finish_report(self) -> None:
+        kernel = SoloAgentKernel.create("最近有哪些值得关注的新闻")
+        decision = SoloDecision(
+            screen_state="结果可见",
+            thought_summary="[状态] 已提取 [上步] 成功 [决策] 收尾",
+            action="finish",
+            action_args={},
+            progress="已整理新闻",
+            is_task_done=True,
+            confidence=0.9,
+            finish_report="值得关注的新闻包括：\n1. A 事件持续发酵。\n2. B 政策发布。\n3. C 公司公布新产品。",
+        )
+
+        self.assertTrue(kernel.has_completion_evidence([], decision))
+
+    def test_kernel_allows_finish_without_findings_for_app_tasks(self) -> None:
+        kernel = SoloAgentKernel.create("打开记事本")
+        decision = SoloDecision(
+            screen_state="记事本窗口可见",
+            thought_summary="[状态] 已打开 [上步] 成功 [决策] 收尾",
+            action="finish",
+            action_args={},
+            progress="已打开应用",
+            is_task_done=True,
+            confidence=0.9,
+            agent_message="已打开记事本。",
+        )
+
+        self.assertFalse(kernel.requires_findings())
+        self.assertTrue(kernel.has_completion_evidence([], decision))
+
+    def test_kernel_rejects_empty_finish_for_any_task(self) -> None:
+        kernel = SoloAgentKernel.create("把当前任务处理好")
+        decision = SoloDecision(
+            screen_state="",
+            thought_summary="[状态] 不清楚 [上步] 不清楚 [决策] 收尾",
+            action="finish",
+            action_args={},
+            progress="完成",
+            is_task_done=True,
+            confidence=0.5,
+            agent_message="完成",
+        )
+
+        self.assertEqual(kernel.completion_mode(), "general")
+        self.assertFalse(kernel.has_completion_evidence([], decision))
+
+    def test_kernel_does_not_complete_plan_on_passive_done_signal(self) -> None:
+        kernel = SoloAgentKernel.create("打开记事本")
+        decision = SoloDecision(
+            screen_state="还在桌面",
+            thought_summary="[状态] 桌面 [上步] 未执行 [决策] 启动",
+            action="wait",
+            action_args={"ms": 100},
+            progress="准备等待",
+            is_task_done=True,
+            confidence=0.5,
+        )
+
+        kernel.record_decision(decision)
+
+        self.assertFalse(all(item.status == "completed" for item in kernel.plan))
+
+    def test_kernel_applies_decision_plan_updates_and_findings(self) -> None:
+        kernel = SoloAgentKernel.create("查询天气")
+        decision = SoloDecision(
+            screen_state="浏览器打开",
+            thought_summary="[状态] 已看到天气 [上步] 成功 [决策] 汇报",
+            action="finish",
+            action_args={},
+            progress="已拿到天气",
+            is_task_done=True,
+            confidence=0.9,
+            findings=["重庆 5 月 1 日有雨"],
+            plan_updates=[{"index": 2, "status": "completed"}],
+            agent_message="查到了。",
+        )
+
+        changed = kernel.record_decision(decision)
+
+        self.assertTrue(changed)
+        self.assertIn("重庆 5 月 1 日有雨", kernel.findings)
+        self.assertTrue(all(item.status == "completed" for item in kernel.plan))
+
+    def test_kernel_treats_command_nonzero_as_recoverable_failure(self) -> None:
+        kernel = SoloAgentKernel.create("打开应用")
+        decision = SoloDecision(
+            screen_state="终端可见",
+            thought_summary="[状态] 终端 [上步] 失败 [决策] 换命令",
+            action="execute_command",
+            action_args={"command": "bad-command"},
+            progress="尝试启动应用",
+            is_task_done=False,
+            confidence=0.4,
+        )
+
+        outcome = kernel.assess_step(
+            decision,
+            {"success": True, "action": "execute_command", "ok": False, "exitCode": 1, "outputTail": "not found"},
+            repeat_action_count=1,
+            same_screenshot_count=0,
+        )
+
+        self.assertFalse(outcome.semantic_success)
+        self.assertFalse(outcome.should_pause)
+        self.assertIn("命令执行失败", outcome.recovery_hint or "")
+        self.assertGreater(kernel.replan_count, 0)
+
+    def test_kernel_pauses_after_repeated_recovery_failures(self) -> None:
+        kernel = SoloAgentKernel.create("点击按钮")
+        decision = SoloDecision(
+            screen_state="按钮不可见",
+            thought_summary="[状态] 未找到按钮 [上步] 失败 [决策] 截图",
+            action="click",
+            action_args={"x": 0.5, "y": 0.5},
+            progress="尝试点击",
+            is_task_done=False,
+            confidence=0.2,
+        )
+        outcome = None
+        for _ in range(kernel.max_consecutive_failures):
+            outcome = kernel.assess_step(
+                decision,
+                {"success": False, "action": "click", "executionError": "target missing"},
+                repeat_action_count=1,
+                same_screenshot_count=0,
+            )
+
+        self.assertIsNotNone(outcome)
+        self.assertTrue(outcome.should_pause)
 
 
 class SoloDecisionParsingTest(unittest.TestCase):
@@ -464,6 +671,33 @@ class SoloDecisionParsingTest(unittest.TestCase):
 
         self.assertEqual(decision.action, "screenshot")
         self.assertEqual(decision.agent_message, "我先看一下当前界面。")
+
+    def test_solo_json_accepts_kernel_contract_fields(self) -> None:
+        decision = SoloService._normalize_decision(
+            '{"screen_state":"桌面可见","thought_summary":"[状态] 桌面 [上步] 成功 [决策] 打开应用",'
+            '"action":"execute_command","action_args":{"command":"dir"},"progress":"准备执行",'
+            '"is_task_done":false,"confidence":0.76,'
+            '"plan_updates":[{"index":2,"status":"in_progress"}],'
+            '"findings":["看到开始菜单"]}'
+        )
+
+        self.assertEqual(decision.screen_state, "桌面可见")
+        self.assertEqual(decision.confidence, 0.76)
+        self.assertEqual(decision.plan_updates[0]["status"], "in_progress")
+        self.assertEqual(decision.findings, ["看到开始菜单"])
+
+    def test_solo_json_accepts_batch_actions(self) -> None:
+        decision = SoloService._normalize_decision(
+            '{"screen_state":"输入框可见","thought_summary":"[状态] 可输入 [上步] 成功 [决策] 连续输入",'
+            '"action":"click","action_args":{"x":0.5,"y":0.5},"progress":"输入并提交",'
+            '"is_task_done":false,"confidence":0.9,'
+            '"batch_actions":[{"action":"type_text","action_args":{"text":"hello"}},'
+            '{"action":"press_keys","action_args":{"keys":["enter"]}}]}'
+        )
+
+        self.assertEqual(decision.batch_actions[0]["action"], "type_text")
+        self.assertEqual(decision.batch_actions[1]["action_args"]["keys"], ["enter"])
+        self.assertIn("batch_actions", SoloService.decision_dict(decision))
 
     def test_solo_fallback_decision_preserves_natural_language(self) -> None:
         decision = SoloService._fallback_decision_from_text(
@@ -508,33 +742,63 @@ class PromptPolicyTest(unittest.TestCase):
         instructions = "\n".join(solo_decision_instructions("Windows 11"))
         self.assertIn("Windows 11 桌面", instructions)
         self.assertIn("仅输出合法 JSON", instructions)
+        self.assertIn("screen_state", instructions)
         self.assertIn("thought_summary", instructions)
         self.assertIn("agent_message", instructions)
         self.assertIn("禁止写在 JSON 外", instructions)
         self.assertIn("Q1: 这件事能用命令行做吗", instructions)
+        self.assertIn("优先 open_url 直达目标 URL", instructions)
         self.assertIn("execute_command，不要用鼠标键盘绕路", instructions)
         self.assertIn("action_args 参数规范", instructions)
-        self.assertIn("Chat Agent 负责工作区代码", instructions)
+        self.assertIn("plan_updates", instructions)
+        self.assertIn("batch_actions", instructions)
+        self.assertIn("confidence", instructions)
         self.assertIn("execute_command: {\"command\": string", instructions)
+        self.assertIn("open_url: {\"url\": string}", instructions)
         self.assertIn("同一动作或同一思路连续执行 ≥3 次", instructions)
         self.assertIn("归一化比例值", instructions)
         self.assertIn("命令或截图上下文确认目标位置", instructions)
+        self.assertIn("所有任务 finish 前都要有完成证据", instructions)
+        self.assertIn("结束任务时必须 action=finish", instructions)
 
     def test_solo_dynamic_prompt_contains_step_history_requirements(self) -> None:
         prompt = build_solo_decision_prompt(
             "打开记事本",
             [{"step": 1, "decision": {"action": "execute_command"}}],
+            kernel_state={
+                "lastRecoveryHint": "换用 GUI 路线",
+                "plan": [],
+                "completionRequirement": "必须说明可见完成状态。",
+            },
         )
         self.assertIn("用户任务：打开记事本", prompt)
+        self.assertIn("当前日期时间", prompt)
+        self.assertIn("不要猜年份", prompt)
         self.assertIn("步骤历史（最新在后，共 1 步）", prompt)
         self.assertIn("历史字段说明", prompt)
+        self.assertIn("SOLO 内核状态", prompt)
+        self.assertIn("换用 GUI 路线", prompt)
         self.assertIn("outputTail", prompt)
         self.assertIn("screenshot.contentHash", prompt)
         self.assertIn("agent_message", prompt)
+        self.assertIn("screen_state", prompt)
+        self.assertIn("confidence", prompt)
+        self.assertIn("plan_updates", prompt)
+        self.assertIn("batch_actions", prompt)
         self.assertIn("先判断上一步是否成功", prompt)
         self.assertIn("[状态]", prompt)
         self.assertIn("[上步]", prompt)
         self.assertIn("[决策]", prompt)
+        self.assertIn("优先 open_url 直达", prompt)
+        self.assertIn("完成门槛", prompt)
+        self.assertIn("completionRequirement", prompt)
+        self.assertIn("screen_state、progress、agent_message", prompt)
+
+    def test_current_datetime_hint_includes_date_and_timezone(self) -> None:
+        hint = current_datetime_hint()
+
+        self.assertRegex(hint, r"\d{4}-\d{2}-\d{2}")
+        self.assertRegex(hint, r"[+-]\d{4}$")
 
     def test_solo_repair_prompt_converts_natural_language_to_json_decision(self) -> None:
         prompt = build_solo_repair_prompt(
@@ -548,6 +812,10 @@ class PromptPolicyTest(unittest.TestCase):
         self.assertIn("agent_message", prompt)
         self.assertIn("仅返回一个合法 JSON 对象", prompt)
         self.assertIn("action 仅可取", prompt)
+        self.assertIn("open_url", prompt)
+        self.assertIn("screen_state", prompt)
+        self.assertIn("confidence", prompt)
+        self.assertIn("batch_actions", prompt)
 
 
 if __name__ == "__main__":
