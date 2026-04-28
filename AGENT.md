@@ -38,6 +38,12 @@ Rust → 解析端口，通知前端
 
 核心循环实现在 `agent_loop()`（`backend/app/main.py`）。
 
+### SOLO 完成与汇报
+
+- 完成判定：VL 输出 `action=finish` 或 `is_task_done=true`，且通过内核的完成证据检查
+- 最终汇报：通过 `emit_solo_step` 发送（`action="finish"`），`agent_message` 包含完整汇报文本，前端以普通聊天气泡展示
+- 完成后不再发送额外的 "SOLO 任务完成" 状态消息
+
 ### SOLO 鲁棒性机制
 
 **Agent Loop 自主决策**：VL 模型在每一步都自主推理（观察→思考→行动），而非机械执行预定义计划。模型输出 `thought_summary`（分析）、`progress`（进度）、`findings`（信息提取）、`is_task_done`（完成判断）。
@@ -57,7 +63,7 @@ Rust → 解析端口，通知前端
 
 **异常不静默完成**：VL 调用异常时，暂停会话并报告错误，不再静默标记完成。
 
-**完成汇报**：`_build_final_report` 汇总 agent_message + findings + 步数统计，生成结构化的最终汇报。
+**完成汇报**：`_build_final_report` 选取 finish_report 和 agent_message 中较长的文本作为最终汇报。汇报通过 `emit_solo_step`（action="finish"）以普通聊天气泡形式展示给用户。
 
 ### 安全模型
 
