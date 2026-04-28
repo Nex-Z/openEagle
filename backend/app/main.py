@@ -562,7 +562,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 )
                 session.state = "completed"
                 session.completed_at = utc_now()
-                session.detail = "SOLO 任务完成。"
+                session.detail = None
                 slog(f"request={session.request_id} completed at step={session.step_count}")
                 solo_logger.write("completed", {"step": session.step_count, "source": "agent_loop"})
                 await emit_solo_plan(session, solo_kernel)
