@@ -176,6 +176,7 @@ export interface SoloStepPayload {
   expectedOutcome?: string;
   screenshotPath?: string;
   timestamp: string;
+  findings?: string[];
 }
 
 export interface SoloConfirmationPayload {

@@ -82,24 +82,29 @@ def build_chat_instructions(
 
 def solo_decision_instructions(system_platform: str = "当前系统") -> list[str]:
     return [
-        f"你是一个桌面自动化视觉 Agent，负责在 {system_platform} 桌面上完成用户指定的任意任务。",
+        (
+            f"你是一个桌面自动化视觉 Agent，在 {system_platform} 上完成用户任务。\n"
+            "你不只是操作 UI 的执行器——你是一个有思维的 agent，"
+            "能观察屏幕、理解内容、提取信息、做出判断，并最终向用户汇报结果。"
+        ),
         (
             "━━ 输出格式 ━━\n"
             "仅输出合法 JSON，禁止任何额外文本或 markdown。\n"
             "必填字段：\n"
-            "  thought_summary   string   当前状态分析 + 本步决策理由（必须包含\"上一步是否成功\"的判断）\n"
+            "  thought_summary   string   当前状态分析 + 本步决策理由\n"
             "  action            enum     见下方动作列表\n"
             "  action_args       object   动作参数，无参数时为 {}\n"
-            "  expected_outcome  string   本步执行后预期的可观测变化\n"
-            "  is_task_done      boolean  任务是否已完成\n"
+            "  progress          string   目标完成度评估：已完成什么、还差什么\n"
+            "  is_task_done      boolean  用户的最终目标是否已达成\n"
             "可选字段：\n"
-            "  agent_message     string   给用户看的简短自然语言说明；"
-            "如需输出文字，必须放在此字段内，禁止写在 JSON 外"
+            "  findings          string[] 从屏幕中提取的关键信息（新闻标题、搜索结果、价格等）\n"
+            "  agent_message     string   给用户看的自然语言说明；"
+            "任务完成时，此字段必须是完整的最终汇报"
         ),
         (
             "action 枚举：\n"
             "  finish | wait | screenshot | click | double_click | right_click |\n"
-            "  move_mouse | scroll | type_text | press_keys | execute_command | replan"
+            "  move_mouse | scroll | type_text | press_keys | execute_command"
         ),
         (
             "━━ action_args 参数规范 ━━\n"
@@ -112,31 +117,46 @@ def solo_decision_instructions(system_platform: str = "当前系统") -> list[st
             "  type_text: {\"text\": string}\n"
             "  press_keys: {\"keys\": string[]}，例如 [\"ctrl\", \"s\"]\n"
             "  execute_command: {\"command\": string, \"cwd\"?: string, "
-            "\"timeout_ms\"?: number, \"tail\"?: number}；cwd 是工作区内相对目录，默认 \".\"\n"
-            "  replan: {\"reason\": string}，当原计划不可行或需要调整时使用"
+            "\"timeout_ms\"?: number, \"tail\"?: number}；cwd 是工作区内相对目录，默认 \".\""
         ),
         (
-            "━━ 决策优先级与能力边界 ━━\n"
-            "Chat Agent 负责工作区代码、文件搜索、编辑、Git、构建和测试；"
-            "SOLO 不要把这些工作伪装成视觉任务。\n\n"
+            "━━ 你是一个 Agent，不只是执行器 ━━\n"
+            "每一步都要思考：\n"
+            "  1. 用户的最终目标是什么？（不是当前步骤，而是最终目标）\n"
+            "  2. 我在屏幕上看到了什么？这些信息对用户有价值吗？\n"
+            "  3. 目标达成了吗？如果没有，还差什么？\n\n"
+            "你同时是一个信息采集者：\n"
+            "  - 看到新闻标题？记录到 findings\n"
+            "  - 看到搜索结果？提取关键信息到 findings\n"
+            "  - 看到价格、数据、链接？记录到 findings\n"
+            "  - 这些信息会在最终汇报中呈现给用户"
+        ),
+        (
+            "━━ 决策优先级 ━━\n"
             "每一步决策前，按顺序回答：\n"
-            "  Q1: 这件事能用命令行做吗？→ 能就用 execute_command，不要用鼠标键盘绕路\n"
-            "  Q2: 目标 UI 元素在截图中清晰可见吗？→ 是就用视觉动作，否就先 screenshot\n\n"
+            "  Q1: 这件事能用命令行做吗？→ 能就用 execute_command\n"
+            "  Q2: 目标 UI 元素在截图中清晰可见吗？→ 是就用视觉动作，否就先 screenshot\n"
+            "  Q3: 屏幕上有意外弹窗/对话框吗？→ 有就先处理弹窗\n"
+            "  Q4: 我需要读取屏幕上的信息吗？→ 需要就先 screenshot 然后提取到 findings\n\n"
             "execute_command 适用场景：启动/关闭/激活应用、查询窗口/进程/系统状态、"
             "执行 GUI 辅助脚本、文件读写移动、注册表操作"
         ),
         (
-            "━━ 状态追踪与失败升级 ━━\n"
-            "每步必须判断上一步是否产生了预期变化：\n\n"
+            "━━ 状态追踪与自适应 ━━\n"
+            "每步必须判断上一步的结果：\n\n"
             "  成功（状态有变化）→ 继续推进任务\n"
-            "  失败（状态无变化）→ 进入升级流程：\n\n"
-            "    失败第 1 次：截图确认当前真实状态，分析失败原因\n"
-            "    失败第 2 次：切换到更底层或完全不同的方案\n"
-            "    失败第 3 次：重新拆解任务路径，从更高层重新规划"
+            "  失败（状态无变化）→ 尝试不同方案：\n"
+            "    第 1 次失败：截图确认当前状态，分析原因\n"
+            "    第 2 次失败：切换完全不同的方案\n"
+            "    第 3 次失败：重新评估任务可行性\n\n"
+            "  偏离（屏幕出现意外状态）→ 优先处理偏离：\n"
+            "    - 弹窗/对话框/通知 → 先关闭或处理\n"
+            "    - 意外的页面状态 → 分析原因，调整策略\n"
+            "    - 不要忽略偏离直接执行下一步"
         ),
         (
             "禁止：\n"
-            "  × 同一动作或同一思路连续执行 ≥3 次\n"
+            "  × 同一动作连续执行 ≥3 次\n"
             "  × 状态未变化时连续 screenshot 超过 2 次\n"
             "  × 在未确认上一步结果的情况下执行下一步"
         ),
@@ -149,19 +169,22 @@ def solo_decision_instructions(system_platform: str = "当前系统") -> list[st
         ),
         (
             "━━ 完成判定 ━━\n"
-            "任务目标已在截图或命令输出中得到明确确认 → finish + is_task_done=true\n"
-            "无法确认时禁止 finish；若结果不满足需求 → replan\n"
-            "finish 时必须在 agent_message 中给出最终结果或答案，"
-            "告诉用户你做了什么、找到了什么、或任务的最终状态"
+            "用户的最终目标已在截图或命令输出中得到明确确认 → is_task_done=true + action=finish\n"
+            "无法确认时禁止标记完成；继续操作直到目标达成\n\n"
+            "完成时 agent_message 必须是完整的最终汇报：\n"
+            "  - 告诉用户你做了什么\n"
+            "  - 汇总你收集到的所有关键信息（findings）\n"
+            "  - 给出任务的最终状态或答案\n"
+            "  不要只说「任务已完成」——要告诉用户结果是什么"
         ),
         (
             "━━ thought_summary 写作要求 ━━\n"
-            "thought_summary 是决策的核心说明，必须包含：\n"
-            "  1. 当前状态（界面/系统/任务进展）\n"
+            "thought_summary 是你的思考过程，必须包含：\n"
+            "  1. 当前屏幕状态（你看到了什么）\n"
             "  2. 上一步结果判断（成功/失败/部分成功及原因）\n"
-            "  3. 本步决策理由\n"
-            "格式不限，但信息必须完整。复杂场景可以自由组织，"
-            "例如遇到应用无响应、需要切换策略等情况时，直接说明即可。"
+            "  3. 本步决策理由（为什么做这个选择）\n"
+            "  4. 从屏幕中提取的信息（如有）\n"
+            "格式不限，但信息必须完整。"
         ),
     ]
 
@@ -171,6 +194,7 @@ def build_solo_decision_prompt(
     history: list[dict[str, object]],
     display_index: int | None = None,
     app_context: str | None = None,
+    findings: list[str] | None = None,
 ) -> str:
     if len(history) <= 8:
         recent_history = history
@@ -184,20 +208,29 @@ def build_solo_decision_prompt(
     app_hint = ""
     if app_context:
         app_hint = f"已知应用信息：{app_context}\n\n"
+    findings_hint = ""
+    if findings:
+        findings_text = "\n".join(f"  - {f}" for f in findings[-20:])
+        findings_hint = (
+            f"已收集的信息（共 {len(findings)} 条，最近 20 条）：\n"
+            f"{findings_text}\n\n"
+        )
     return (
         f"用户任务：{task}\n\n"
         f"{display_hint}"
         f"{app_hint}"
+        f"{findings_hint}"
         f"步骤历史（最新在后，共 {step_count} 步）：\n"
         f"{history_text}\n\n"
-        "历史字段说明：decision 是模型上一步决策；result 是该动作的执行摘要，"
+        "历史字段说明：decision 是上一步决策；result 是该动作的执行摘要，"
         "包含 success、action、error / executionError、command、exitCode、outputTail、"
         "screenshot.contentHash 等可用于判断上一步是否成功的信息。\n\n"
         "决策要求：\n"
-        "1. 先判断上一步是否成功（对比历史与预期）\n"
-        "2. 若连续 ≥2 步无进展，必须换方案\n"
-        "3. 如果需要给用户自然语言说明，写入 agent_message，不要写在 JSON 外\n"
-        "4. thought_summary 按系统指令中的写作要求填写，确保信息完整"
+        "1. 先观察当前截图：屏幕上显示了什么？有无意外弹窗？有无值得提取的信息？\n"
+        "2. 判断上一步是否成功（对比历史与当前状态）\n"
+        "3. 评估目标完成度：用户的最终目标达成了吗？还差什么？\n"
+        "4. 如需给用户说明，写入 agent_message\n"
+        "5. thought_summary 按系统指令中的写作要求填写"
     )
 
 
@@ -206,6 +239,7 @@ def build_solo_repair_prompt(
     history: list[dict[str, object]],
     raw_output: str,
     error: str,
+    findings: list[str] | None = None,
 ) -> str:
     if len(history) <= 8:
         recent_history = history
@@ -215,10 +249,15 @@ def build_solo_repair_prompt(
     raw_preview = raw_output.strip()
     if len(raw_preview) > 4000:
         raw_preview = raw_preview[-4000:]
+    findings_hint = ""
+    if findings:
+        findings_text = "\n".join(f"  - {f}" for f in findings[-10:])
+        findings_hint = f"已收集的信息：\n{findings_text}\n\n"
     return (
         "上一次 SOLO 视觉模型输出无法解析为动作决策 JSON。\n"
         f"解析错误：{error}\n\n"
         f"用户任务：{task}\n\n"
+        f"{findings_hint}"
         f"步骤历史（最新在后，共 {len(history)} 步）：\n"
         f"{history_text}\n\n"
         "上一次模型原始输出：\n"
@@ -227,77 +266,55 @@ def build_solo_repair_prompt(
         "仅返回一个合法 JSON 对象，不要 markdown，不要 JSON 外文字。\n"
         "如果上一次输出只是自然语言说明，把说明压缩到 agent_message 字段；"
         "action 仍必须从枚举中选择。\n"
-        "必填字段：thought_summary, action, action_args, expected_outcome, is_task_done。\n"
-        "可选字段：agent_message。\n"
+        "必填字段：thought_summary, action, action_args, progress, is_task_done。\n"
+        "可选字段：findings（string[]），agent_message。\n"
         "action 仅可取：finish, wait, screenshot, click, double_click, right_click, "
-        "move_mouse, scroll, type_text, press_keys, execute_command, replan。"
+        "move_mouse, scroll, type_text, press_keys, execute_command。"
     )
 
 
 def solo_planning_instructions(system_platform: str = "当前系统") -> list[str]:
     return [
-        f"你是桌面自动化规划 Agent，负责在 {system_platform} 上分析用户任务并制定执行计划。",
+        (
+            f"你是桌面自动化规划 Agent，负责在 {system_platform} 上分析用户任务并提供建议。\n"
+            "你的输出是**建议性**的，不是强制执行脚本。"
+            "执行 Agent 会参考你的建议，但会根据实际情况自主决策。"
+        ),
         (
             "━━ 核心职责 ━━\n"
-            "观察当前截图和用户任务，制定最优执行计划。\n"
+            "观察当前截图和用户任务，提供任务分析和执行建议。\n"
             "你需要像一个有经验的助手一样思考：\n"
-            "  1. 这个任务能做吗？有什么风险？\n"
-            "  2. 最短路径是什么？有没有更高效的方法？\n"
-            "  3. 哪些步骤可以批量执行（不需要视觉确认）？\n"
-            "  4. 有没有替代方案？"
+            "  1. 这个任务的目标到底是什么？（用户真正想要的结果）\n"
+            "  2. 有什么风险或难点？\n"
+            "  3. 建议的执行路径是什么？\n"
+            "  4. 有哪些需要采集信息的步骤？（如阅读网页、汇总数据）"
         ),
         (
             "━━ 输出格式 ━━\n"
             "仅输出合法 JSON，禁止任何额外文本或 markdown。\n"
             "必填字段：\n"
-            "  task_analysis      string   任务分析：目标、可行性、风险\n"
-            "  alternative        string   替代方案或建议（如无则写「无」）\n"
-            "  actions            array    动作序列，按执行顺序排列\n"
-            "  estimated_steps    number   预估总步数\n"
-            "  agent_message      string   给用户的简短说明（如计划需要较长时间或有风险）"
+            "  task_analysis       string   任务分析：目标、可行性、风险\n"
+            "  suggested_approach  string   建议的执行策略\n"
+            "  key_steps           string[] 关键步骤（自然语言描述，不是可执行动作）\n"
+            "  estimated_steps     number   预估总步数\n"
+            "  agent_message       string   给用户的简短说明"
         ),
         (
-            "━━ actions 数组格式 ━━\n"
-            "每个 action 是一个对象，包含：\n"
-            "  action       string   动作类型（见下方枚举）\n"
-            "  action_args  object   动作参数\n"
-            "  description  string   此步骤的简短说明\n"
-            "  needs_visual boolean  是否需要视觉确认（true=需要截图+VL分析，false=可直接执行）\n\n"
-            "action 枚举：\n"
-            "  click, double_click, right_click, move_mouse, scroll,\n"
-            "  type_text, press_keys, execute_command, wait, finish\n\n"
-            "action_args 规范：\n"
-            "  click/double_click/right_click/move_mouse: {\"x\": number, \"y\": number}\n"
-            "  scroll: {\"delta\": number}\n"
-            "  type_text: {\"text\": string}\n"
-            "  press_keys: {\"keys\": string[]}\n"
-            "  execute_command: {\"command\": string, \"cwd\"?: string}\n"
-            "  wait: {\"ms\": number}\n"
-            "  finish: {} （系统会自动触发 VL 最终评估，确认任务完成并给出反馈）"
-        ),
-        (
-            "━━ needs_visual 判定规则 ━━\n"
-            "needs_visual = true 的情况：\n"
-            "  - click / double_click / right_click / move_mouse（需要定位 UI 元素）\n"
-            "  - scroll（如果不确定滚动区域）\n"
-            "needs_visual = false 的情况：\n"
-            "  - type_text / press_keys（键盘输入，无需视觉）\n"
-            "  - execute_command（命令行操作，无需视觉）\n"
-            "  - wait（等待，无需视觉）\n"
-            "  - finish（最终评估由系统自动触发 VL，不需要手动规划视觉步骤）"
-        ),
-        (
-            "━━ 坐标规范 ━━\n"
-            "坐标使用 0~1 归一化比例值，精确到小数点后 3 位。\n"
-            "根据截图中 UI 元素的位置估算中心点坐标。\n"
-            "如果目标在截图中不可见，标注 needs_visual=true 并在 description 中说明。"
+            "━━ key_steps 规范 ━━\n"
+            "key_steps 是建议性的步骤描述，用自然语言写，不是可执行动作。\n"
+            "示例（任务「打开浏览器搜索今日热点新闻并汇总」）：\n"
+            '  ["打开浏览器", "搜索今日热点新闻", "浏览搜索结果页面", "阅读并提取新闻标题和摘要", "汇总信息并汇报"]\n\n'
+            "注意：\n"
+            "  - 包含信息采集步骤（阅读、提取、汇总），不只是 UI 操作\n"
+            "  - 最后一步应该是「汇报结果」而不是「完成」\n"
+            "  - 步骤描述要体现目标，不只是动作"
         ),
         (
             "━━ 规划原则 ━━\n"
-            "  1. 优先选择最短路径：能用命令行完成的不用 GUI 操作\n"
-            "  2. 批量合并：连续的 type_text 或 press_keys 可以合并为一个 action\n"
-            "  3. 键盘快捷键优先：如 Ctrl+S 保存比点击菜单更快\n"
-            "  4. 预判风险：如果任务可能导致不可逆操作（如删除），在 agent_message 中提醒用户"
+            "  1. 理解用户真正想要的结果，不只是字面动作\n"
+            "  2. 优先命令行：能用命令行完成的不用 GUI\n"
+            "  3. 考虑信息采集：需要读取屏幕内容的任务，规划中要包含阅读和提取步骤\n"
+            "  4. 预判风险：不可逆操作在 agent_message 中提醒用户"
         ),
     ]
 
@@ -309,7 +326,7 @@ def solo_planning_prompt(
 ) -> str:
     display_hint = ""
     if display_index is not None:
-        display_hint = f"当前操作显示器：{display_index}。所有坐标基于此显示器。\n\n"
+        display_hint = f"当前操作显示器：{display_index}。\n\n"
     app_hint = ""
     if app_context:
         app_hint = f"已知应用信息：{app_context}\n\n"
@@ -317,31 +334,10 @@ def solo_planning_prompt(
         f"用户任务：{task}\n\n"
         f"{display_hint}"
         f"{app_hint}"
-        "请分析当前截图，制定执行此任务的最优计划。\n"
-        "输出一个合法 JSON，包含：task_analysis, alternative, actions, estimated_steps, agent_message。\n"
-        "actions 数组中每个元素包含：action, action_args, description, needs_visual。"
+        "请分析当前截图和用户任务，提供任务分析和执行建议。\n"
+        "输出一个合法 JSON，包含：task_analysis, suggested_approach, key_steps, estimated_steps, agent_message。\n"
+        "key_steps 是 string[] 数组，用自然语言描述关键步骤（不是可执行动作）。\n"
+        "理解用户真正想要的结果——如果用户说「搜索并汇总」，key_steps 必须包含阅读和汇总步骤。"
     )
 
 
-def solo_replan_prompt(
-    task: str,
-    completed_actions: list[dict[str, object]],
-    remaining_actions: list[dict[str, object]],
-    failure_reason: str,
-    display_index: int | None = None,
-) -> str:
-    display_hint = ""
-    if display_index is not None:
-        display_hint = f"当前操作显示器：{display_index}。\n\n"
-    completed_text = json.dumps(completed_actions[-5:], ensure_ascii=False) if completed_actions else "[]"
-    remaining_text = json.dumps(remaining_actions, ensure_ascii=False)
-    return (
-        f"用户任务：{task}\n\n"
-        f"{display_hint}"
-        f"已完成的步骤：\n{completed_text}\n\n"
-        f"原计划剩余步骤：\n{remaining_text}\n\n"
-        f"失败原因：{failure_reason}\n\n"
-        "请观察当前截图，重新制定剩余步骤的执行计划。\n"
-        "输出一个合法 JSON，格式同规划阶段：task_analysis, alternative, actions, estimated_steps, agent_message。\n"
-        "只输出未完成部分的新计划，不需要重复已完成的步骤。"
-    )

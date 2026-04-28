@@ -24,7 +24,6 @@ from .prompts import (
     solo_decision_instructions,
     solo_planning_instructions,
     solo_planning_prompt,
-    solo_replan_prompt,
 )
 from .safety import assess_solo_action
 
@@ -40,7 +39,6 @@ ALLOWED_ACTIONS = {
     "type_text",
     "press_keys",
     "execute_command",
-    "replan",
 }
 
 BATCH_EXECUTABLE_ACTIONS = {"type_text", "press_keys", "execute_command", "wait"}
@@ -189,12 +187,18 @@ def summarize_solo_step_result(
 
 
 class SoloDecision(BaseModel):
+    # Core reasoning fields (VL model outputs these names)
     thought_summary: str = Field(alias="thought_summary")
     action: str
     action_args: dict[str, Any] = Field(default_factory=dict, alias="action_args")
-    expected_outcome: str = Field(default="", alias="expected_outcome")
+    # Agent-oriented fields (new names, VL may output either old or new)
+    progress: str = Field(default="", alias="progress")
+    findings: list[str] = Field(default_factory=list, alias="findings")
     is_task_done: bool = Field(default=False, alias="is_task_done")
     agent_message: str = Field(default="", alias="agent_message")
+    # Backward compat: VL may still output expected_outcome
+    expected_outcome: str = Field(default="", alias="expected_outcome")
+    # Internal metadata (excluded from wire)
     raw_model_output: str | None = Field(default=None, exclude=True)
     repair_model_output: str | None = Field(default=None, exclude=True)
     used_parse_fallback: bool = Field(default=False, exclude=True)
@@ -221,8 +225,8 @@ class SoloPlanAction(BaseModel):
 
 class SoloPlan(BaseModel):
     task_analysis: str = ""
-    alternative: str = ""
-    actions: list[SoloPlanAction] = Field(default_factory=list)
+    suggested_approach: str = ""
+    key_steps: list[str] = Field(default_factory=list)
     estimated_steps: int = 0
     agent_message: str = ""
 
@@ -233,7 +237,7 @@ class SoloSessionState:
     conversation_id: str
     task: str
     step_count: int = 0
-    max_steps: int = 100
+    max_steps: int = 150
     repeat_action_count: int = 0
     same_screenshot_count: int = 0
     last_action: str | None = None
@@ -245,13 +249,11 @@ class SoloSessionState:
     state: str = "running"
     detail: str | None = None
     history: list[dict[str, Any]] = field(default_factory=list)
+    findings: list[str] = field(default_factory=list)
     pending_confirmation: dict[str, Any] | None = None
     log_path: str | None = None
     display_index: int | None = None
     current_plan: SoloPlan | None = None
-    plan_step_index: int = 0
-    replan_count: int = 0
-    step_statuses: dict[int, str] = field(default_factory=dict)
     last_agent_message: str | None = None
 
 
@@ -342,6 +344,9 @@ class SoloService:
     def _normalize_decision(raw_text: str) -> SoloDecision:
         payload_text = SoloService._extract_json(raw_text)
         payload = json.loads(payload_text)
+        # Accept new field names from VL model
+        if "analysis" in payload and "thought_summary" not in payload:
+            payload["thought_summary"] = payload.pop("analysis")
         decision = SoloDecision.model_validate(payload)
         if decision.action not in ALLOWED_ACTIONS:
             raise ValueError(f"不支持的动作: {decision.action}")
@@ -369,7 +374,7 @@ class SoloService:
             ),
             action="screenshot",
             action_args={},
-            expected_outcome="获取当前桌面截图，用于下一步重新决策。",
+            progress="获取当前桌面截图，用于下一步重新决策。",
             is_task_done=False,
             agent_message=visible,
             raw_model_output=trim_model_output(raw_text),
@@ -401,22 +406,9 @@ class SoloService:
     def _fallback_plan(self, task: str, error: Exception) -> SoloPlan:
         return SoloPlan(
             task_analysis=f"规划失败: {error}",
-            alternative="尝试逐步执行",
-            actions=[
-                SoloPlanAction(
-                    action="wait",
-                    action_args={"ms": 500},
-                    description="等待后重新获取屏幕状态",
-                    needs_visual=False,
-                ),
-                SoloPlanAction(
-                    action="replan",
-                    action_args={"reason": "规划降级后重新尝试"},
-                    description="重新规划",
-                    needs_visual=False,
-                ),
-            ],
-            estimated_steps=2,
+            suggested_approach="逐步观察屏幕并执行",
+            key_steps=["观察当前屏幕状态", "根据任务目标逐步操作"],
+            estimated_steps=5,
             agent_message=f"自动规划失败，将切换为逐步执行模式。原因: {error}",
         )
 
@@ -450,11 +442,6 @@ class SoloService:
             payload_text = self._extract_json(output_text)
             payload = json.loads(payload_text)
             plan = SoloPlan.model_validate(payload)
-            if not plan.actions:
-                return self._fallback_plan(task, ValueError("规划结果为空动作序列"))
-            for act in plan.actions:
-                if act.action not in ALLOWED_ACTIONS:
-                    return self._fallback_plan(task, ValueError(f"规划包含非法动作: {act.action}"))
             return plan
         except Exception as exc:
             if self._should_attempt_json_repair(output_text):
@@ -468,9 +455,10 @@ class SoloService:
         history: list[dict[str, Any]],
         display_index: int | None = None,
         app_context: str | None = None,
+        findings: list[str] | None = None,
     ) -> SoloDecision:
         agent = self._build_agent()
-        prompt = build_solo_decision_prompt(task, history, display_index, app_context)
+        prompt = build_solo_decision_prompt(task, history, display_index, app_context, findings)
         model_image = prepare_model_image(screenshot_path)
         model_image_path = Path(model_image["path"])
         image_url = encode_image_data_url(model_image_path, str(model_image["mime_type"]))
@@ -501,6 +489,7 @@ class SoloService:
                 history=history,
                 raw_output=output_text,
                 error=str(first_error),
+                findings=findings,
             )
             repair_started_at = time.perf_counter()
             repair_result = await agent.arun(
@@ -546,7 +535,7 @@ class SoloService:
             thought_summary=f"SOLO 解析或推理失败: {message}",
             action="wait",
             action_args={"ms": 800},
-            expected_outcome="等待用户处理后重试",
+            progress="等待用户处理后重试",
             is_task_done=False,
         )
 
@@ -558,13 +547,15 @@ class SoloService:
 
     @staticmethod
     def decision_dict(decision: SoloDecision) -> dict[str, Any]:
-        payload = {
+        payload: dict[str, Any] = {
             "thought_summary": decision.thought_summary,
             "action": decision.action,
             "action_args": decision.action_args,
-            "expected_outcome": decision.expected_outcome,
+            "expected_outcome": decision.progress or decision.expected_outcome,
             "is_task_done": decision.is_task_done,
         }
+        if decision.findings:
+            payload["findings"] = decision.findings
         if decision.agent_message:
             payload["agent_message"] = decision.agent_message
         return payload

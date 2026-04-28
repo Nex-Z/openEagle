@@ -20,18 +20,43 @@ Rust → 解析端口，通知前端
 
 所有 WebSocket 消息使用 **Envelope** 模式，包含 `type`、`requestId`、`conversationId`、`payload`、`timestamp` 五个字段。前端类型定义在 `src/types/protocol.ts`，后端 Pydantic 模型在 `backend/app/models.py`。
 
-### SOLO 执行流程
+### SOLO 执行流程（Agent Loop 架构）
 
 ```
 用户输入任务 → client:start_solo
-  → 截屏 + VL 规划 → SoloPlan（动作序列）
-  → 逐步执行：
-      needs_visual=true → 截屏 → VL 决策 → 执行
-      needs_visual=false → 批量直接执行（type_text, press_keys, cmd, wait）
-  → finish → VL 最终评估 → 确认完成 / replan
+  → 可选：VL 规划 → SoloPlan（建议性文本，非可执行序列）
+  → agent_loop() 观察→思考→行动循环：
+      截屏 → VL 分析截图 + 任务目标 + 已有发现 → 决策
+      → 决策动作 → 安全检查 → 执行 → 截屏 → 下一轮循环
+      → VL 判断 is_task_done → 汇总 findings → 生成最终汇报 → finish
 ```
 
-关键状态追踪在 `SoloSessionState`（`backend/app/solo_service.py`），包括步数、截图哈希、历史记录、plan 状态等。
+**核心设计原则**：SOLO 是一个 goal-driven agent，不是 rigid plan executor。VL 模型在每一步都自主推理：观察屏幕、提取信息、判断进度、决定下一步。规划（SoloPlan）仅作为建议参考，agent 可自由偏离。
+
+关键状态追踪在 `SoloSessionState`（`backend/app/solo_service.py`），包括步数、截图哈希、历史记录、findings（信息积累）等。
+
+核心循环实现在 `agent_loop()`（`backend/app/main.py`），替代了旧的 execute_plan_step + replan_and_continue + decide_and_emit_next_step 三函数组合。
+
+### SOLO 鲁棒性机制
+
+**Agent Loop 自主决策**：VL 模型在每一步都自主推理（观察→思考→行动），而非机械执行预定义计划。模型输出 `thought_summary`（分析）、`progress`（进度）、`findings`（信息提取）、`is_task_done`（完成判断）。
+
+**信息积累**：agent 在每一步可提取屏幕信息（新闻标题、搜索结果、价格等）存入 `findings`。任务完成时，findings 汇总到最终汇报中呈现给用户。
+
+**屏幕偏离检测**：VL 决策 prompt 包含「屏幕状态校验」指令，要求模型在执行前检查截图是否有弹窗/对话框/通知等意外覆盖层。偏离时优先处理偏离。
+
+**`is_task_done` 信号**：VL 模型在每次决策中输出 `is_task_done` 布尔值。agent_loop 在每步检查此信号，若为 true 则立即完成并生成最终汇报。
+
+**安全三层评估**：每个动作经过 `assess_solo_action` 评估：safe 直接执行、confirm 等待用户确认、blocked 拒绝执行。
+
+**安全护栏**：
+- 最大步数限制（150 步）
+- 连续重复动作检测（≥4 次暂停）
+- 连续截图无变化检测（≥3 次暂停）
+
+**异常不静默完成**：VL 调用异常时，暂停会话并报告错误，不再静默标记完成。
+
+**完成汇报**：`_build_final_report` 汇总 agent_message + findings + 步数统计，生成结构化的最终汇报。
 
 ### 安全模型
 
@@ -90,16 +115,17 @@ Rust → 解析端口，通知前端
 
 ### 新增动作
 
-1. 在 `backend/app/solo_service.py` 的 `BATCH_EXECUTABLE_ACTIONS` 中声明是否为批量可执行
-2. 在 `backend/app/solo_executor.py` 添加执行逻辑（`execute_action` 或 `execute_batch_action`）
-3. 在 `backend/app/safety.py` 的 `assess_solo_action` 中添加风险评估
-4. 在 `backend/app/prompts.py` 的 action 枚举描述中添加说明
+1. 在 `backend/app/solo_executor.py` 添加执行逻辑（`execute_action`）
+2. 在 `backend/app/safety.py` 的 `assess_solo_action` 中添加风险评估
+3. 在 `backend/app/prompts.py` 的 action 枚举描述中添加说明
 
 ### Prompt 修改原则
 
 - 所有 prompt 在 `backend/app/prompts.py` 中集中管理
 - SOLO decision prompt 要求模型输出结构化 JSON，字段定义在 prompt 中说明
-- 修改 prompt 后需要验证 JSON 解析兼容性（`SoloService.parse_decision`）
+- 修改 prompt 后需要验证 JSON 解析兼容性（`SoloService._normalize_decision`）
+- `build_solo_decision_prompt` 包含屏幕状态校验指令和 findings 参数
+- `solo_decision_instructions` 定义 agent 的身份、输出格式、决策优先级和完成判定标准
 
 ## 工具扩展规范
 
