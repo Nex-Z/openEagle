@@ -369,7 +369,22 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             )
 
             # ━━ STEP 2: Check completion ━━
-            if decision.is_task_done or decision.action == "finish":
+            # Guard: reject premature is_task_done if the agent hasn't made real progress yet.
+            # After passive actions (wait/screenshot) with no findings and few steps,
+            # the VL model sometimes hallucinates completion because the screen didn't change.
+            premature_finish = False
+            if decision.is_task_done and decision.action != "finish":
+                passive_actions = {"wait", "screenshot"}
+                last_was_passive = session.last_action in passive_actions
+                no_findings = not session.findings
+                if last_was_passive and no_findings and session.step_count < 5:
+                    premature_finish = True
+                    slog(
+                        f"request={session.request_id} rejecting premature is_task_done "
+                        f"after passive action={session.last_action} step={session.step_count}"
+                    )
+
+            if (decision.is_task_done or decision.action == "finish") and not premature_finish:
                 report = _build_final_report(session, decision)
                 session.state = "completed"
                 session.completed_at = utc_now()
@@ -384,6 +399,13 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     {"content": f"**SOLO 任务已完成。**\n\n{report}"},
                 )
                 return
+
+            # If premature finish was rejected, override with a screenshot to get fresh state
+            if premature_finish:
+                decision = solo_service._fallback_decision_from_text(
+                    "premature finish rejected", ValueError("premature is_task_done after passive action")
+                )
+                # decision.action is "screenshot" — will be executed normally below
 
             # ━━ STEP 3: Safety checks ━━
             assessment = assess_solo_action(decision.action, decision.action_args, workspace_root)
