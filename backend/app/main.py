@@ -20,8 +20,6 @@ from .models import (
     MessagePayload,
     SoloConfirmationPayload,
     SoloControlPayload,
-    SoloPlanItemPayload,
-    SoloPlanStatusPayload,
     SoloStartPayload,
     SoloStatusPayload,
     SoloStepPayload,
@@ -34,7 +32,7 @@ from .runtime_state import RuntimeState
 from .safety import assess_solo_action
 from .solo_executor import SoloExecutor
 from .solo_run_logger import SoloRunLogger
-from .solo_service import SoloPlan, SoloService, SoloSessionState, summarize_solo_step_result
+from .solo_service import SoloService, SoloSessionState, summarize_solo_step_result
 from .solo_toolkit import SoloToolkit
 
 app = FastAPI(title="openEagle Agent Backend")
@@ -259,35 +257,6 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             {"confirmation": payload},
         )
 
-    async def emit_solo_plan(
-        session: SoloSessionState,
-    ) -> None:
-        plan = session.current_plan
-        if not plan:
-            return
-        items = []
-        for idx, step_desc in enumerate(plan.key_steps):
-            items.append(
-                SoloPlanItemPayload(
-                    index=idx,
-                    action="advisory",
-                    description=step_desc,
-                    status="pending",
-                )
-            )
-        payload = SoloPlanStatusPayload(
-            items=items,
-            taskAnalysis=plan.task_analysis,
-            alternative=plan.suggested_approach,
-            agentMessage=plan.agent_message,
-            replanCount=0,
-        ).model_dump(by_alias=True)
-        await safe_send(
-            "server:solo_plan",
-            session.request_id,
-            session.conversation_id,
-            {"plan": payload},
-        )
 
     def _build_final_report(session: SoloSessionState, decision: "SoloDecision | None" = None) -> str:
         lines: list[str] = []
@@ -815,69 +784,37 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     active_solo.detail = "首帧截图失败，无法启动 SOLO。"
                     await emit_solo_status(active_solo)
                 else:
-                    async def _plan_and_start() -> None:
+                    async def _start_agent() -> None:
                         nonlocal solo_service
                         if solo_service is None or not is_solo_running(active_solo):
                             return
                         try:
-                            await emit_solo_trace(
-                                active_solo,
-                                "planning",
-                                "started",
-                                "正在分析任务并制定执行建议...",
-                            )
-                            await emit_solo_status(active_solo)
-                            app_context = _infer_app_context(active_solo.task)
-                            plan = await solo_service.decide_plan(
-                                task=active_solo.task,
-                                screenshot_path=active_solo.last_screenshot_path,
-                                display_index=active_solo.display_index,
-                                app_context=app_context,
-                            )
-                            if not is_solo_running(active_solo):
-                                return
-                            active_solo.current_plan = plan
-                            if plan.agent_message:
-                                active_solo.last_agent_message = plan.agent_message
-                            active_solo.detail = f"规划完成，建议 {len(plan.key_steps)} 个关键步骤。"
                             slog(
-                                f"request={active_solo.request_id} plan_ready "
-                                f"steps={len(plan.key_steps)} analysis={plan.task_analysis[:100]}"
+                                f"request={active_solo.request_id} agent_loop starting "
+                                f"task={active_solo.task[:100]}"
                             )
                             solo_logger.write(
-                                "plan",
-                                {
-                                    "taskAnalysis": plan.task_analysis,
-                                    "suggestedApproach": plan.suggested_approach,
-                                    "estimatedSteps": plan.estimated_steps,
-                                    "keySteps": plan.key_steps,
-                                    "agentMessage": plan.agent_message,
-                                },
+                                "agent_start",
+                                {"task": active_solo.task},
                             )
                             await emit_solo_trace(
                                 active_solo,
-                                "planning",
-                                "completed",
-                                f"执行建议已制定: {len(plan.key_steps)} 个关键步骤",
-                                params={
-                                    "taskAnalysis": plan.task_analysis,
-                                    "suggestedApproach": plan.suggested_approach,
-                                    "agentMessage": plan.agent_message,
-                                },
+                                "agent",
+                                "started",
+                                "Agent 开始自主决策执行任务...",
                             )
                             await emit_solo_status(active_solo)
-                            await emit_solo_plan(active_solo)
                             await agent_loop(active_solo, active_solo.last_screenshot_path)
                         except Exception as exc:  # noqa: BLE001
                             if not is_solo_running(active_solo):
                                 return
                             active_solo.state = "error"
-                            active_solo.detail = f"规划失败: {exc}"
-                            slog(f"request={active_solo.request_id} planning error={exc}")
+                            active_solo.detail = f"Agent 启动失败: {exc}"
+                            slog(f"request={active_solo.request_id} agent_start error={exc}")
                             solo_logger.write("error", {"reason": active_solo.detail})
                             await emit_solo_status(active_solo)
 
-                    schedule_solo_task(_plan_and_start())
+                    schedule_solo_task(_start_agent())
                 continue
 
             if envelope.type == "client:solo_control":

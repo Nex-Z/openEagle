@@ -24,18 +24,17 @@ Rust → 解析端口，通知前端
 
 ```
 用户输入任务 → client:start_solo
-  → 可选：VL 规划 → SoloPlan（建议性文本，非可执行序列）
-  → agent_loop() 观察→思考→行动循环：
-      截屏 → VL 分析截图 + 任务目标 + 已有发现 → 决策
+  → 截屏 → agent_loop() 观察→思考→行动循环：
+      VL 分析截图 + 任务目标 + 已有发现 → 决策
       → 决策动作 → 安全检查 → 执行 → 截屏 → 下一轮循环
       → VL 判断 is_task_done → 汇总 findings → 生成最终汇报 → finish
 ```
 
-**核心设计原则**：SOLO 是一个 goal-driven agent，不是 rigid plan executor。VL 模型在每一步都自主推理：观察屏幕、提取信息、判断进度、决定下一步。规划（SoloPlan）仅作为建议参考，agent 可自由偏离。
+**核心设计原则**：SOLO 是一个 goal-driven agent，不是 plan executor。VL 模型在每一步都自主推理：观察屏幕、提取信息、判断进度、决定下一步。没有预定义计划，agent 完全自主决策。
 
 关键状态追踪在 `SoloSessionState`（`backend/app/solo_service.py`），包括步数、截图哈希、历史记录、findings（信息积累）等。
 
-核心循环实现在 `agent_loop()`（`backend/app/main.py`），替代了旧的 execute_plan_step + replan_and_continue + decide_and_emit_next_step 三函数组合。
+核心循环实现在 `agent_loop()`（`backend/app/main.py`）。
 
 ### SOLO 鲁棒性机制
 

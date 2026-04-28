@@ -22,8 +22,6 @@ from .prompts import (
     build_solo_decision_prompt,
     build_solo_repair_prompt,
     solo_decision_instructions,
-    solo_planning_instructions,
-    solo_planning_prompt,
 )
 from .safety import assess_solo_action
 
@@ -216,21 +214,6 @@ class SoloDecision(BaseModel):
     }
 
 
-class SoloPlanAction(BaseModel):
-    action: str
-    action_args: dict[str, Any] = Field(default_factory=dict)
-    description: str = ""
-    needs_visual: bool = True
-
-
-class SoloPlan(BaseModel):
-    task_analysis: str = ""
-    suggested_approach: str = ""
-    key_steps: list[str] = Field(default_factory=list)
-    estimated_steps: int = 0
-    agent_message: str = ""
-
-
 @dataclass
 class SoloSessionState:
     request_id: str
@@ -253,7 +236,6 @@ class SoloSessionState:
     pending_confirmation: dict[str, Any] | None = None
     log_path: str | None = None
     display_index: int | None = None
-    current_plan: SoloPlan | None = None
     last_agent_message: str | None = None
 
 
@@ -289,31 +271,6 @@ class SoloService:
             instructions=solo_decision_instructions(current_system_platform()),
         )
         return self._agent
-
-    def _build_planning_agent(self) -> Agent:
-        api_key = self._agent_config.vl_api_key
-        if not api_key:
-            raise ValueError("SOLO 需要配置 VL API Key。")
-
-        if self._agent_config.vl_provider == "openai-like":
-            if not self._agent_config.vl_base_url:
-                raise ValueError("VL provider 为 openai-like 时需要配置 vlBaseUrl。")
-            model = OpenAILike(
-                id=self.model_id,
-                api_key=api_key,
-                base_url=self._agent_config.vl_base_url,
-            )
-        else:
-            model = OpenAIResponses(
-                id=self.model_id,
-                api_key=api_key,
-            )
-
-        return Agent(
-            model=model,
-            markdown=False,
-            instructions=solo_planning_instructions(current_system_platform()),
-        )
 
     @staticmethod
     def is_batch_executable(action: str) -> bool:
@@ -402,51 +359,6 @@ class SoloService:
         decision.model_image_height = model_image.get("model_height")
         decision.model_image_scale = model_image.get("scale")
         return decision
-
-    def _fallback_plan(self, task: str, error: Exception) -> SoloPlan:
-        return SoloPlan(
-            task_analysis=f"规划失败: {error}",
-            suggested_approach="逐步观察屏幕并执行",
-            key_steps=["观察当前屏幕状态", "根据任务目标逐步操作"],
-            estimated_steps=5,
-            agent_message=f"自动规划失败，将切换为逐步执行模式。原因: {error}",
-        )
-
-    async def decide_plan(
-        self,
-        task: str,
-        screenshot_path: str,
-        display_index: int | None = None,
-        app_context: str | None = None,
-    ) -> SoloPlan:
-        agent = self._build_planning_agent()
-        prompt = solo_planning_prompt(task, display_index, app_context)
-        model_image = prepare_model_image(screenshot_path)
-        model_image_path = Path(model_image["path"])
-        image_url = encode_image_data_url(model_image_path, str(model_image["mime_type"]))
-        if model_image.get("compressed"):
-            try:
-                model_image_path.unlink(missing_ok=True)
-            except OSError:
-                pass
-        started_at = time.perf_counter()
-        result = await agent.arun(
-            prompt,
-            images=[AgnoImage(url=image_url, detail="auto")],
-        )
-        elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-        output_text = self._result_text(result)
-        if not isinstance(output_text, str) or not output_text.strip():
-            return self._fallback_plan(task, ValueError("VL 规划返回为空"))
-        try:
-            payload_text = self._extract_json(output_text)
-            payload = json.loads(payload_text)
-            plan = SoloPlan.model_validate(payload)
-            return plan
-        except Exception as exc:
-            if self._should_attempt_json_repair(output_text):
-                return self._fallback_plan(task, exc)
-            return self._fallback_plan(task, exc)
 
     async def decide_next(
         self,
