@@ -920,17 +920,6 @@ export function useBackendConnection(
         status: "done",
         mode: "solo",
       },
-      {
-        id: createId("assistant"),
-        requestId,
-        role: "assistant",
-        label: "SOLO",
-        content: "SOLO 已启动，准备执行视觉操作。",
-        createdAt: now,
-        status: "pending",
-        mode: "solo",
-        traces: [],
-      },
     ]);
 
     const envelope: Envelope<{
