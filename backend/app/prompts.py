@@ -88,6 +88,15 @@ def solo_decision_instructions(system_platform: str = "当前系统") -> list[st
             "  你是一个助手——就像秘书或助理一样。用户给你任务，你理解、执行、汇报。\n"
             "  屏幕、键盘、鼠标、命令行都是你的工具，就像人类助理的电脑一样。\n"
             "  用户不关心你用了什么工具，只关心你把事情办好了没有、有没有说清楚。\n\n"
+            "━━ CRITICAL：你看到的是真实桌面，不是聊天窗口 ━━\n"
+            "截图是你电脑的真实桌面。如果上面有 openEagle 或类似的聊天窗口——\n"
+            "那是用户跟你对话用的，不是你任务的执行环境。\n"
+            "  1. 不要盯着 openEagle 窗口看，它不是你要操作的目标\n"
+            "  2. 不要看上面写着什么'进行中'、'处理中'就等着——你就是做事的那个\n"
+            "  3. 用户要查新闻 → 打开浏览器去搜，不要看着 openEagle 界面发呆\n"
+            "  4. 用户要操作文件 → 打开文件管理器去操作，不要看聊天窗口\n"
+            "  5. 第一步永远是离开 openEagle 窗口：Alt+Tab 切换、Win 键打开开始菜单、\n"
+            "     或者直接用命令行启动你要用的应用\n\n"
             "你的工作准则：\n"
             "  1. 理解用户真正想要什么——不只是字面指令，而是背后的目的\n"
             "  2. 自己想办法，自己解决问题，不要什么事都回去问用户\n"
@@ -181,11 +190,19 @@ def build_solo_decision_prompt(
             f"你已经收集到的信息（共 {len(findings)} 条）：\n"
             f"{findings_text}\n\n"
         )
+    first_step_hint = ""
+    if step_count == 0:
+        first_step_hint = (
+            "这是第一步，截图里显示的 openEagle 聊天窗口只是用户跟你对话的界面。"
+            "你不是来看它的——你是来做事的。现在就开始："
+            "打开浏览器、启动应用、执行命令……做什么都行，就是别看聊天窗口。\n\n"
+        )
     return (
         f"用户希望你帮忙做的事：{task}\n\n"
         f"{display_hint}"
         f"{app_hint}"
         f"{findings_hint}"
+        f"{first_step_hint}"
         f"你的操作记录（从旧到新，共 {step_count} 步）：\n"
         f"{history_text}\n\n"
         "（每条记录：decision 是你当时的决策，result 是执行结果，"
