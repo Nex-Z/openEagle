@@ -546,6 +546,20 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     },
                 )
                 report = _build_final_report(session, decision)
+                # Emit final step so the report appears as a regular chat message
+                # (same display as intermediate steps via appendSoloMessage).
+                await emit_solo_step(
+                    session,
+                    step_index=session.step_count + 1,
+                    action="finish",
+                    action_args={},
+                    thought_summary=decision.thought_summary,
+                    expected_outcome=decision.progress or decision.expected_outcome or report,
+                    agent_message=report,
+                    findings=decision.findings or session.findings or None,
+                    confidence=decision.confidence,
+                    screen_state=decision.screen_state,
+                )
                 session.state = "completed"
                 session.completed_at = utc_now()
                 session.detail = "SOLO 任务完成。"
@@ -553,14 +567,6 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 solo_logger.write("completed", {"step": session.step_count, "source": "agent_loop"})
                 await emit_solo_plan(session, solo_kernel)
                 await emit_solo_status(session)
-                # Send with a fresh requestId so the frontend appends a new chat message
-                # instead of upserting into an existing solo step message.
-                await safe_send(
-                    "server:message",
-                    f"{session.request_id}-done",
-                    session.conversation_id,
-                    {"content": report},
-                )
                 return
 
             planned_actions = [
