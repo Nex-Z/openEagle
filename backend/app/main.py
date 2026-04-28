@@ -369,19 +369,25 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             )
 
             # ━━ STEP 2: Check completion ━━
-            # Guard: reject premature is_task_done if the agent hasn't made real progress yet.
-            # After passive actions (wait/screenshot) with no findings and few steps,
-            # the VL model sometimes hallucinates completion because the screen didn't change.
+            # Guards: reject premature is_task_done if the agent hasn't made real progress.
             premature_finish = False
             if decision.is_task_done and decision.action != "finish":
-                passive_actions = {"wait", "screenshot"}
-                last_was_passive = session.last_action in passive_actions
                 no_findings = not session.findings
-                if last_was_passive and no_findings and session.step_count < 5:
+                # Guard 1: passive actions (wait/screenshot) with no findings — model hallucinates
+                # completion because the screen didn't change after a no-op.
+                if session.last_action in {"wait", "screenshot"} and no_findings and session.step_count < 5:
                     premature_finish = True
                     slog(
                         f"request={session.request_id} rejecting premature is_task_done "
                         f"after passive action={session.last_action} step={session.step_count}"
+                    )
+                # Guard 2: execute_command returned data but agent never extracted findings.
+                # The raw output is in history but the agent didn't translate it for the user.
+                if session.last_action == "execute_command" and no_findings and session.step_count < 10:
+                    premature_finish = True
+                    slog(
+                        f"request={session.request_id} rejecting premature is_task_done "
+                        f"after execute_command with no findings step={session.step_count}"
                     )
 
             if (decision.is_task_done or decision.action == "finish") and not premature_finish:
