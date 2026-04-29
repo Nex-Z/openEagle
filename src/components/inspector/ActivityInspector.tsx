@@ -364,20 +364,33 @@ export function ActivityInspector(props: ActivityInspectorProps) {
                 </div>
                 <div className="asset-list">
                   {assets.length > 0 ? (
-                    assets.map((asset) => (
-                      <figure key={asset.id} className="asset-card">
-                        <img
-                          alt={asset.label}
-                          loading="lazy"
-                          src={imageDataUrls[asset.imagePath] ?? convertFileSrc(asset.imagePath)}
-                          onClick={() => setPreviewImage(imageDataUrls[asset.imagePath] ?? convertFileSrc(asset.imagePath))}
-                        />
-                        <figcaption>
-                          <strong>{asset.label}</strong>
-                          <span>{new Date(asset.createdAt).toLocaleTimeString()}</span>
-                        </figcaption>
-                      </figure>
-                    ))
+                    assets.map((asset) => {
+                      const dataUrl = imageDataUrls[asset.imagePath];
+                      const fileSrc = convertFileSrc(asset.imagePath);
+                      const src = dataUrl || fileSrc;
+                      return (
+                        <figure key={asset.id} className="asset-card">
+                          <img
+                            alt={asset.label}
+                            loading="lazy"
+                            src={src}
+                            onClick={() => src && setPreviewImage(src)}
+                            onError={(e) => {
+                              e.currentTarget.style.display = "none";
+                              const fallback = e.currentTarget.nextElementSibling as HTMLElement | null;
+                              if (fallback) fallback.style.display = "flex";
+                            }}
+                          />
+                          <div className="asset-card-fallback" style={{ display: "none" }}>
+                            图片不可用
+                          </div>
+                          <figcaption>
+                            <strong>{asset.label}</strong>
+                            <span>{new Date(asset.createdAt).toLocaleTimeString()}</span>
+                          </figcaption>
+                        </figure>
+                      );
+                    })
                   ) : (
                     <div className="trace-empty">还没有截图素材。</div>
                   )}
