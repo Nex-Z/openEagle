@@ -14,7 +14,11 @@ use regex::Regex;
 use screenshots::Screen;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use tauri::{AppHandle, Emitter, Manager, RunEvent, State, WebviewUrl, WebviewWindowBuilder};
+use tauri::{
+    AppHandle, Emitter, Manager, PhysicalPosition, RunEvent, State, WebviewUrl,
+    WebviewWindowBuilder,
+};
+use tauri_plugin_notification::NotificationExt;
 use tauri_plugin_shell::{
     process::{CommandChild, CommandEvent},
     ShellExt,
@@ -24,6 +28,10 @@ const BACKEND_EVENT: &str = "backend://status";
 const READY_PATTERN: &str = r"\[AGENT_READY\]\s+WS_PORT:\s+(\d+)";
 const SIDECAR_NAME: &str = "binaries/open-eagle-agent";
 const SOLO_OVERLAY_LABEL: &str = "solo_overlay";
+const SOLO_OVERLAY_WIDTH: f64 = 420.0;
+const SOLO_OVERLAY_HEIGHT: f64 = 260.0;
+const SOLO_OVERLAY_MARGIN: i32 = 18;
+const SOLO_OVERLAY_TERMINAL_HIDE_MS: u64 = 3500;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -108,7 +116,7 @@ struct ActionPayload {
     screen_height: Option<f64>,
 }
 
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Clone, Deserialize, Serialize)]
 #[serde(rename_all = "camelCase")]
 struct OverlayPayload {
     title: Option<String>,
@@ -116,6 +124,19 @@ struct OverlayPayload {
     step_text: Option<String>,
     history_text: Option<String>,
     state: Option<String>,
+    step_count: Option<u32>,
+    max_steps: Option<u32>,
+    last_action: Option<String>,
+    confirmation_action: Option<String>,
+    confirmation_reason: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SoloResultNotificationPayload {
+    request_id: Option<String>,
+    state: String,
+    detail: Option<String>,
 }
 
 #[tauri::command]
@@ -127,7 +148,9 @@ fn get_backend_state(state: State<'_, Arc<BackendRuntime>>) -> BackendStatePaylo
 fn capture_screenshot() -> Result<ScreenshotResult, String> {
     println!("[SOLO/RUST] capture_screenshot",);
     let screens = Screen::all().map_err(|err| format!("failed to enumerate screens: {err}"))?;
-    let screen = screens.first().ok_or_else(|| "no screen found".to_string())?;
+    let screen = screens
+        .first()
+        .ok_or_else(|| "no screen found".to_string())?;
     let image = screen
         .capture()
         .map_err(|err| format!("failed to capture screenshot: {err}"))?;
@@ -149,12 +172,14 @@ fn capture_screenshot() -> Result<ScreenshotResult, String> {
 
 #[tauri::command]
 fn read_image_data_url(path: String) -> Result<String, String> {
-    let target = PathBuf::from(path);
+    // Normalize POSIX paths (from Python) to OS-native paths.
+    let normalized = path.replace('/', std::path::MAIN_SEPARATOR_STR);
+    let target = PathBuf::from(&normalized);
     if !target.exists() {
-        return Err("image file does not exist".to_string());
+        return Err(format!("image file does not exist: {path}"));
     }
     if !target.is_file() {
-        return Err("image path is not a file".to_string());
+        return Err(format!("image path is not a file: {path}"));
     }
     let bytes = fs::read(&target).map_err(|err| format!("failed to read image: {err}"))?;
     let ext = target
@@ -294,34 +319,98 @@ fn perform_keyboard_action(payload: Value) -> Result<Value, String> {
     }))
 }
 
+fn normalize_overlay_payload(payload: OverlayPayload) -> OverlayPayload {
+    OverlayPayload {
+        title: Some(
+            payload
+                .title
+                .unwrap_or_else(|| "SOLO 正在执行桌面操作".to_string()),
+        ),
+        detail: Some(
+            payload
+                .detail
+                .unwrap_or_else(|| "请保持桌面可见，可随时暂停或结束。".to_string()),
+        ),
+        step_text: Some(
+            payload
+                .step_text
+                .unwrap_or_else(|| "等待步骤更新".to_string()),
+        ),
+        history_text: Some(payload.history_text.unwrap_or_default()),
+        state: Some(payload.state.unwrap_or_else(|| "running".to_string())),
+        step_count: Some(payload.step_count.unwrap_or(0)),
+        max_steps: Some(payload.max_steps.unwrap_or(100)),
+        last_action: payload.last_action,
+        confirmation_action: payload.confirmation_action,
+        confirmation_reason: payload.confirmation_reason,
+    }
+}
+
+fn apply_solo_overlay_state(
+    window: &tauri::WebviewWindow,
+    payload: &OverlayPayload,
+) -> Result<(), String> {
+    let serialized = serde_json::to_string(payload).map_err(|err| err.to_string())?;
+    let script = format!("window.__SOLO_OVERLAY__={serialized};");
+    let _ = window.eval(&script);
+    let _ = window.emit("solo://overlay_state", payload.clone());
+    Ok(())
+}
+
+fn position_solo_overlay(window: &tauri::WebviewWindow) {
+    let monitor = window
+        .current_monitor()
+        .ok()
+        .flatten()
+        .or_else(|| window.primary_monitor().ok().flatten());
+    if let Some(monitor) = monitor {
+        let work_area = monitor.work_area();
+        let width = SOLO_OVERLAY_WIDTH.round() as i32;
+        let height = SOLO_OVERLAY_HEIGHT.round() as i32;
+        let x = work_area.position.x + work_area.size.width as i32 - width - SOLO_OVERLAY_MARGIN;
+        let y = work_area.position.y + work_area.size.height as i32 - height - SOLO_OVERLAY_MARGIN;
+        let _ = window.set_position(PhysicalPosition::new(
+            x.max(work_area.position.x),
+            y.max(work_area.position.y),
+        ));
+    }
+}
+
+fn keep_solo_overlay_passive(window: &tauri::WebviewWindow) {
+    let _ = window.set_ignore_cursor_events(true);
+}
+
+fn schedule_terminal_overlay_hide(app: AppHandle, state: Option<String>) {
+    if !matches!(state.as_deref(), Some("completed" | "aborted")) {
+        return;
+    }
+
+    tauri::async_runtime::spawn(async move {
+        tokio::time::sleep(Duration::from_millis(SOLO_OVERLAY_TERMINAL_HIDE_MS)).await;
+        let _ = hide_solo_overlay(app);
+    });
+}
+
 #[tauri::command]
 fn show_solo_overlay(app: AppHandle, payload: OverlayPayload) -> Result<Value, String> {
-    let title = payload
-        .title
-        .unwrap_or_else(|| "SOLO 正在执行桌面操作".to_string());
-    let detail = payload
-        .detail
-        .unwrap_or_else(|| "请保持桌面可见，可随时暂停或结束".to_string());
-    let step_text = payload
-        .step_text
-        .unwrap_or_else(|| "等待步骤更新".to_string());
-    let history_text = payload.history_text.unwrap_or_default();
-    let state = payload.state.unwrap_or_else(|| "running".to_string());
-    println!("[SOLO/RUST] show_solo_overlay state={state}");
+    let payload = normalize_overlay_payload(payload);
+    println!(
+        "[SOLO/RUST] show_solo_overlay state={}",
+        payload
+            .state
+            .clone()
+            .unwrap_or_else(|| "unknown".to_string())
+    );
 
     if app.get_webview_window(SOLO_OVERLAY_LABEL).is_none() {
+        let serialized = serde_json::to_string(&payload).map_err(|err| err.to_string())?;
         let init_script = format!(
-            r#"window.__OPEN_EAGLE_SOLO_OVERLAY__=true;window.__SOLO_OVERLAY__={{title:{},detail:{},step:{},history:{},state:{}}};"#,
-            serde_json::to_string(&title).map_err(|err| err.to_string())?,
-            serde_json::to_string(&detail).map_err(|err| err.to_string())?,
-            serde_json::to_string(&step_text).map_err(|err| err.to_string())?,
-            serde_json::to_string(&history_text).map_err(|err| err.to_string())?,
-            serde_json::to_string(&state).map_err(|err| err.to_string())?,
+            "window.__OPEN_EAGLE_SOLO_OVERLAY__=true;window.__SOLO_OVERLAY__={serialized};"
         );
         let window = WebviewWindowBuilder::new(
             &app,
             SOLO_OVERLAY_LABEL,
-            WebviewUrl::App("index.html?overlay=solo".into()),
+            WebviewUrl::App("solo-overlay.html".into()),
         )
         .title("SOLO Overlay")
         .always_on_top(true)
@@ -330,35 +419,23 @@ fn show_solo_overlay(app: AppHandle, payload: OverlayPayload) -> Result<Value, S
         .skip_taskbar(true)
         .resizable(false)
         .focused(false)
-        .inner_size(420.0, 280.0)
+        .inner_size(SOLO_OVERLAY_WIDTH, SOLO_OVERLAY_HEIGHT)
         .initialization_script(&init_script)
         .build()
         .map_err(|err| format!("failed to create overlay window: {err}"))?;
-        let script = format!(
-            r#"window.__SOLO_OVERLAY__={{title:{},detail:{},step:{},history:{},state:{}}};"#,
-            serde_json::to_string(&title).map_err(|err| err.to_string())?,
-            serde_json::to_string(&detail).map_err(|err| err.to_string())?,
-            serde_json::to_string(&step_text).map_err(|err| err.to_string())?,
-            serde_json::to_string(&history_text).map_err(|err| err.to_string())?,
-            serde_json::to_string(&state).map_err(|err| err.to_string())?,
-        );
-        let _ = window.eval(&script);
-        let _ = window.emit("solo://overlay_state", json!({"title": title, "detail": detail, "step": step_text, "history": history_text, "state": state}));
+        position_solo_overlay(&window);
+        keep_solo_overlay_passive(&window);
+        apply_solo_overlay_state(&window, &payload)?;
+        schedule_terminal_overlay_hide(app, payload.state.clone());
         return Ok(json!({"ok": true}));
     }
 
     if let Some(window) = app.get_webview_window(SOLO_OVERLAY_LABEL) {
-        let script = format!(
-            r#"window.__SOLO_OVERLAY__={{title:{},detail:{},step:{},history:{},state:{}}};"#,
-            serde_json::to_string(&title).map_err(|err| err.to_string())?,
-            serde_json::to_string(&detail).map_err(|err| err.to_string())?,
-            serde_json::to_string(&step_text).map_err(|err| err.to_string())?,
-            serde_json::to_string(&history_text).map_err(|err| err.to_string())?,
-            serde_json::to_string(&state).map_err(|err| err.to_string())?,
-        );
-        let _ = window.eval(&script);
+        position_solo_overlay(&window);
+        keep_solo_overlay_passive(&window);
+        apply_solo_overlay_state(&window, &payload)?;
         let _ = window.show();
-        let _ = window.emit("solo://overlay_state", json!({"title": title, "detail": detail, "step": step_text, "history": history_text, "state": state}));
+        schedule_terminal_overlay_hide(app, payload.state.clone());
     }
     Ok(json!({"ok": true}))
 }
@@ -368,27 +445,15 @@ fn update_solo_overlay(app: AppHandle, payload: OverlayPayload) -> Result<Value,
     if let Some(window) = app.get_webview_window(SOLO_OVERLAY_LABEL) {
         println!(
             "[SOLO/RUST] update_solo_overlay state={}",
-            payload.state.clone().unwrap_or_else(|| "unknown".to_string())
+            payload
+                .state
+                .clone()
+                .unwrap_or_else(|| "unknown".to_string())
         );
-        let script = format!(
-            r#"window.__SOLO_OVERLAY__={{title:{},detail:{},step:{},history:{},state:{}}};"#,
-            serde_json::to_string(&payload.title).map_err(|err| err.to_string())?,
-            serde_json::to_string(&payload.detail).map_err(|err| err.to_string())?,
-            serde_json::to_string(&payload.step_text).map_err(|err| err.to_string())?,
-            serde_json::to_string(&payload.history_text).map_err(|err| err.to_string())?,
-            serde_json::to_string(&payload.state).map_err(|err| err.to_string())?,
-        );
-        let _ = window.eval(&script);
-        let _ = window.emit(
-            "solo://overlay_state",
-            json!({
-                "title": payload.title,
-                "detail": payload.detail,
-                "step": payload.step_text,
-                "history": payload.history_text,
-                "state": payload.state,
-            }),
-        );
+        position_solo_overlay(&window);
+        keep_solo_overlay_passive(&window);
+        apply_solo_overlay_state(&window, &payload)?;
+        schedule_terminal_overlay_hide(app, payload.state.clone());
     }
     Ok(json!({"ok": true}))
 }
@@ -401,6 +466,75 @@ fn hide_solo_overlay(app: AppHandle) -> Result<Value, String> {
         let _ = window.close();
     }
     Ok(json!({"ok": true}))
+}
+
+#[tauri::command]
+fn focus_main_window(app: AppHandle) -> Result<Value, String> {
+    let window = app
+        .get_webview_window("main")
+        .ok_or_else(|| "main window not found".to_string())?;
+    let _ = window.show();
+    let _ = window.unminimize();
+    window
+        .set_focus()
+        .map_err(|err| format!("failed to focus main window: {err}"))?;
+    Ok(json!({"ok": true}))
+}
+
+fn solo_notification_title(state: &str) -> &str {
+    match state {
+        "completed" => "SOLO 已完成",
+        "aborted" => "SOLO 已结束",
+        "error" => "SOLO 执行失败",
+        _ => "SOLO 状态更新",
+    }
+}
+
+fn sanitize_notification_body(detail: Option<String>) -> String {
+    let raw = detail
+        .map(|value| value.replace('\r', " ").replace('\n', " "))
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "返回 openEagle 查看执行结果。".to_string());
+    let path_pattern = Regex::new(r"([A-Za-z]:\\[^\s]+|/[^\s]+)").ok();
+    let sanitized = path_pattern
+        .map(|pattern| pattern.replace_all(&raw, "[路径]").to_string())
+        .unwrap_or(raw);
+    let trimmed = sanitized.trim();
+    if trimmed.chars().count() <= 180 {
+        return trimmed.to_string();
+    }
+    let mut body = trimmed.chars().take(180).collect::<String>();
+    body.push('…');
+    body
+}
+
+#[tauri::command]
+fn notify_solo_result(
+    app: AppHandle,
+    payload: SoloResultNotificationPayload,
+) -> Result<Value, String> {
+    let main_focused = app
+        .get_webview_window("main")
+        .and_then(|window| window.is_focused().ok())
+        .unwrap_or(false);
+    if main_focused {
+        return Ok(json!({"ok": true, "notified": false, "reason": "main_focused"}));
+    }
+
+    let title = solo_notification_title(&payload.state);
+    let body = sanitize_notification_body(payload.detail);
+    app.notification()
+        .builder()
+        .title(title)
+        .body(&body)
+        .show()
+        .map_err(|err| format!("failed to show notification: {err}"))?;
+
+    Ok(json!({
+        "ok": true,
+        "notified": true,
+        "requestId": payload.request_id,
+    }))
 }
 
 fn set_state(app: &AppHandle, runtime: &Arc<BackendRuntime>, next: BackendStatePayload) {
@@ -425,12 +559,19 @@ fn backend_root() -> PathBuf {
 }
 
 fn backend_python() -> PathBuf {
-    backend_root().join(".venv").join("Scripts").join("python.exe")
+    backend_root()
+        .join(".venv")
+        .join("Scripts")
+        .join("python.exe")
 }
 
 fn spawn_backend(app: AppHandle) {
     let runtime = app.state::<Arc<BackendRuntime>>().inner().clone();
-    set_state(&app, &runtime, BackendStatePayload::starting("Starting Python backend"));
+    set_state(
+        &app,
+        &runtime,
+        BackendStatePayload::starting("Starting Python backend"),
+    );
 
     tauri::async_runtime::spawn(async move {
         let command = if cfg!(debug_assertions) {
@@ -466,7 +607,9 @@ fn spawn_backend(app: AppHandle) {
                     set_state(
                         &app,
                         &runtime,
-                        BackendStatePayload::error(format!("Failed to create sidecar command: {error}")),
+                        BackendStatePayload::error(format!(
+                            "Failed to create sidecar command: {error}"
+                        )),
                     );
                     return;
                 }
@@ -501,7 +644,9 @@ fn spawn_backend(app: AppHandle) {
                 set_state(
                     &timeout_app,
                     &timeout_runtime,
-                    BackendStatePayload::error("Backend handshake timed out before a port was reported"),
+                    BackendStatePayload::error(
+                        "Backend handshake timed out before a port was reported",
+                    ),
                 );
             }
         });
@@ -528,7 +673,9 @@ fn spawn_backend(app: AppHandle) {
                             set_state(
                                 &app,
                                 &runtime,
-                                BackendStatePayload::starting(format!("Backend boot output: {text}")),
+                                BackendStatePayload::starting(format!(
+                                    "Backend boot output: {text}"
+                                )),
                             );
                         }
                     }
@@ -569,6 +716,7 @@ fn main() {
 
     let app = tauri::Builder::default()
         .manage(runtime)
+        .plugin(tauri_plugin_notification::init())
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             get_backend_state,
@@ -578,7 +726,9 @@ fn main() {
             perform_keyboard_action,
             show_solo_overlay,
             update_solo_overlay,
-            hide_solo_overlay
+            hide_solo_overlay,
+            focus_main_window,
+            notify_solo_result
         ])
         .setup(|app| {
             spawn_backend(app.handle().clone());

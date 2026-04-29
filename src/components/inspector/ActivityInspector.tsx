@@ -94,7 +94,10 @@ export function ActivityInspector(props: ActivityInspectorProps) {
         try {
           const dataUrl = await invoke<string>("read_image_data_url", { path });
           return { path, dataUrl };
-        } catch {
+        } catch (err) {
+          // read_image_data_url failed (file may not exist or be inaccessible).
+          // The img element will fall back to convertFileSrc via the src attribute.
+          console.warn("[assets] read_image_data_url failed:", path, err);
           return null;
         }
       }),
