@@ -1,0 +1,50 @@
+name: Question / Help
+description: Ask about setup, usage, configuration, or expected behavior.
+title: "[Question]: "
+labels: ["question", "triage"]
+body:
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What do you need help with?
+      placeholder: Ask your question and include the goal you are trying to reach.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Installation / setup
+        - Chat mode
+        - SOLO mode
+        - Tool / MCP / skill execution
+        - Model/provider configuration
+        - Development workflow
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: context
+    attributes:
+      label: Context
+      description: Include commands, config shape, screenshots, or logs that make the question easier to answer. Remove secrets first.
+
+  - type: textarea
+    id: tried
+    attributes:
+      label: What have you tried?
+      description: Mention docs, commands, or workarounds you already checked.
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and the README first.
+          required: true
+        - label: I removed API keys, tokens, personal data, and private screen content from logs or screenshots.
+          required: true
