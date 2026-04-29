@@ -1,5 +1,6 @@
 import type {
   AppSettings,
+  BuiltinToolConfig,
   ChatMessage,
   ConversationSummary,
   ToolConfig,
@@ -30,6 +31,15 @@ const LEGACY_DEFAULT_SKILL = {
   prompt: "在回答前先归纳上下文，再输出结构化结论。",
   enabled: true,
 };
+
+const DEFAULT_BUILTIN_TOOLS: BuiltinToolConfig[] = [
+  {
+    id: "web_search",
+    name: "Web Search",
+    description: "使用 DuckDuckGo 在互联网上搜索信息。",
+    enabled: true,
+  },
+];
 
 function createDefaultToolConfig(overrides: Partial<ToolConfig>): ToolConfig {
   return {
@@ -64,6 +74,28 @@ function normalizeTools(tools: unknown) {
   return tools
     .map((tool) => createDefaultToolConfig(tool as Partial<ToolConfig>))
     .filter((tool) => !isUnmodifiedLegacyTool(tool));
+}
+
+function normalizeBuiltinTools(raw: unknown): BuiltinToolConfig[] {
+  if (!Array.isArray(raw)) {
+    return DEFAULT_BUILTIN_TOOLS;
+  }
+  const defaults = new Map(DEFAULT_BUILTIN_TOOLS.map((d) => [d.id, d]));
+  const result: BuiltinToolConfig[] = [];
+  for (const item of raw) {
+    if (!item || typeof item !== "object") continue;
+    const obj = item as Record<string, unknown>;
+    const id = String(obj.id || "");
+    const def = defaults.get(id);
+    if (def) {
+      result.push({ ...def, enabled: obj.enabled !== undefined ? Boolean(obj.enabled) : def.enabled });
+      defaults.delete(id);
+    }
+  }
+  for (const def of defaults.values()) {
+    result.push(def);
+  }
+  return result;
 }
 
 function isUnmodifiedLegacyMcp(server: AppSettings["mcp"][number]) {
@@ -114,6 +146,7 @@ export const defaultSettings: AppSettings = {
     preferredDisplayIndex: 1,
   },
   tools: [],
+  builtinTools: DEFAULT_BUILTIN_TOOLS,
   mcp: [],
   skills: [],
 };
@@ -155,6 +188,7 @@ export function loadSettings(): AppSettings {
         ...parsed.solo,
       },
       tools: normalizeTools(parsed.tools),
+      builtinTools: normalizeBuiltinTools(parsed.builtinTools),
       mcp: Array.isArray(parsed.mcp)
         ? parsed.mcp.filter((server) => !isUnmodifiedLegacyMcp(server))
         : defaultSettings.mcp,

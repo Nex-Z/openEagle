@@ -365,6 +365,7 @@ class OpenEagleDefaultTools(Toolkit):
         request_id: str | None = None,
         conversation_id: str | None = None,
         permission_mode: str = "default",
+        builtin_tools: list[dict[str, object]] | None = None,
     ):
         self.workspace_root = workspace_root.resolve()
         self.confirmation_store = confirmation_store
@@ -372,29 +373,39 @@ class OpenEagleDefaultTools(Toolkit):
         self.conversation_id = conversation_id
         self.permission_mode = permission_mode
         self._read_cache = _ReadCache()
+
+        enabled_builtins = {bt["id"]: bt.get("enabled", True) for bt in (builtin_tools or [])}
+
+        tools = [
+            self.get_current_time,
+            self.get_file_info,
+            self.list_directory,
+            self.read_text_file,
+            self.write_text_file,
+            self.create_directory,
+            self.copy_path,
+            self.move_path,
+            self.delete_path,
+            self.search_files,
+            self.search_text,
+            self.replace_text_in_file,
+            self.apply_text_edits,
+            self.run_command,
+        ]
+        instructions_parts = [
+            "你可以使用内置默认工具执行工作区内的常用操作：查看文件信息、浏览目录、"
+            "读取文本文件、搜索文件名与文本、执行命令，以及在确认后创建目录、写入、"
+            "复制、移动、删除或精确编辑文件。"
+        ]
+
+        if enabled_builtins.get("web_search", True):
+            tools.append(self.web_search)
+            instructions_parts.append("你还可以使用 web_search 在互联网上搜索信息。")
+
         super().__init__(
             name="open_eagle_default_tools",
-            tools=[
-                self.get_current_time,
-                self.get_file_info,
-                self.list_directory,
-                self.read_text_file,
-                self.write_text_file,
-                self.create_directory,
-                self.copy_path,
-                self.move_path,
-                self.delete_path,
-                self.search_files,
-                self.search_text,
-                self.replace_text_in_file,
-                self.apply_text_edits,
-                self.run_command,
-            ],
-            instructions=(
-                "你可以使用内置默认工具执行工作区内的常用操作：查看文件信息、浏览目录、"
-                "读取文本文件、搜索文件名与文本、执行命令，以及在确认后创建目录、写入、"
-                "复制、移动、删除或精确编辑文件。"
-            ),
+            tools=tools,
+            instructions="".join(instructions_parts),
             add_instructions=True,
         )
 
@@ -443,6 +454,38 @@ class OpenEagleDefaultTools(Toolkit):
         weekday_names = ["周一", "周二", "周三", "周四", "周五", "周六", "周日"]
         weekday = weekday_names[now.weekday()]
         return now.strftime(f"%Y-%m-%d %H:%M:%S ({weekday})")
+
+    def web_search(self, query: str, max_results: int = 5) -> str:
+        """使用 DuckDuckGo 搜索互联网信息。
+
+        Args:
+            query: 搜索关键词。
+            max_results: 返回结果数量，默认 5 条。
+
+        Returns:
+            str: 搜索结果列表，包含标题、摘要和链接。
+        """
+        try:
+            from duckduckgo_search import DDGS
+        except ImportError:
+            return "错误：duckduckgo-search 未安装，请运行 uv sync 安装依赖。"
+
+        try:
+            with DDGS() as ddgs:
+                results = list(ddgs.text(query, max_results=max(max_results, 1)))
+        except Exception as exc:
+            return f"搜索出错：{exc}"
+
+        if not results:
+            return f"未找到与「{query}」相关的结果。"
+
+        lines = [f"搜索「{query}」的结果：\n"]
+        for i, item in enumerate(results, 1):
+            title = item.get("title", "")
+            body = item.get("body", "")
+            href = item.get("href", "")
+            lines.append(f"{i}. **{title}**\n   {body}\n   {href}\n")
+        return "\n".join(lines)
 
     def get_file_info(self, path: str) -> str:
         """返回工作区内路径的基础信息。
@@ -900,6 +943,7 @@ def build_default_tools(
     request_id: str | None = None,
     conversation_id: str | None = None,
     permission_mode: str = "default",
+    builtin_tools: list[dict[str, object]] | None = None,
 ) -> OpenEagleDefaultTools:
     root = workspace_root or Path(__file__).resolve().parents[2]
     return OpenEagleDefaultTools(
@@ -908,6 +952,7 @@ def build_default_tools(
         request_id=request_id,
         conversation_id=conversation_id,
         permission_mode=permission_mode,
+        builtin_tools=builtin_tools,
     )
 
 
