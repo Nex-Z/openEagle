@@ -455,6 +455,27 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             if decision.agent_message:
                 session.last_agent_message = decision.agent_message
 
+            # Sanitize thought_summary: if VL returned a JSON object as the string,
+            # extract the actual text so the frontend doesn't show raw JSON.
+            if decision.thought_summary:
+                ts = decision.thought_summary.strip()
+                if ts.startswith("{"):
+                    try:
+                        parsed = json.loads(ts)
+                        if isinstance(parsed, dict):
+                            decision = decision.model_copy(
+                                update={
+                                    "thought_summary": (
+                                        parsed.get("thought_summary")
+                                        or parsed.get("analysis")
+                                        or parsed.get("progress")
+                                        or str(parsed)
+                                    )
+                                }
+                            )
+                    except (json.JSONDecodeError, ValueError):
+                        pass
+
             # Accumulate findings
             if decision.findings:
                 for finding in decision.findings:
