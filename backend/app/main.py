@@ -13,7 +13,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from .agent_service import build_agent_service
 from .config import AppConfig, load_config
 from .confirmations import ToolConfirmationStore
-from .default_tools import execute_confirmed_tool
+from .default_tools import build_default_tools, execute_confirmed_tool
 from .models import (
     Envelope,
     ErrorPayload,
@@ -125,7 +125,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     active_solo_task: asyncio.Task[None] | None = None
     solo_service: SoloService | None = None
     solo_kernel: SoloAgentKernel | None = None
-    solo_executor = SoloExecutor()
+    solo_default_tools = build_default_tools(
+        workspace_root=workspace_root,
+        builtin_tools=[bt.model_dump() for bt in config.builtin_tools],
+    )
+    solo_executor = SoloExecutor(default_tools=solo_default_tools)
     solo_tools = SoloToolkit(solo_executor)
     solo_logger = SoloRunLogger(workspace_root)
     tool_confirmations = ToolConfirmationStore()
@@ -882,6 +886,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 runtime_state.update_config(next_config)
                 solo_executor.set_preferred_display_index(
                     next_config.solo.preferred_display_index
+                )
+                # Recreate default tools if builtin config changed
+                solo_executor._default_tools = build_default_tools(
+                    workspace_root=workspace_root,
+                    builtin_tools=[bt.model_dump() for bt in next_config.builtin_tools],
                 )
                 await safe_send(
                     "server:status",

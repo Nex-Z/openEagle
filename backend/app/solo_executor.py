@@ -15,12 +15,13 @@ from .command_runner import run_workspace_command
 
 
 class SoloExecutor:
-    def __init__(self) -> None:
+    def __init__(self, default_tools: Any | None = None) -> None:
         self._pyautogui = None
         self._workspace_root = Path(__file__).resolve().parents[2]
         self._last_capture_region: dict[str, int] | None = None
         self._preferred_display_index = 1
         self._capture_all_displays = False
+        self._default_tools = default_tools
 
     @staticmethod
     def _now_iso() -> str:
@@ -281,6 +282,55 @@ class SoloExecutor:
                 raise ValueError("open_url 只允许打开 http/https URL")
             opened = webbrowser.open(url, new=2)
             return {"ok": bool(opened), "action": action, "url": url}
+
+        # ━━ Default tool actions (delegated to OpenEagleDefaultTools) ━━
+        if self._default_tools is not None:
+            if action == "web_search":
+                query = str(action_args.get("query", "")).strip()
+                max_results = int(action_args.get("max_results", 5))
+                if not query:
+                    raise ValueError("web_search requires non-empty query")
+                result = self._default_tools.web_search(query, max_results)
+                return {"ok": True, "action": action, "output": result}
+
+            if action == "get_current_time":
+                result = self._default_tools.get_current_time()
+                return {"ok": True, "action": action, "output": result}
+
+            if action == "get_file_info":
+                path = str(action_args.get("path", "")).strip()
+                if not path:
+                    raise ValueError("get_file_info requires path")
+                result = self._default_tools.get_file_info(path)
+                return {"ok": True, "action": action, "output": result}
+
+            if action == "list_directory":
+                path = str(action_args.get("path", ".")).strip()
+                result = self._default_tools.list_directory(path)
+                return {"ok": True, "action": action, "output": result}
+
+            if action == "read_text_file":
+                path = str(action_args.get("path", "")).strip()
+                if not path:
+                    raise ValueError("read_text_file requires path")
+                result = self._default_tools.read_text_file(path)
+                return {"ok": True, "action": action, "output": result}
+
+            if action == "search_files":
+                keyword = str(action_args.get("keyword", "")).strip()
+                path = str(action_args.get("path", ".")).strip()
+                if not keyword:
+                    raise ValueError("search_files requires keyword")
+                result = self._default_tools.search_files(keyword, path)
+                return {"ok": True, "action": action, "output": result}
+
+            if action == "search_text":
+                keyword = str(action_args.get("keyword", "")).strip()
+                path = str(action_args.get("path", ".")).strip()
+                if not keyword:
+                    raise ValueError("search_text requires keyword")
+                result = self._default_tools.search_text(keyword, path)
+                return {"ok": True, "action": action, "output": result}
 
         if action == "execute_command":
             command = action_args.get("command")

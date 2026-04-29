@@ -19,6 +19,14 @@ SAFE_SOLO_ACTIONS = {
     "scroll",
     "type_text",
     "open_url",
+    # Default tool actions (read-only, safe)
+    "web_search",
+    "get_current_time",
+    "get_file_info",
+    "list_directory",
+    "read_text_file",
+    "search_files",
+    "search_text",
 }
 DANGEROUS_KEYS = {"ctrl", "alt", "meta", "win", "f4", "delete", "backspace", "enter"}
 SAFE_COMMAND_PATTERNS = [
