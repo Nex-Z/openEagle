@@ -9,6 +9,7 @@ import {
   ListTree,
   ShieldAlert,
   Wrench,
+  X,
 } from "lucide-react";
 import type {
   AgentExecutionTrace,
@@ -77,6 +78,7 @@ export function ActivityInspector(props: ActivityInspectorProps) {
   const [activeTab, setActiveTab] = useState<InspectorTab>("activity");
   const [expandedTraceId, setExpandedTraceId] = useState<string | null>(null);
   const [imageDataUrls, setImageDataUrls] = useState<Record<string, string>>({});
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   useEffect(() => {
     const imagePaths = Array.from(
@@ -134,7 +136,7 @@ export function ActivityInspector(props: ActivityInspectorProps) {
   const confirmationCount =
     Number(Boolean(soloConfirmation)) + Number(Boolean(toolConfirmation));
 
-  return (
+  const inspector = (
     <aside
       className={inspectorCollapsed ? "activity-inspector is-collapsed" : "activity-inspector"}
     >
@@ -368,6 +370,7 @@ export function ActivityInspector(props: ActivityInspectorProps) {
                           alt={asset.label}
                           loading="lazy"
                           src={imageDataUrls[asset.imagePath] ?? convertFileSrc(asset.imagePath)}
+                          onClick={() => setPreviewImage(imageDataUrls[asset.imagePath] ?? convertFileSrc(asset.imagePath))}
                         />
                         <figcaption>
                           <strong>{asset.label}</strong>
@@ -385,5 +388,34 @@ export function ActivityInspector(props: ActivityInspectorProps) {
         </>
       )}
     </aside>
+  );
+
+  return (
+    <>
+      {inspector}
+      {previewImage ? (
+        <div
+          className="image-preview-backdrop"
+          onClick={() => setPreviewImage(null)}
+          onKeyDown={(e) => { if (e.key === "Escape") setPreviewImage(null); }}
+          role="button"
+          tabIndex={0}
+        >
+          <button
+            className="image-preview-close"
+            onClick={() => setPreviewImage(null)}
+            type="button"
+          >
+            <X size={20} />
+          </button>
+          <img
+            className="image-preview-img"
+            src={previewImage}
+            alt="预览"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      ) : null}
+    </>
   );
 }
