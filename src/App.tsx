@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { ChatWorkspace } from "./components/chat/ChatWorkspace";
 import { ActivityInspector } from "./components/inspector/ActivityInspector";
 import { AppShell } from "./components/layout/AppShell";
@@ -8,10 +8,12 @@ import { SettingsDrawer, type SettingsSection } from "./components/settings/Sett
 import { useBackendConnection } from "./hooks/useBackendConnection";
 import { useTheme } from "./hooks/useTheme";
 import {
+  deletePersistedConversation,
   loadPersistedConversations,
   loadSettings,
+  savePersistedConversation,
+  savePersistedConversationIndex,
   type PersistedConversation,
-  savePersistedConversations,
   saveSettings,
 } from "./lib/storage";
 import type {
@@ -29,6 +31,15 @@ function createConversation(seed?: Partial<ConversationSummary>): ConversationSu
     title: seed?.title ?? "新对话",
     updatedAt: seed?.updatedAt ?? now,
   };
+}
+
+function createFallbackConversationStore(): PersistedConversation[] {
+  return [
+    {
+      summary: createConversation(),
+      messages: [],
+    },
+  ];
 }
 
 function collectMessageTraces(message: ChatMessage) {
@@ -67,31 +78,80 @@ function collectAssetMessages(messages: ChatMessage[]) {
 }
 
 export default function App() {
-  const [conversationStore, setConversationStore] = useState<PersistedConversation[]>(() => {
-    const persistedConversations = loadPersistedConversations();
-    return persistedConversations.length > 0
-      ? persistedConversations
-      : [
-          {
-            summary: createConversation(),
-            messages: [],
-          },
-        ];
-  });
+  const [conversationStore, setConversationStore] = useState<PersistedConversation[]>(
+    createFallbackConversationStore,
+  );
   const [activeConversationId, setActiveConversationId] = useState(
     () => conversationStore[0].summary.id,
   );
+  const [conversationsHydrated, setConversationsHydrated] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const saveQueueRef = useRef(Promise.resolve());
+  const indexSaveTimerRef = useRef<number | null>(null);
+  const conversationSaveTimerRef = useRef<number | null>(null);
+  const pendingDeletedConversationIdsRef = useRef<Set<string>>(new Set());
+  const previousConversationIdsRef = useRef<Set<string>>(
+    new Set(conversationStore.map((item) => item.summary.id)),
+  );
   const conversations = conversationStore.map((item) => item.summary);
   const activeConversation =
     conversationStore.find((item) => item.summary.id === activeConversationId) ??
     conversationStore[0];
 
+  const enqueueSave = (operation: () => Promise<void>) => {
+    saveQueueRef.current = saveQueueRef.current
+      .catch(() => undefined)
+      .then(operation)
+      .catch((err) => {
+        console.warn("[storage] save failed:", err);
+      });
+  };
+
   useTheme(settings.appearance.themeMode);
+
+  useEffect(() => {
+    let cancelled = false;
+    void loadPersistedConversations()
+      .then((persistedConversations) => {
+        if (cancelled) {
+          return;
+        }
+        const nextStore =
+          persistedConversations.length > 0
+            ? persistedConversations
+            : createFallbackConversationStore();
+        setConversationStore(nextStore);
+        setActiveConversationId((current) =>
+          nextStore.some((item) => item.summary.id === current)
+            ? current
+            : nextStore[0].summary.id,
+        );
+        previousConversationIdsRef.current = new Set(
+          nextStore.map((item) => item.summary.id),
+        );
+        setConversationsHydrated(true);
+      })
+      .catch((err) => {
+        if (cancelled) {
+          return;
+        }
+        console.warn("[storage] failed to hydrate conversations:", err);
+        const fallback = createFallbackConversationStore();
+        setConversationStore(fallback);
+        setActiveConversationId(fallback[0].summary.id);
+        previousConversationIdsRef.current = new Set(
+          fallback.map((item) => item.summary.id),
+        );
+        setConversationsHydrated(true);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const {
     backend,
@@ -149,8 +209,62 @@ export default function App() {
   }, [settings]);
 
   useEffect(() => {
-    savePersistedConversations(conversationStore);
-  }, [conversationStore]);
+    return () => {
+      if (indexSaveTimerRef.current) {
+        window.clearTimeout(indexSaveTimerRef.current);
+      }
+      if (conversationSaveTimerRef.current) {
+        window.clearTimeout(conversationSaveTimerRef.current);
+      }
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!conversationsHydrated) {
+      return;
+    }
+
+    const summaries = conversationStore.map((item) => item.summary);
+    const currentIds = new Set(summaries.map((summary) => summary.id));
+    const previousIds = previousConversationIdsRef.current;
+    for (const id of previousIds) {
+      if (!currentIds.has(id)) {
+        pendingDeletedConversationIdsRef.current.add(id);
+      }
+    }
+    for (const id of currentIds) {
+      pendingDeletedConversationIdsRef.current.delete(id);
+    }
+    previousConversationIdsRef.current = currentIds;
+
+    if (indexSaveTimerRef.current) {
+      window.clearTimeout(indexSaveTimerRef.current);
+    }
+    indexSaveTimerRef.current = window.setTimeout(() => {
+      const deletedIds = Array.from(pendingDeletedConversationIdsRef.current);
+      pendingDeletedConversationIdsRef.current.clear();
+      enqueueSave(async () => {
+        for (const id of deletedIds) {
+          await deletePersistedConversation(id);
+        }
+        await savePersistedConversationIndex(summaries);
+      });
+    }, 500);
+  }, [conversationStore, conversationsHydrated]);
+
+  useEffect(() => {
+    if (!conversationsHydrated || !activeConversation) {
+      return;
+    }
+
+    if (conversationSaveTimerRef.current) {
+      window.clearTimeout(conversationSaveTimerRef.current);
+    }
+    const conversationToSave = activeConversation;
+    conversationSaveTimerRef.current = window.setTimeout(() => {
+      enqueueSave(() => savePersistedConversation(conversationToSave));
+    }, 500);
+  }, [activeConversation, conversationsHydrated]);
 
   useEffect(() => {
     if (conversationStore.some((item) => item.summary.id === activeConversationId)) {

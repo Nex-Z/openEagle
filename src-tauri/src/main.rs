@@ -2,6 +2,7 @@
 
 use std::{
     fs,
+    io::Write,
     path::PathBuf,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
@@ -32,6 +33,8 @@ const SOLO_OVERLAY_WIDTH: f64 = 400.0;
 const SOLO_OVERLAY_HEIGHT: f64 = 240.0;
 const SOLO_OVERLAY_MARGIN: i32 = 18;
 const SOLO_OVERLAY_AUTO_HIDE_MS: u64 = 4000;
+const CONVERSATION_INDEX_FILE: &str = "conversation-index.json";
+const CONVERSATION_DIR: &str = "conversations";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -139,6 +142,186 @@ struct SoloResultNotificationPayload {
 #[tauri::command]
 fn get_backend_state(state: State<'_, Arc<BackendRuntime>>) -> BackendStatePayload {
     state.state.lock().unwrap().clone()
+}
+
+fn conversation_store_root(app: &AppHandle) -> Result<PathBuf, String> {
+    app.path()
+        .app_data_dir()
+        .map_err(|err| format!("failed to resolve app data dir: {err}"))
+}
+
+fn conversation_index_path(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(conversation_store_root(app)?.join(CONVERSATION_INDEX_FILE))
+}
+
+fn conversations_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(conversation_store_root(app)?.join(CONVERSATION_DIR))
+}
+
+fn validate_conversation_id(conversation_id: &str) -> Result<(), String> {
+    if conversation_id.is_empty()
+        || !conversation_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_')
+    {
+        return Err("conversationId may only contain A-Z, a-z, 0-9, _ and -".to_string());
+    }
+    Ok(())
+}
+
+fn conversation_file_path(app: &AppHandle, conversation_id: &str) -> Result<PathBuf, String> {
+    validate_conversation_id(conversation_id)?;
+    Ok(conversations_dir(app)?.join(format!("{conversation_id}.json")))
+}
+
+fn read_json_file(path: &PathBuf) -> Result<Value, String> {
+    let text = fs::read_to_string(path)
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    serde_json::from_str(&text)
+        .map_err(|err| format!("failed to parse {}: {err}", path.display()))
+}
+
+fn atomic_write_json(path: &PathBuf, value: &Value) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)
+            .map_err(|err| format!("failed to create {}: {err}", parent.display()))?;
+    }
+
+    let file_name = path
+        .file_name()
+        .and_then(|value| value.to_str())
+        .ok_or_else(|| format!("invalid target file path: {}", path.display()))?;
+    let tmp_path = path.with_file_name(format!("{file_name}.tmp"));
+    let data = serde_json::to_vec_pretty(value)
+        .map_err(|err| format!("failed to serialize {}: {err}", path.display()))?;
+
+    {
+        let mut file = fs::File::create(&tmp_path)
+            .map_err(|err| format!("failed to create {}: {err}", tmp_path.display()))?;
+        file.write_all(&data)
+            .map_err(|err| format!("failed to write {}: {err}", tmp_path.display()))?;
+        file.write_all(b"\n")
+            .map_err(|err| format!("failed to finish {}: {err}", tmp_path.display()))?;
+        file.sync_all()
+            .map_err(|err| format!("failed to sync {}: {err}", tmp_path.display()))?;
+    }
+
+    if path.exists() {
+        fs::remove_file(path)
+            .map_err(|err| format!("failed to replace {}: {err}", path.display()))?;
+    }
+    fs::rename(&tmp_path, path).map_err(|err| {
+        format!(
+            "failed to rename {} to {}: {err}",
+            tmp_path.display(),
+            path.display()
+        )
+    })?;
+    Ok(())
+}
+
+fn normalize_conversation_index(value: Value) -> Result<Value, String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "conversation index must be an object".to_string())?;
+    let version = object
+        .get("version")
+        .and_then(|value| value.as_u64())
+        .unwrap_or(1);
+    let conversations = object
+        .get("conversations")
+        .filter(|value| value.is_array())
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    Ok(json!({
+        "version": version,
+        "conversations": conversations,
+    }))
+}
+
+fn normalize_conversation_file(value: Value) -> Result<Value, String> {
+    let object = value
+        .as_object()
+        .ok_or_else(|| "conversation file must be an object".to_string())?;
+    let summary = object
+        .get("summary")
+        .filter(|value| value.is_object())
+        .cloned()
+        .ok_or_else(|| "conversation file requires summary object".to_string())?;
+    let conversation_id = summary
+        .get("id")
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "conversation summary requires id".to_string())?;
+    validate_conversation_id(conversation_id)?;
+    let messages = object
+        .get("messages")
+        .filter(|value| value.is_array())
+        .cloned()
+        .unwrap_or_else(|| json!([]));
+    let saved_at = object
+        .get("savedAt")
+        .and_then(|value| value.as_str())
+        .map(|value| value.to_string())
+        .unwrap_or_else(|| Utc::now().to_rfc3339());
+
+    Ok(json!({
+        "version": object.get("version").and_then(|value| value.as_u64()).unwrap_or(1),
+        "summary": summary,
+        "messages": messages,
+        "savedAt": saved_at,
+    }))
+}
+
+#[tauri::command]
+fn load_conversation_index(app: AppHandle) -> Result<Value, String> {
+    let path = conversation_index_path(&app)?;
+    if !path.exists() {
+        return Ok(json!({
+            "version": 1,
+            "conversations": [],
+        }));
+    }
+    normalize_conversation_index(read_json_file(&path)?)
+}
+
+#[tauri::command]
+fn save_conversation_index(app: AppHandle, index: Value) -> Result<Value, String> {
+    let normalized = normalize_conversation_index(index)?;
+    let path = conversation_index_path(&app)?;
+    atomic_write_json(&path, &normalized)?;
+    Ok(json!({"ok": true}))
+}
+
+#[tauri::command]
+fn load_conversation_file(app: AppHandle, conversation_id: String) -> Result<Value, String> {
+    let path = conversation_file_path(&app, &conversation_id)?;
+    if !path.exists() {
+        return Err(format!("conversation file does not exist: {conversation_id}"));
+    }
+    normalize_conversation_file(read_json_file(&path)?)
+}
+
+#[tauri::command]
+fn save_conversation_file(app: AppHandle, conversation: Value) -> Result<Value, String> {
+    let normalized = normalize_conversation_file(conversation)?;
+    let conversation_id = normalized
+        .get("summary")
+        .and_then(|summary| summary.get("id"))
+        .and_then(|value| value.as_str())
+        .ok_or_else(|| "conversation summary requires id".to_string())?;
+    let path = conversation_file_path(&app, conversation_id)?;
+    atomic_write_json(&path, &normalized)?;
+    Ok(json!({"ok": true}))
+}
+
+#[tauri::command]
+fn delete_conversation_file(app: AppHandle, conversation_id: String) -> Result<Value, String> {
+    let path = conversation_file_path(&app, &conversation_id)?;
+    if path.exists() {
+        fs::remove_file(&path)
+            .map_err(|err| format!("failed to delete {}: {err}", path.display()))?;
+    }
+    Ok(json!({"ok": true}))
 }
 
 #[tauri::command]
@@ -686,6 +869,11 @@ fn main() {
         .plugin(tauri_plugin_shell::init())
         .invoke_handler(tauri::generate_handler![
             get_backend_state,
+            load_conversation_index,
+            load_conversation_file,
+            save_conversation_file,
+            save_conversation_index,
+            delete_conversation_file,
             capture_screenshot,
             read_image_data_url,
             perform_mouse_action,

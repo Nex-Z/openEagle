@@ -1,5 +1,10 @@
+import { invoke } from "@tauri-apps/api/core";
 import type {
+  AgentExecutionKind,
+  AgentExecutionStatus,
+  AgentExecutionTrace,
   AppSettings,
+  AssistantMessageBlock,
   BuiltinToolConfig,
   ChatMessage,
   ConversationSummary,
@@ -8,6 +13,8 @@ import type {
 
 const SETTINGS_KEY = "open-eagle/settings";
 const CONVERSATIONS_KEY = "open-eagle/conversations";
+const TRACE_TEXT_LIMIT = 12_000;
+const CONVERSATION_STORE_VERSION = 1;
 const LEGACY_DEFAULT_TOOL = {
   id: "default-shell-tool",
   name: "Shell Tool",
@@ -156,6 +163,18 @@ export type PersistedConversation = {
   messages: ChatMessage[];
 };
 
+type ConversationIndexFile = {
+  version: 1;
+  conversations: ConversationSummary[];
+};
+
+type ConversationFilePayload = {
+  version: 1;
+  summary: ConversationSummary;
+  messages: ChatMessage[];
+  savedAt: string;
+};
+
 export function loadSettings(): AppSettings {
   try {
     const raw = localStorage.getItem(SETTINGS_KEY);
@@ -205,7 +224,144 @@ export function saveSettings(settings: AppSettings) {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
 }
 
-export function loadPersistedConversations(): PersistedConversation[] {
+function isTauriRuntime() {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+}
+
+function trimTraceText(value: string | undefined): string | undefined {
+  if (!value || value.length <= TRACE_TEXT_LIMIT) {
+    return value;
+  }
+  return `${value.slice(0, TRACE_TEXT_LIMIT)}\n...(truncated)`;
+}
+
+function compactTraceForStorage(trace: AgentExecutionTrace): AgentExecutionTrace {
+  return {
+    ...trace,
+    summary: trimTraceText(trace.summary),
+    result: trimTraceText(trace.result),
+  };
+}
+
+function compactBlocksForStorage(blocks: AssistantMessageBlock[]) {
+  return blocks.map((block) =>
+    block.kind === "trace"
+      ? {
+          ...block,
+          trace: compactTraceForStorage(block.trace),
+        }
+      : block,
+  );
+}
+
+function compactMessageForStorage(msg: ChatMessage): ChatMessage {
+  if (!msg.traces && !msg.blocks && !msg.trace) {
+    return msg;
+  }
+  return {
+    ...msg,
+    traces: msg.traces?.map(compactTraceForStorage),
+    blocks: msg.blocks ? compactBlocksForStorage(msg.blocks) : undefined,
+    trace: msg.trace ? compactTraceForStorage(msg.trace) : undefined,
+  };
+}
+
+function inferRestoredTraceKind(label: string | undefined): AgentExecutionKind {
+  const normalized = (label ?? "").trim().toLowerCase();
+  if (normalized.startsWith("solo/") || normalized.includes("skill")) {
+    return "skill";
+  }
+  if (normalized.includes("mcp")) {
+    return "mcp";
+  }
+  return "tool";
+}
+
+function inferRestoredTraceStatus(message: ChatMessage): AgentExecutionStatus {
+  if (message.status === "pending") {
+    return "started";
+  }
+  if (message.status === "error") {
+    return "error";
+  }
+  return "completed";
+}
+
+function restoreTraceOnlyToolMessage(message: ChatMessage): ChatMessage {
+  if (message.blocks?.length || message.traces?.length || message.trace) {
+    return message;
+  }
+  if (message.role !== "tool" || !message.label || message.imagePath) {
+    return message;
+  }
+
+  const status = inferRestoredTraceStatus(message);
+  const trace: AgentExecutionTrace = {
+    id: `restored-${message.id}`,
+    kind: inferRestoredTraceKind(message.label),
+    name: message.label,
+    status,
+    summary: message.content || undefined,
+    result: message.content || undefined,
+    startedAt: message.createdAt,
+    completedAt: status === "started" ? undefined : message.createdAt,
+  };
+
+  return {
+    ...message,
+    traces: [trace],
+    blocks: [
+      {
+        id: `trace-${trace.id}`,
+        kind: "trace",
+        trace,
+      },
+    ],
+  };
+}
+
+function normalizePersistedMessage(message: ChatMessage): ChatMessage {
+  if (message.trace && !message.traces?.length && !message.blocks?.length) {
+    const trace = { ...message.trace };
+    return {
+      ...message,
+      traces: [trace],
+      blocks: [{ id: `trace-${trace.id}`, kind: "trace", trace }],
+    };
+  }
+  return restoreTraceOnlyToolMessage(message);
+}
+
+function normalizePersistedConversation(
+  conversation: PersistedConversation,
+): PersistedConversation {
+  return {
+    ...conversation,
+    messages: conversation.messages.map(normalizePersistedMessage),
+  };
+}
+
+function isConversationSummary(value: unknown): value is ConversationSummary {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const summary = value as Partial<ConversationSummary>;
+  return (
+    typeof summary.id === "string" &&
+    typeof summary.title === "string" &&
+    typeof summary.updatedAt === "string"
+  );
+}
+
+function isPersistedConversation(value: unknown): value is PersistedConversation {
+  if (!value || typeof value !== "object") {
+    return false;
+  }
+  const conversation = value as Partial<PersistedConversation>;
+  return isConversationSummary(conversation.summary) && Array.isArray(conversation.messages);
+}
+
+function loadLocalStorageConversations(): PersistedConversation[] {
   try {
     const raw = localStorage.getItem(CONVERSATIONS_KEY);
     if (!raw) {
@@ -218,22 +374,23 @@ export function loadPersistedConversations(): PersistedConversation[] {
     }
 
     // Validate each conversation; skip corrupted ones.
-    return parsed.filter(
-      (c): c is PersistedConversation =>
-        c != null &&
-        typeof c === "object" &&
-        c.summary != null &&
-        typeof c.summary === "object" &&
-        typeof c.summary.id === "string" &&
-        Array.isArray(c.messages),
-    );
+    return parsed.filter(isPersistedConversation).map(normalizePersistedConversation);
   } catch {
     return [];
   }
 }
 
-/** Fields that are only useful within the current session and can be stripped for persistence. */
-function stripHeavyFields(msg: ChatMessage): ChatMessage {
+let localStorageConversationCache: PersistedConversation[] | null = null;
+
+function getLocalStorageConversationCache() {
+  if (!localStorageConversationCache) {
+    localStorageConversationCache = loadLocalStorageConversations();
+  }
+  return localStorageConversationCache;
+}
+
+/** Last-resort compaction for browsers that hit localStorage quota. */
+function stripExecutionFields(msg: ChatMessage): ChatMessage {
   if (!msg.traces && !msg.blocks && !msg.trace) {
     return msg;
   }
@@ -253,16 +410,17 @@ function estimateSize(obj: unknown): number {
 /** Max localStorage budget: 4 MB (leave headroom under the ~5 MB limit). */
 const STORAGE_BUDGET = 4 * 1024 * 1024;
 
-export function savePersistedConversations(
+function saveLocalStorageConversations(
   conversations: PersistedConversation[],
 ) {
-  const stripped = conversations.map((c) => ({
+  localStorageConversationCache = conversations;
+  const compacted = conversations.map((c) => ({
     ...c,
-    messages: c.messages.map(stripHeavyFields),
+    messages: c.messages.map(compactMessageForStorage),
   }));
 
   try {
-    localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(stripped));
+    localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(compacted));
     return;
   } catch (err) {
     if (!isQuotaExceeded(err)) {
@@ -273,14 +431,14 @@ export function savePersistedConversations(
   }
 
   // Quota exceeded — progressively prune until it fits.
-  let pruned = stripped.map((c) => ({
-    ...c,
-    messages: c.messages.map(stripHeavyFields),
-  }));
+  let pruned = compacted;
 
-  // Phase 1: drop assistant message blocks/traces from oldest conversations first
+  // Phase 1: drop execution blocks/traces from oldest conversations first.
   for (let i = 0; i < pruned.length && estimateSize(pruned) > STORAGE_BUDGET; i++) {
-    pruned[i] = { ...pruned[i], messages: pruned[i].messages.map(stripHeavyFields) };
+    pruned[i] = {
+      ...pruned[i],
+      messages: pruned[i].messages.map(stripExecutionFields),
+    };
   }
 
   // Phase 2: truncate long assistant content in oldest conversations
@@ -305,6 +463,172 @@ export function savePersistedConversations(
   } catch (err) {
     console.error("[storage] save failed even after pruning:", err);
   }
+}
+
+function toConversationFilePayload(
+  conversation: PersistedConversation,
+): ConversationFilePayload {
+  return {
+    version: CONVERSATION_STORE_VERSION,
+    summary: conversation.summary,
+    messages: conversation.messages,
+    savedAt: new Date().toISOString(),
+  };
+}
+
+function updateLocalStorageIndex(summaries: ConversationSummary[]) {
+  const cache = getLocalStorageConversationCache();
+  const byId = new Map(cache.map((conversation) => [conversation.summary.id, conversation]));
+  const next = summaries.map((summary) => ({
+    summary,
+    messages: byId.get(summary.id)?.messages ?? [],
+  }));
+  saveLocalStorageConversations(next);
+}
+
+function saveLocalStorageConversation(conversation: PersistedConversation) {
+  const cache = getLocalStorageConversationCache();
+  const index = cache.findIndex((item) => item.summary.id === conversation.summary.id);
+  const next =
+    index >= 0
+      ? cache.map((item, itemIndex) => (itemIndex === index ? conversation : item))
+      : [conversation, ...cache];
+  saveLocalStorageConversations(next);
+}
+
+function deleteLocalStorageConversation(conversationId: string) {
+  const next = getLocalStorageConversationCache().filter(
+    (conversation) => conversation.summary.id !== conversationId,
+  );
+  saveLocalStorageConversations(next);
+}
+
+async function saveConversationIndexFile(summaries: ConversationSummary[]) {
+  await invoke("save_conversation_index", {
+    index: {
+      version: CONVERSATION_STORE_VERSION,
+      conversations: summaries,
+    } satisfies ConversationIndexFile,
+  });
+}
+
+async function saveConversationFile(conversation: PersistedConversation) {
+  await invoke("save_conversation_file", {
+    conversation: toConversationFilePayload(conversation),
+  });
+}
+
+async function migrateLocalStorageConversations() {
+  const legacyConversations = loadLocalStorageConversations();
+  if (legacyConversations.length === 0) {
+    return [];
+  }
+
+  const saved: PersistedConversation[] = [];
+  for (const conversation of legacyConversations) {
+    try {
+      await saveConversationFile(conversation);
+      saved.push(conversation);
+    } catch (err) {
+      console.warn(
+        `[storage] failed to migrate conversation ${conversation.summary.id}:`,
+        err,
+      );
+    }
+  }
+
+  if (saved.length > 0) {
+    await saveConversationIndexFile(saved.map((conversation) => conversation.summary));
+    localStorage.removeItem(CONVERSATIONS_KEY);
+  }
+  return saved;
+}
+
+async function loadFileConversations() {
+  const index = await invoke<ConversationIndexFile>("load_conversation_index");
+  const summaries = Array.isArray(index.conversations)
+    ? index.conversations.filter(isConversationSummary)
+    : [];
+
+  if (summaries.length === 0) {
+    const migrated = await migrateLocalStorageConversations();
+    if (migrated.length > 0) {
+      return migrated;
+    }
+  }
+
+  const conversations: PersistedConversation[] = [];
+  for (const summary of summaries) {
+    try {
+      const payload = await invoke<ConversationFilePayload>("load_conversation_file", {
+        conversationId: summary.id,
+      });
+      const conversation = {
+        summary: isConversationSummary(payload.summary) ? payload.summary : summary,
+        messages: Array.isArray(payload.messages) ? payload.messages : [],
+      };
+      conversations.push(normalizePersistedConversation(conversation));
+    } catch (err) {
+      console.warn(`[storage] failed to load conversation ${summary.id}:`, err);
+    }
+  }
+  return conversations;
+}
+
+export async function loadPersistedConversations(): Promise<PersistedConversation[]> {
+  if (!isTauriRuntime()) {
+    const conversations = loadLocalStorageConversations();
+    localStorageConversationCache = conversations;
+    return conversations;
+  }
+
+  try {
+    return await loadFileConversations();
+  } catch (err) {
+    console.warn("[storage] failed to load file-backed conversations:", err);
+    return [];
+  }
+}
+
+export async function savePersistedConversationIndex(
+  summaries: ConversationSummary[],
+) {
+  if (!isTauriRuntime()) {
+    updateLocalStorageIndex(summaries);
+    return;
+  }
+  await saveConversationIndexFile(summaries);
+}
+
+export async function savePersistedConversation(
+  conversation: PersistedConversation,
+) {
+  if (!isTauriRuntime()) {
+    saveLocalStorageConversation(conversation);
+    return;
+  }
+  await saveConversationFile(conversation);
+}
+
+export async function deletePersistedConversation(conversationId: string) {
+  if (!isTauriRuntime()) {
+    deleteLocalStorageConversation(conversationId);
+    return;
+  }
+  await invoke("delete_conversation_file", { conversationId });
+}
+
+export async function savePersistedConversations(
+  conversations: PersistedConversation[],
+) {
+  if (!isTauriRuntime()) {
+    saveLocalStorageConversations(conversations);
+    return;
+  }
+  for (const conversation of conversations) {
+    await saveConversationFile(conversation);
+  }
+  await saveConversationIndexFile(conversations.map((conversation) => conversation.summary));
 }
 
 function isQuotaExceeded(err: unknown): boolean {
