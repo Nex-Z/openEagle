@@ -5,7 +5,7 @@ description = "Python backend for openEagle"
 requires-python = ">=3.12"
 dependencies = [
   "agno",
-  "duckduckgo-search>=7.0.0",
+  "baidusearch>=1.0.0",
   "fastapi>=0.115.12",
   "openai",
   "mss>=10.1.0",

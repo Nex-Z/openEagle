@@ -28,10 +28,10 @@ const BACKEND_EVENT: &str = "backend://status";
 const READY_PATTERN: &str = r"\[AGENT_READY\]\s+WS_PORT:\s+(\d+)";
 const SIDECAR_NAME: &str = "binaries/open-eagle-agent";
 const SOLO_OVERLAY_LABEL: &str = "solo_overlay";
-const SOLO_OVERLAY_WIDTH: f64 = 420.0;
-const SOLO_OVERLAY_HEIGHT: f64 = 260.0;
+const SOLO_OVERLAY_WIDTH: f64 = 400.0;
+const SOLO_OVERLAY_HEIGHT: f64 = 240.0;
 const SOLO_OVERLAY_MARGIN: i32 = 18;
-const SOLO_OVERLAY_TERMINAL_HIDE_MS: u64 = 3500;
+const SOLO_OVERLAY_AUTO_HIDE_MS: u64 = 4000;
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -126,9 +126,6 @@ struct OverlayPayload {
     state: Option<String>,
     step_count: Option<u32>,
     max_steps: Option<u32>,
-    last_action: Option<String>,
-    confirmation_action: Option<String>,
-    confirmation_reason: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -319,45 +316,7 @@ fn perform_keyboard_action(payload: Value) -> Result<Value, String> {
     }))
 }
 
-fn normalize_overlay_payload(payload: OverlayPayload) -> OverlayPayload {
-    OverlayPayload {
-        title: Some(
-            payload
-                .title
-                .unwrap_or_else(|| "SOLO 正在执行桌面操作".to_string()),
-        ),
-        detail: Some(
-            payload
-                .detail
-                .unwrap_or_else(|| "请保持桌面可见，可随时暂停或结束。".to_string()),
-        ),
-        step_text: Some(
-            payload
-                .step_text
-                .unwrap_or_else(|| "等待步骤更新".to_string()),
-        ),
-        history_text: Some(payload.history_text.unwrap_or_default()),
-        state: Some(payload.state.unwrap_or_else(|| "running".to_string())),
-        step_count: Some(payload.step_count.unwrap_or(0)),
-        max_steps: Some(payload.max_steps.unwrap_or(100)),
-        last_action: payload.last_action,
-        confirmation_action: payload.confirmation_action,
-        confirmation_reason: payload.confirmation_reason,
-    }
-}
-
-fn apply_solo_overlay_state(
-    window: &tauri::WebviewWindow,
-    payload: &OverlayPayload,
-) -> Result<(), String> {
-    let serialized = serde_json::to_string(payload).map_err(|err| err.to_string())?;
-    let script = format!("window.__SOLO_OVERLAY__={serialized};");
-    let _ = window.eval(&script);
-    let _ = window.emit("solo://overlay_state", payload.clone());
-    Ok(())
-}
-
-fn position_solo_overlay(window: &tauri::WebviewWindow) {
+fn position_overlay(window: &tauri::WebviewWindow) {
     let monitor = window
         .current_monitor()
         .ok()
@@ -376,19 +335,24 @@ fn position_solo_overlay(window: &tauri::WebviewWindow) {
     }
 }
 
-fn keep_solo_overlay_passive(window: &tauri::WebviewWindow) {
-    let _ = window.set_ignore_cursor_events(true);
-}
-
-fn schedule_terminal_overlay_hide(app: AppHandle, state: Option<String>) {
-    if !matches!(state.as_deref(), Some("completed" | "aborted")) {
-        return;
+fn normalize_overlay_payload(payload: OverlayPayload) -> OverlayPayload {
+    OverlayPayload {
+        title: Some(
+            payload
+                .title
+                .unwrap_or_else(|| "SOLO 正在执行桌面操作".to_string()),
+        ),
+        detail: Some(
+            payload
+                .detail
+                .unwrap_or_else(|| "请保持桌面可见，可随时暂停或结束。".to_string()),
+        ),
+        step_text: Some(payload.step_text.unwrap_or_default()),
+        history_text: Some(payload.history_text.unwrap_or_default()),
+        state: Some(payload.state.unwrap_or_else(|| "running".to_string())),
+        step_count: Some(payload.step_count.unwrap_or(0)),
+        max_steps: Some(payload.max_steps.unwrap_or(100)),
     }
-
-    tauri::async_runtime::spawn(async move {
-        tokio::time::sleep(Duration::from_millis(SOLO_OVERLAY_TERMINAL_HIDE_MS)).await;
-        let _ = hide_solo_overlay(app);
-    });
 }
 
 #[tauri::command]
@@ -396,64 +360,72 @@ fn show_solo_overlay(app: AppHandle, payload: OverlayPayload) -> Result<Value, S
     let payload = normalize_overlay_payload(payload);
     println!(
         "[SOLO/RUST] show_solo_overlay state={}",
-        payload
-            .state
-            .clone()
-            .unwrap_or_else(|| "unknown".to_string())
+        payload.state.clone().unwrap_or_default()
     );
 
-    if app.get_webview_window(SOLO_OVERLAY_LABEL).is_none() {
+    if let Some(window) = app.get_webview_window(SOLO_OVERLAY_LABEL) {
+        position_overlay(&window);
+        let _ = window.show();
+        let _ = window.set_focus();
         let serialized = serde_json::to_string(&payload).map_err(|err| err.to_string())?;
-        let init_script = format!(
-            "window.__OPEN_EAGLE_SOLO_OVERLAY__=true;window.__SOLO_OVERLAY__={serialized};"
-        );
-        let window = WebviewWindowBuilder::new(
-            &app,
-            SOLO_OVERLAY_LABEL,
-            WebviewUrl::App("solo-overlay.html".into()),
-        )
-        .title("SOLO Overlay")
-        .always_on_top(true)
-        .decorations(false)
-        .transparent(true)
-        .skip_taskbar(true)
-        .resizable(false)
-        .focused(false)
-        .inner_size(SOLO_OVERLAY_WIDTH, SOLO_OVERLAY_HEIGHT)
-        .initialization_script(&init_script)
-        .build()
-        .map_err(|err| format!("failed to create overlay window: {err}"))?;
-        position_solo_overlay(&window);
-        keep_solo_overlay_passive(&window);
-        apply_solo_overlay_state(&window, &payload)?;
-        schedule_terminal_overlay_hide(app, payload.state.clone());
+        let _ = window.eval(&format!("window.__SOLO_OVERLAY__={serialized};"));
+        let _ = window.emit("solo://overlay_state", payload);
         return Ok(json!({"ok": true}));
     }
 
-    if let Some(window) = app.get_webview_window(SOLO_OVERLAY_LABEL) {
-        position_solo_overlay(&window);
-        keep_solo_overlay_passive(&window);
-        apply_solo_overlay_state(&window, &payload)?;
-        let _ = window.show();
-        schedule_terminal_overlay_hide(app, payload.state.clone());
-    }
+    let serialized = serde_json::to_string(&payload).map_err(|err| err.to_string())?;
+    let init_script = format!(
+        "window.__OPEN_EAGLE_SOLO_OVERLAY__=true;window.__SOLO_OVERLAY__={serialized};"
+    );
+
+    let window = WebviewWindowBuilder::new(
+        &app,
+        SOLO_OVERLAY_LABEL,
+        WebviewUrl::App("solo-overlay.html".into()),
+    )
+    .title("SOLO Overlay")
+    .always_on_top(true)
+    .decorations(false)
+    .skip_taskbar(true)
+    .resizable(false)
+    .focused(false)
+    .inner_size(SOLO_OVERLAY_WIDTH, SOLO_OVERLAY_HEIGHT)
+    .initialization_script(&init_script)
+    .build()
+    .map_err(|err| format!("failed to create overlay window: {err}"))?;
+
+    position_overlay(&window);
+    let _ = window.set_ignore_cursor_events(true);
+
     Ok(json!({"ok": true}))
 }
 
 #[tauri::command]
 fn update_solo_overlay(app: AppHandle, payload: OverlayPayload) -> Result<Value, String> {
+    let payload = normalize_overlay_payload(payload);
     if let Some(window) = app.get_webview_window(SOLO_OVERLAY_LABEL) {
         println!(
             "[SOLO/RUST] update_solo_overlay state={}",
-            payload
-                .state
-                .clone()
-                .unwrap_or_else(|| "unknown".to_string())
+            payload.state.clone().unwrap_or_default()
         );
-        position_solo_overlay(&window);
-        keep_solo_overlay_passive(&window);
-        apply_solo_overlay_state(&window, &payload)?;
-        schedule_terminal_overlay_hide(app, payload.state.clone());
+        position_overlay(&window);
+        let _ = window.emit("solo://overlay_state", payload.clone());
+        let _ = window.set_ignore_cursor_events(true);
+
+        if matches!(
+            payload.state.as_deref(),
+            Some("completed" | "aborted" | "error")
+        ) {
+            let app_clone = app.clone();
+            let window_label = SOLO_OVERLAY_LABEL.to_string();
+            tauri::async_runtime::spawn(async move {
+                tokio::time::sleep(Duration::from_millis(SOLO_OVERLAY_AUTO_HIDE_MS)).await;
+                if let Some(w) = app_clone.get_webview_window(&window_label) {
+                    let _ = w.hide();
+                    let _ = w.close();
+                }
+            });
+        }
     }
     Ok(json!({"ok": true}))
 }
@@ -465,19 +437,6 @@ fn hide_solo_overlay(app: AppHandle) -> Result<Value, String> {
         let _ = window.hide();
         let _ = window.close();
     }
-    Ok(json!({"ok": true}))
-}
-
-#[tauri::command]
-fn focus_main_window(app: AppHandle) -> Result<Value, String> {
-    let window = app
-        .get_webview_window("main")
-        .ok_or_else(|| "main window not found".to_string())?;
-    let _ = window.show();
-    let _ = window.unminimize();
-    window
-        .set_focus()
-        .map_err(|err| format!("failed to focus main window: {err}"))?;
     Ok(json!({"ok": true}))
 }
 
@@ -513,16 +472,12 @@ fn notify_solo_result(
     app: AppHandle,
     payload: SoloResultNotificationPayload,
 ) -> Result<Value, String> {
-    let main_focused = app
-        .get_webview_window("main")
-        .and_then(|window| window.is_focused().ok())
-        .unwrap_or(false);
-    if main_focused {
-        return Ok(json!({"ok": true, "notified": false, "reason": "main_focused"}));
-    }
-
     let title = solo_notification_title(&payload.state);
     let body = sanitize_notification_body(payload.detail);
+    println!(
+        "[SOLO/RUST] notify_solo_result state={} body={}",
+        payload.state, body
+    );
     app.notification()
         .builder()
         .title(title)
@@ -712,6 +667,17 @@ fn kill_backend(app: &AppHandle) {
 }
 
 fn main() {
+    // Set AppUserModelId for Windows notification toasts (required by WinRT).
+    #[cfg(target_os = "windows")]
+    unsafe {
+        use std::ffi::CString;
+        let id = CString::new("com.openeagle.desktop").unwrap();
+        extern "system" {
+            fn SetCurrentProcessExplicitAppUserModelID(app_id: *const i8) -> i32;
+        }
+        let _ = SetCurrentProcessExplicitAppUserModelID(id.as_ptr());
+    }
+
     let runtime = Arc::new(BackendRuntime::default());
 
     let app = tauri::Builder::default()
@@ -727,7 +693,6 @@ fn main() {
             show_solo_overlay,
             update_solo_overlay,
             hide_solo_overlay,
-            focus_main_window,
             notify_solo_result
         ])
         .setup(|app| {

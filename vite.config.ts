@@ -8,5 +8,10 @@ export default defineConfig({
     port: 1420,
     strictPort: true
   },
+  build: {
+    rollupOptions: {
+      input: ["index.html", "solo-overlay.html"]
+    }
+  },
   clearScreen: false
 });

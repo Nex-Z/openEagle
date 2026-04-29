@@ -4,6 +4,7 @@ import { ActivityInspector } from "./components/inspector/ActivityInspector";
 import { AppShell } from "./components/layout/AppShell";
 import { NavigationSidebar } from "./components/layout/NavigationSidebar";
 import { SettingsDrawer, type SettingsSection } from "./components/settings/SettingsDrawer";
+
 import { useBackendConnection } from "./hooks/useBackendConnection";
 import { useTheme } from "./hooks/useTheme";
 import {
@@ -100,6 +101,7 @@ export default function App() {
     statusLine,
     statusDetail,
     soloStatus,
+    soloStep,
     soloConfirmation,
     toolConfirmation,
     soloDisplays,

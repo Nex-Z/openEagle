@@ -46,6 +46,30 @@ interface ActivityInspectorProps {
 
 type InspectorTab = "activity" | "traces" | "assets";
 
+function AssetImage({ src, label, onClick }: { src: string; label: string; onClick?: () => void }) {
+  const [failed, setFailed] = useState(false);
+  const [currentSrc, setCurrentSrc] = useState(src);
+
+  if (src !== currentSrc) {
+    setCurrentSrc(src);
+    if (failed) setFailed(false);
+  }
+
+  if (failed) {
+    return <div className="asset-card-fallback">图片不可用</div>;
+  }
+
+  return (
+    <img
+      alt={label}
+      loading="lazy"
+      src={src}
+      onClick={onClick}
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 function formatTraceValue(value: unknown) {
   if (typeof value === "string") {
     return value;
@@ -95,8 +119,6 @@ export function ActivityInspector(props: ActivityInspectorProps) {
           const dataUrl = await invoke<string>("read_image_data_url", { path });
           return { path, dataUrl };
         } catch (err) {
-          // read_image_data_url failed (file may not exist or be inaccessible).
-          // The img element will fall back to convertFileSrc via the src attribute.
           console.warn("[assets] read_image_data_url failed:", path, err);
           return null;
         }
@@ -119,7 +141,7 @@ export function ActivityInspector(props: ActivityInspectorProps) {
     return () => {
       cancelled = true;
     };
-  }, [assets, imageDataUrls]);
+  }, [assets]);
 
   const statusTone = useMemo(() => {
     switch (soloStatus.state) {
@@ -369,24 +391,12 @@ export function ActivityInspector(props: ActivityInspectorProps) {
                   {assets.length > 0 ? (
                     assets.map((asset) => {
                       const dataUrl = imageDataUrls[asset.imagePath];
-                      const fileSrc = convertFileSrc(asset.imagePath);
+                      const nativePath = asset.imagePath.replace(/\//g, "\\");
+                      const fileSrc = convertFileSrc(nativePath);
                       const src = dataUrl || fileSrc;
                       return (
                         <figure key={asset.id} className="asset-card">
-                          <img
-                            alt={asset.label}
-                            loading="lazy"
-                            src={src}
-                            onClick={() => src && setPreviewImage(src)}
-                            onError={(e) => {
-                              e.currentTarget.style.display = "none";
-                              const fallback = e.currentTarget.nextElementSibling as HTMLElement | null;
-                              if (fallback) fallback.style.display = "flex";
-                            }}
-                          />
-                          <div className="asset-card-fallback" style={{ display: "none" }}>
-                            图片不可用
-                          </div>
+                          <AssetImage src={src} label={asset.label} onClick={() => src && setPreviewImage(src)} />
                           <figcaption>
                             <strong>{asset.label}</strong>
                             <span>{new Date(asset.createdAt).toLocaleTimeString()}</span>

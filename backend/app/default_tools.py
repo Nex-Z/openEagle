@@ -456,7 +456,7 @@ class OpenEagleDefaultTools(Toolkit):
         return now.strftime(f"%Y-%m-%d %H:%M:%S ({weekday})")
 
     def web_search(self, query: str, max_results: int = 5) -> str:
-        """使用 DuckDuckGo 搜索互联网信息。
+        """使用百度搜索互联网信息。
 
         Args:
             query: 搜索关键词。
@@ -466,13 +466,12 @@ class OpenEagleDefaultTools(Toolkit):
             str: 搜索结果列表，包含标题、摘要和链接。
         """
         try:
-            from duckduckgo_search import DDGS
+            from baidusearch.baidusearch import search
         except ImportError:
-            return "错误：duckduckgo-search 未安装，请运行 uv sync 安装依赖。"
+            return "错误：baidusearch 未安装，请运行 uv sync 安装依赖。"
 
         try:
-            with DDGS() as ddgs:
-                results = list(ddgs.text(query, max_results=max(max_results, 1)))
+            results = search(query, num_results=max(max_results, 1))
         except Exception as exc:
             return f"搜索出错：{exc}"
 
@@ -482,8 +481,8 @@ class OpenEagleDefaultTools(Toolkit):
         lines = [f"搜索「{query}」的结果：\n"]
         for i, item in enumerate(results, 1):
             title = item.get("title", "")
-            body = item.get("body", "")
-            href = item.get("href", "")
+            body = item.get("abstract", item.get("body", ""))
+            href = item.get("url", item.get("href", ""))
             lines.append(f"{i}. **{title}**\n   {body}\n   {href}\n")
         return "\n".join(lines)
 

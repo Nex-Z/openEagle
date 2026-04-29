@@ -212,14 +212,110 @@ export function loadPersistedConversations(): PersistedConversation[] {
       return [];
     }
 
-    return JSON.parse(raw) as PersistedConversation[];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    // Validate each conversation; skip corrupted ones.
+    return parsed.filter(
+      (c): c is PersistedConversation =>
+        c != null &&
+        typeof c === "object" &&
+        c.summary != null &&
+        typeof c.summary === "object" &&
+        typeof c.summary.id === "string" &&
+        Array.isArray(c.messages),
+    );
   } catch {
     return [];
   }
 }
 
+/** Fields that are only useful within the current session and can be stripped for persistence. */
+function stripHeavyFields(msg: ChatMessage): ChatMessage {
+  if (!msg.traces && !msg.blocks && !msg.trace) {
+    return msg;
+  }
+  return {
+    ...msg,
+    traces: undefined,
+    blocks: undefined,
+    trace: undefined,
+  };
+}
+
+/** Estimate serialized size in bytes (rough UTF-8). */
+function estimateSize(obj: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(obj)).length;
+}
+
+/** Max localStorage budget: 4 MB (leave headroom under the ~5 MB limit). */
+const STORAGE_BUDGET = 4 * 1024 * 1024;
+
 export function savePersistedConversations(
   conversations: PersistedConversation[],
 ) {
-  localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(conversations));
+  const stripped = conversations.map((c) => ({
+    ...c,
+    messages: c.messages.map(stripHeavyFields),
+  }));
+
+  try {
+    localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(stripped));
+    return;
+  } catch (err) {
+    if (!isQuotaExceeded(err)) {
+      console.warn("[storage] save failed (non-quota):", err);
+      return;
+    }
+    console.warn("[storage] quota exceeded, pruning…");
+  }
+
+  // Quota exceeded — progressively prune until it fits.
+  let pruned = stripped.map((c) => ({
+    ...c,
+    messages: c.messages.map(stripHeavyFields),
+  }));
+
+  // Phase 1: drop assistant message blocks/traces from oldest conversations first
+  for (let i = 0; i < pruned.length && estimateSize(pruned) > STORAGE_BUDGET; i++) {
+    pruned[i] = { ...pruned[i], messages: pruned[i].messages.map(stripHeavyFields) };
+  }
+
+  // Phase 2: truncate long assistant content in oldest conversations
+  for (let i = 0; i < pruned.length && estimateSize(pruned) > STORAGE_BUDGET; i++) {
+    pruned[i] = {
+      ...pruned[i],
+      messages: pruned[i].messages.map((m) =>
+        m.role === "assistant" && m.content.length > 2000
+          ? { ...m, content: m.content.slice(0, 2000) + "\n…(truncated)" }
+          : m,
+      ),
+    };
+  }
+
+  // Phase 3: remove oldest conversations entirely
+  while (pruned.length > 1 && estimateSize(pruned) > STORAGE_BUDGET) {
+    pruned.shift();
+  }
+
+  try {
+    localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(pruned));
+  } catch (err) {
+    console.error("[storage] save failed even after pruning:", err);
+  }
+}
+
+function isQuotaExceeded(err: unknown): boolean {
+  if (err instanceof DOMException) {
+    // Chromium, Firefox, Safari
+    return (
+      err.code === 22 ||
+      err.code === 1014 ||
+      err.name === "QuotaExceededError" ||
+      err.name === "NS_ERROR_DOM_QUOTA_REACHED"
+    );
+  }
+  return false;
 }

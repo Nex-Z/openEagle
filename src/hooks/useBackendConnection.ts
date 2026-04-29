@@ -13,6 +13,7 @@ import type {
   SoloDisplayOption,
   SoloControlPayload,
   SoloPlanStatus,
+  SoloRunState,
   SoloScreenshotPayload,
   SoloStatusPayload,
   SoloStepPayload,
@@ -22,6 +23,12 @@ import type {
 
 const BACKEND_EVENT = "backend://status";
 const CONNECT_RETRY_LIMIT = 8;
+const terminalSoloStates = new Set<SoloRunState>(["completed", "aborted", "error"]);
+const activeSoloStates = new Set<SoloRunState>([
+  "running",
+  "paused",
+  "waiting_user_confirmation",
+]);
 
 function isTauriRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -29,6 +36,14 @@ function isTauriRuntime() {
 
 function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
+}
+
+function isTerminalSoloState(state: SoloRunState) {
+  return terminalSoloStates.has(state);
+}
+
+function isSoloFinishAction(action: string) {
+  return action.trim().toLowerCase() === "finish";
 }
 
 function collectAssistantContent(blocks?: AssistantMessageBlock[]) {
@@ -213,6 +228,9 @@ export function useBackendConnection(
   const onMessagesChangeRef = useRef(onMessagesChange);
   const skipNextMessageSyncRef = useRef(true);
   const activeSoloRequestIdRef = useRef<string | null>(null);
+  const notifiedSoloRequestIdsRef = useRef<Set<string>>(new Set());
+  const overlayHideTimerRef = useRef<number | null>(null);
+  const [overlayVisible, setOverlayVisible] = useState(false);
 
   const syncSettings = () => {
     const socket = socketRef.current;
@@ -635,7 +653,11 @@ export function useBackendConnection(
       if (envelope.type === "server:solo_status" && envelope.payload.status) {
         activeSoloRequestIdRef.current = envelope.requestId;
         const nextStatus = envelope.payload.status;
-        setSoloStatus(nextStatus);
+        setSoloStatus((current) => ({
+          ...nextStatus,
+          // Preserve detail from solo_step finish handler if solo_status has none
+          detail: nextStatus.detail || current.detail,
+        }));
         appendSoloTimeline(
           `状态更新: ${nextStatus.state}${nextStatus.detail ? ` · ${nextStatus.detail}` : ""}`,
         );
@@ -678,7 +700,11 @@ export function useBackendConnection(
 
       if (envelope.type === "server:solo_step" && envelope.payload.step) {
         const step = envelope.payload.step;
-        const visibleText = step.agentMessage?.trim() || step.thoughtSummary;
+        const visibleText =
+          step.agentMessage?.trim() ||
+          step.thoughtSummary ||
+          step.expectedOutcome ||
+          "步骤已更新。";
         activeSoloRequestIdRef.current = envelope.requestId;
         setSoloStep(step);
         appendSoloTimeline(
@@ -743,6 +769,28 @@ export function useBackendConnection(
               status: "done",
             }),
           );
+        }
+        if (isSoloFinishAction(step.action)) {
+          setSoloConfirmation(null);
+          setSoloLastError(null);
+          setSoloStatus((current) => {
+            if (
+              current.state === "completed" ||
+              current.state === "aborted" ||
+              current.state === "error"
+            ) {
+              return current;
+            }
+            return {
+              ...current,
+              state: "completed",
+              detail: "任务已完成，返回 openEagle 查看执行结果。",
+              stepCount: Math.max(current.stepCount, step.stepIndex),
+              maxSteps: Math.max(current.maxSteps, step.stepIndex),
+              lastAction: step.action,
+              completedAt: step.timestamp,
+            };
+          });
         }
         return;
       }
@@ -810,9 +858,73 @@ export function useBackendConnection(
   }, [backend.phase, backend.port, conversationId, settings]);
 
   useEffect(() => {
+    if (!isTauriRuntime()) {
+      return;
+    }
+
+    const overlayPayload = {
+      title: undefined as string | undefined,
+      detail: soloStatus.detail ?? undefined,
+      stepText: soloStep
+        ? `第 ${soloStep.stepIndex} 步: ${soloStep.action}`
+        : undefined,
+      historyText: soloTimeline.slice(-3).join("\n") || undefined,
+      state: soloStatus.state,
+      stepCount: soloStatus.stepCount,
+      maxSteps: soloStatus.maxSteps,
+    };
+
+    // Show overlay when solo becomes active
+    if (activeSoloStates.has(soloStatus.state)) {
+      setOverlayVisible(true);
+      if (overlayHideTimerRef.current) {
+        clearTimeout(overlayHideTimerRef.current);
+        overlayHideTimerRef.current = null;
+      }
+      void invoke("show_solo_overlay", { payload: overlayPayload }).catch(
+        (err) => console.error("[SOLO] show_solo_overlay failed:", err),
+      );
+    } else if (soloStatus.state !== "idle") {
+      void invoke("update_solo_overlay", { payload: overlayPayload }).catch(
+        (err) => console.error("[SOLO] update_solo_overlay failed:", err),
+      );
+    }
+
+    // Send OS notification on terminal states
+    if (isTerminalSoloState(soloStatus.state)) {
+      const requestId =
+        activeSoloRequestIdRef.current ??
+        soloStatus.startedAt ??
+        `${soloStatus.state}-${soloStatus.completedAt ?? ""}`;
+      if (!notifiedSoloRequestIdsRef.current.has(requestId)) {
+        notifiedSoloRequestIdsRef.current.add(requestId);
+        void invoke("notify_solo_result", {
+          payload: {
+            requestId,
+            state: soloStatus.state,
+            detail: soloStatus.detail,
+          },
+        }).catch((err) => console.error("[SOLO] notify_solo_result failed:", err));
+      }
+
+      // Auto-hide overlay after delay
+      overlayHideTimerRef.current = window.setTimeout(() => {
+        overlayHideTimerRef.current = null;
+        setOverlayVisible(false);
+        void invoke("hide_solo_overlay").catch(
+          (err) => console.error("[SOLO] hide_solo_overlay failed:", err),
+        );
+      }, 4500);
+    }
+  }, [soloStatus, soloStep, soloTimeline]);
+
+  useEffect(() => {
     return () => {
       if (reconnectTimerRef.current) {
         window.clearTimeout(reconnectTimerRef.current);
+      }
+      if (overlayHideTimerRef.current) {
+        clearTimeout(overlayHideTimerRef.current);
       }
       const socket = socketRef.current;
       socketRef.current = null;
@@ -1004,5 +1116,7 @@ export function useBackendConnection(
     rejectDangerousStep,
     allowToolConfirmation: () => sendToolConfirmation("allow"),
     rejectToolConfirmation: () => sendToolConfirmation("reject"),
+    overlayVisible,
+    setOverlayVisible,
   };
 }
