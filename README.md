@@ -17,7 +17,7 @@
 
 > openEagle is still early. Rough edges are expected, and issues are very welcome.
 
-![openEagle Demo](docs/demo.gif)
+![openEagle screenshot](docs/image.png)
 
 ## Why openEagle
 
