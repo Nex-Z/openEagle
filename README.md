@@ -1,91 +1,199 @@
-# openEagle
+<p align="center">
+  <h1 align="center">openEagle</h1>
+  <p align="center">A desktop AI agent that sees your screen and acts on your behalf.</p>
+</p>
 
-openEagle 是一个桌面 Agent 应用，支持普通对话与 SOLO 视觉自动化任务。
+<p align="center">
+  <a href="./README.zh-CN.md">中文文档</a>
+</p>
 
-技术栈：
-- 前端：`Tauri 2 + React + TypeScript`
-- 后端：`Python + FastAPI + WebSocket`
-- 桌面壳：Rust 负责 sidecar 生命周期、本地能力桥接（截图、输入、文件等）
+<p align="center">
+  <img src="https://img.shields.io/badge/version-0.1.0-blue" alt="version" />
+  <img src="https://img.shields.io/badge/license-MIT-green" alt="license" />
+  <img src="https://img.shields.io/badge/platform-Windows%20first%20%7C%20macOS%2FLinux%20planned-lightgrey" alt="platform" />
+</p>
 
-## 核心功能
+---
 
-- **Chat / SOLO 双模式对话**：Chat 模式支持工具调用（文件操作、命令执行、代码搜索）；SOLO 模式通过 VL 模型分析截图自动操作桌面
-- **SOLO Agent Loop**：VL 模型在每一步自主推理（观察→思考→行动），无预定义计划，完全 goal-driven；支持信息积累（findings）与最终汇报
-- **安全模型**：三级风险评估（safe / confirm / blocked），覆盖 SOLO 动作、工具调用、命令执行
-- **工具系统**：Tool / MCP / Skill 斜杠面板（`/`）与能力注入
-- **执行面板**：实时显示 SOLO 状态、时间线、确认决策、截图资产
-- **多模型接入**：`openai` / `openai-like` / `mock`
+> openEagle is still early. Rough edges are expected, and issues are very welcome.
 
-## 目录结构
+![openEagle Demo](docs/demo.gif)
 
-```text
-.
-|-- src/                    # React 前端
-|-- src-tauri/              # Tauri Rust 壳
-|-- backend/                # Python FastAPI / WebSocket 服务
-|-- docs/                   # 文档（架构、开发指南）
-|-- AGENT.md                # Agent 编码约定与扩展规范
-```
+## Why openEagle
 
-## 快速开始
+Most AI assistants can chat and run commands. Very few can **look at your screen and actually do the work**.
 
-### 1) 安装前端依赖
+openEagle bridges the gap between "understanding what you want" and "actually doing it on your desktop." It watches your screen in real time, reasons about what it sees, and operates your mouse, keyboard, and applications — all while keeping you in control with a three-tier safety model.
 
-```powershell
+**Chat mode** for when you need an AI that can search, read files, and run commands. **SOLO mode** for when you need an AI that can navigate GUIs, fill forms, and complete multi-step workflows across applications — the kind of tasks that normally require a human.
+
+> Tried so far:
+>  - Using a browser directly to collect information
+>  - Controlling desktop apps, such as play/pause in a music client
+>  - ...
+
+## Quick Start (5 minutes)
+
+### Prerequisites
+
+- [Node.js](https://nodejs.org/) (with corepack)
+- [Python](https://python.org/) >= 3.12
+- [uv](https://docs.astral.sh/uv/) (Python package manager)
+- [Rust](https://rustup.rs/) (for Tauri)
+
+### Install & Run
+
+```bash
+# Enable pnpm
 corepack enable
 corepack prepare pnpm@10.7.0 --activate
+
+# Install frontend deps
 pnpm install
-```
 
-### 2) 准备 Python 环境
+# Install backend deps
+uv sync --project ./backend
 
-```powershell
-uv sync --project .\backend
-```
-
-### 3) 启动桌面应用
-
-```powershell
+# Launch the app
 pnpm tauri:dev
 ```
 
-说明：开发模式下 Tauri 会拉起 Python 后端并通过握手日志动态获取端口。
+That's it. In development, Tauri starts the Python backend for you; packaged builds use the Python sidecar. Either way, you do not need to start the server manually.
 
-## 常用命令
+### What's happening under the hood
 
-```powershell
-pnpm dev
-pnpm build
-pnpm tauri:dev
-pnpm tauri:build
+```
+Tauri (Rust)  →  starts uv/Python in dev, or the Python sidecar in packaged builds (random port)
+Python        →  prints [AGENT_READY] WS_PORT: <port> to stdout
+Rust          →  parses the port, notifies the frontend
+Frontend      →  connects via WebSocket to ws://127.0.0.1:<port>/ws
 ```
 
-后端检查：
+## Architecture
 
-```powershell
-backend\.venv\Scripts\python.exe -m compileall backend\app
+```
+┌──────────────────────────────────────────────────────┐
+│                   Tauri Shell (Rust)                  │
+│  Process lifecycle · Screenshots · Input injection   │
+│  Overlay window · Notifications                     │
+├──────────────────────────────────────────────────────┤
+│                Python Backend (FastAPI)               │
+│  Agent loop · SOLO orchestration · Tool execution    │
+│  Safety assessment · Prompt engine · Model routing   │
+├──────────────────────────────────────────────────────┤
+│               React Frontend (TypeScript)             │
+│  Chat UI · SOLO overlay · Activity inspector         │
+│  Settings · Dark/light theme · Responsive layout     │
+└──────────────────────────────────────────────────────┘
+         ↕ WebSocket (Envelope protocol)
 ```
 
-## WebSocket 协议（节选）
+### Tech Stack
 
-公共字段：`type`、`requestId`、`conversationId`、`payload`、`timestamp`
+| Layer | Technology |
+|-------|-----------|
+| Desktop shell | Tauri 2, Rust |
+| Frontend | React 18, TypeScript, Vite |
+| Backend | Python 3.12+, FastAPI, WebSocket |
+| LLM | OpenAI-compatible API (configurable) |
+| Vision | VL model via OpenAI-compatible endpoint |
+| Automation | mss (screenshots), pyautogui (input) |
+| Agent framework | agno |
+| Search | baidusearch (free, no API key) |
 
-常见消息类型：
-- 客户端 → 服务端：`client:send_message`、`client:update_settings`、`client:start_solo`、`client:solo_control`、`client:list_solo_displays`、`client:tool_confirmation`
-- 服务端 → 客户端：`server:message`、`server:message_delta`、`server:status`、`server:trace`、`server:solo_status`、`server:solo_step`、`server:solo_plan`、`server:solo_confirmation_required`、`server:tool_confirmation_required`、`server:solo_displays`、`server:error`
+### SOLO Mode — How It Works
 
-## 文档
+SOLO is a **goal-driven agent**, not a task executor with a fixed plan:
 
-- 架构说明：`docs/架构设计理念.md`
-- 开发指南：`docs/开发指南.md`
-- Agent 编码约定：`AGENT.md`
+1. **Observe** — captures a screenshot of your desktop
+2. **Think** — VL model analyzes the image + task goal + history
+3. **Act** — executes one action (click, type, scroll, etc.)
+4. **Repeat** — loops until the task is complete or you stop it
 
-## 打包
+The model autonomously decides what to do at each step. No pre-programmed scripts. No brittle selectors. Just visual understanding and reasoning.
 
-后端 sidecar 打包脚本：
+### Safety Model
 
-```powershell
-.\backend\scripts\build-sidecar.ps1
-```
+Every action is evaluated against a three-tier risk model:
 
-该脚本通过 `PyInstaller` 构建后端可执行文件并输出到 `src-tauri/binaries/`。
+| Level | Behavior |
+|-------|----------|
+| `safe` | Executes immediately (low-risk desktop actions, read-only tools, etc.) |
+| `confirm` | Waits for your approval (file writes, delete/move actions, system shortcuts, etc.) |
+| `blocked` | Refuses outright (dangerous commands like `rm -rf`) |
+
+Additional guardrails: max 150 steps, consecutive duplicate detection, screenshot no-change detection.
+
+## Configuration
+
+openEagle supports flexible model routing — separate providers for chat (text) and vision-language tasks, with configurable base URLs for any OpenAI-compatible API.
+
+Key settings (accessible from the in-app Settings panel):
+
+| Setting | Description |
+|---------|-------------|
+| `agent.provider` | Text model provider (`openai`, `openai-like`, `mock`) |
+| `agent.modelId` | Text model for chat |
+| `agent.baseUrl` | Custom OpenAI-compatible API base URL |
+| `agent.vlProvider` | Vision model provider (`openai`, `openai-like`) |
+| `agent.vlModelId` | Vision-Language model for SOLO |
+| `agent.vlBaseUrl` | OpenAI-compatible API base URL for the vision model |
+| `tools` | Custom tool definitions |
+| `mcp` | MCP server connections |
+| `skills` | Custom skill prompts |
+
+## Roadmap
+
+- [ ] Clearer execution status when you leave the main window
+- [ ] Better support for more models
+- [ ] Scheduled tasks, similar to OpenClaw
+- [ ] Faster responses and actions
+- [ ] Better self-iterating context management
+- [ ] macOS and Linux support
+- [ ] Community plugin system
+- [ ] Multi-monitor awareness
+- [ ] Session replay and richer history
+- [ ] Voice input
+
+## Contributing
+
+Contributions are welcome! Here's how to get started:
+
+1. **Fork** the repository
+2. **Clone** your fork: `git clone https://github.com/YOUR_USERNAME/openEagle.git`
+3. **Create** a branch: `git checkout -b feature/my-feature`
+4. **Make** your changes
+5. **Verify** before committing:
+   ```bash
+   pnpm -s tsc --noEmit          # Frontend type check
+   uv run python -m compileall backend/app  # Backend syntax check
+   cd src-tauri && cargo check   # Rust check (if modified)
+   ```
+6. **Commit** with a clear message following [Conventional Commits](https://www.conventionalcommits.org/):
+   ```
+   feat: add multi-monitor support
+   fix: resolve overlay position on ultrawide displays
+   ```
+7. **Push** and open a Pull Request
+
+### Areas Where Help Is Needed
+
+- **SOLO reliability** — testing across different applications and workflows
+- **Context management** — stronger context strategies inspired by tools like OpenClaw and Hermes
+- **Cross-platform** — macOS and Linux adaptation
+- **Tools & integrations** — new built-in tools, MCP servers, skills
+- **UI motion** — better visual design and interaction polish
+- **Documentation** — guides, tutorials, translations
+- **Tests** — backend unit tests, frontend component tests
+
+See [AGENT.md](./AGENT.md) for detailed coding conventions.
+
+## License
+
+[MIT](./LICENSE)
+
+---
+
+<p align="center">
+  Built with curiosity and too many screenshots.
+</p>
