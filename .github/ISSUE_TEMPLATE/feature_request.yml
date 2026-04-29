@@ -1,0 +1,77 @@
+name: Feature request
+description: Suggest an improvement or new capability for openEagle.
+title: "[Feature]: "
+labels: ["enhancement", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Share the workflow you want to improve and the outcome you are trying to reach.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or workflow
+      description: What are you trying to do, and what currently makes it hard?
+      placeholder: Describe the user workflow, limitation, or pain point.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: What should openEagle do differently?
+      placeholder: Describe the behavior, UI, command, integration, or API you want.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Chat mode
+        - SOLO mode
+        - Tool / MCP / skill integration
+        - Conversation history / persistence
+        - Settings
+        - Desktop shell / Tauri
+        - Backend / FastAPI
+        - Documentation
+        - Tests / developer experience
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Have you tried another workflow, workaround, or design?
+
+  - type: textarea
+    id: examples
+    attributes:
+      label: Examples or references
+      description: Link similar tools, screenshots, mockups, or command examples if helpful.
+
+  - type: dropdown
+    id: priority
+    attributes:
+      label: Priority
+      options:
+        - Nice to have
+        - Important for my workflow
+        - Blocking my workflow
+    validations:
+      required: true
+
+  - type: checkboxes
+    id: contribution
+    attributes:
+      label: Contribution
+      options:
+        - label: I am willing to help test this change.
+        - label: I am willing to open a pull request for this change.

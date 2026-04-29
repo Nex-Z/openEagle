@@ -1,0 +1,127 @@
+name: Bug report
+description: Report a reproducible problem in openEagle.
+title: "[Bug]: "
+labels: ["bug", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for helping improve openEagle. Please include enough detail for someone else to reproduce the issue.
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: What went wrong?
+      placeholder: Describe the bug in one or two sentences.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: area
+    attributes:
+      label: Affected area
+      description: Select every area that seems related.
+      multiple: true
+      options:
+        - Chat mode
+        - SOLO mode
+        - Tool / MCP / skill execution
+        - Conversation history / persistence
+        - Settings
+        - Desktop shell / Tauri
+        - Backend / FastAPI
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      description: List the exact steps that trigger the problem.
+      placeholder: |
+        1. Start the app...
+        2. Ask openEagle to...
+        3. See...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected behavior
+      description: What should have happened instead?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: Actual behavior
+      description: What actually happened? Include visible error messages if any.
+    validations:
+      required: true
+
+  - type: dropdown
+    id: frequency
+    attributes:
+      label: Reproducibility
+      options:
+        - Always
+        - Often
+        - Sometimes
+        - Once
+        - Not sure
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: Version or commit
+      description: App version, git commit, branch, or release build.
+      placeholder: e.g. main at abc1234, v0.1.0, or a local branch name
+
+  - type: dropdown
+    id: os
+    attributes:
+      label: Operating system
+      options:
+        - Windows
+        - macOS
+        - Linux
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment details
+      description: Add details such as CPU/GPU, display setup, browser/WebView, Python/Node/Rust versions, or model/provider if relevant.
+      placeholder: |
+        OS version:
+        Display setup:
+        Node:
+        Python:
+        Rust:
+        Model/provider:
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs, screenshots, or recordings
+      description: Paste logs or attach screenshots/videos. Remove API keys, tokens, and private data first.
+      render: shell
+
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and did not find a duplicate.
+          required: true
+        - label: I removed API keys, tokens, personal data, and private screen content from logs or screenshots.
+          required: true

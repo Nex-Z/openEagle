@@ -1,0 +1,107 @@
+name: SOLO reliability report
+description: Report where SOLO mode gets stuck, misreads the screen, or takes an unsafe action.
+title: "[SOLO]: "
+labels: ["solo", "reliability", "triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Use this template for SOLO mode issues involving screen understanding, action selection, scrolling, clicking, typing, or task completion.
+
+  - type: textarea
+    id: goal
+    attributes:
+      label: Task goal
+      description: What did you ask SOLO mode to accomplish?
+      placeholder: e.g. Check in on a website, find a setting, fill a form, compare records...
+    validations:
+      required: true
+
+  - type: textarea
+    id: target
+    attributes:
+      label: Target app or website
+      description: Name the app/site and the page or workflow if you can share it.
+      placeholder: e.g. Chrome on example.com/settings, a desktop app dialog, a local admin page...
+    validations:
+      required: true
+
+  - type: dropdown
+    id: failure_mode
+    attributes:
+      label: What went wrong?
+      multiple: true
+      options:
+        - Misread screen content
+        - Clicked the wrong place
+        - Typed the wrong text
+        - Scrolled incorrectly
+        - Repeated the same action
+        - Stopped too early
+        - Did not stop when it should have
+        - Tool / MCP / skill result was displayed incorrectly
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: timeline
+    attributes:
+      label: Timeline or steps
+      description: Describe what SOLO did before the issue appeared.
+      placeholder: |
+        1. I asked...
+        2. SOLO observed...
+        3. SOLO clicked/scrolled/typed...
+        4. The problem happened when...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected SOLO behavior
+      description: What should it have done at that point?
+    validations:
+      required: true
+
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Evidence
+      description: Attach screenshots, recordings, trace snippets, or logs. Redact private screen content and secrets first.
+
+  - type: dropdown
+    id: reproducibility
+    attributes:
+      label: Reproducibility
+      options:
+        - Always
+        - Often
+        - Sometimes
+        - Once
+        - Not sure
+    validations:
+      required: true
+
+  - type: textarea
+    id: display
+    attributes:
+      label: Display and environment
+      description: Screen count, scaling, resolution, OS, and anything else that may affect screenshot interpretation.
+      placeholder: |
+        OS:
+        Display count:
+        Resolution:
+        Scaling:
+        Browser/app:
+        Model/provider:
+
+  - type: checkboxes
+    id: safety
+    attributes:
+      label: Safety and privacy
+      options:
+        - label: I removed API keys, tokens, personal data, and private screen content from evidence.
+          required: true
+        - label: If this involved an unsafe action, I described the risk and the confirmation behavior I expected.
