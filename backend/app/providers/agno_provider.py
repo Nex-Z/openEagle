@@ -113,6 +113,7 @@ class AgnoAgentProvider:
             request_id=self._request_id,
             conversation_id=self._conversation_id or conversation_id,
             permission_mode=self._config.permissions.mode,
+            builtin_tools=[bt.model_dump() for bt in self._config.builtin_tools],
         )
         configured_functions, configured_name_map = default_tools.build_configured_tool_functions(
             self._config.tools,

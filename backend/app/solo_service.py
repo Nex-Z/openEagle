@@ -38,6 +38,14 @@ ALLOWED_ACTIONS = {
     "press_keys",
     "execute_command",
     "open_url",
+    # Default tools (also available in Chat mode)
+    "web_search",
+    "get_current_time",
+    "get_file_info",
+    "list_directory",
+    "read_text_file",
+    "search_files",
+    "search_text",
 }
 
 BATCH_EXECUTABLE_ACTIONS = {"click", "double_click", "scroll", "type_text", "press_keys", "wait"}

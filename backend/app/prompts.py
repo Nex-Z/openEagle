@@ -160,7 +160,9 @@ def solo_decision_instructions(system_platform: str = "当前系统") -> list[st
             "可以用的动作：\n"
             "  finish | wait | screenshot | click | double_click | right_click |\n"
             "  move_mouse | scroll | type_text | press_keys | execute_command"
-            " | open_url"
+            " | open_url |\n"
+            "  web_search | get_current_time | get_file_info | list_directory"
+            " | read_text_file | search_files | search_text"
         ),
         (
             "action_args 参数规范：\n"
@@ -174,7 +176,14 @@ def solo_decision_instructions(system_platform: str = "当前系统") -> list[st
             "  press_keys: {\"keys\": string[]}，如 [\"ctrl\", \"s\"]\n"
             "  execute_command: {\"command\": string, \"cwd\"?: string, \"timeout_ms\"?: number}\n"
             "    能用命令行完成的事优先用命令行，更快更可靠\n"
-            "  open_url: {\"url\": string}，只允许 http/https；搜索/网页任务优先用它直达"
+            "  open_url: {\"url\": string}，只允许 http/https；搜索/网页任务优先用它直达\n"
+            "  web_search: {\"query\": string, \"max_results\"?: number}，互联网搜索，获取信息优先用它\n"
+            "  get_current_time: {}，获取当前系统日期时间\n"
+            "  get_file_info: {\"path\": string}，获取文件/目录信息（大小、修改时间等）\n"
+            "  list_directory: {\"path\"?: string}，列出目录内容\n"
+            "  read_text_file: {\"path\": string}，读取文本文件内容\n"
+            "  search_files: {\"keyword\": string, \"path\"?: string}，按文件名搜索\n"
+            "  search_text: {\"keyword\": string, \"path\"?: string}，按内容搜索文本"
         ),
         (
             "注意事项：\n"

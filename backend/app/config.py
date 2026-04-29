@@ -35,6 +35,17 @@ class SkillConfig(BaseModel):
     enabled: bool = True
 
 
+class BuiltinToolConfig(BaseModel):
+    id: str
+    name: str
+    description: str = ""
+    enabled: bool = True
+
+    model_config = {
+        "populate_by_name": True,
+    }
+
+
 class SoloConfig(BaseModel):
     preferred_display_index: int = Field(default=1, alias="preferredDisplayIndex")
 
@@ -79,6 +90,7 @@ class AppConfig(BaseModel):
     permissions: PermissionConfig = PermissionConfig()
     solo: SoloConfig = SoloConfig()
     tools: list[ToolConfig] = Field(default_factory=list)
+    builtin_tools: list[BuiltinToolConfig] = Field(default_factory=list, alias="builtinTools")
     mcp: list[McpConfig] = Field(default_factory=list)
     skills: list[SkillConfig] = Field(default_factory=list)
 

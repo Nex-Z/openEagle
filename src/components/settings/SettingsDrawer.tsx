@@ -758,6 +758,44 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                     })}
                   </div>
                 </section>
+
+                <section className="settings-panel">
+                  <div className="settings-panel-head">
+                    <div>
+                      <span className="card-kicker">Built-in</span>
+                      <strong>内置工具</strong>
+                    </div>
+                  </div>
+                  <div className="config-list">
+                    {settings.builtinTools.map((bt) => (
+                      <article key={bt.id} className="config-row">
+                        <div className="config-row-head">
+                          <div className="config-row-copy">
+                            <strong>{bt.name}</strong>
+                            <span>{bt.description}</span>
+                          </div>
+                          <div className="config-row-actions">
+                            <label className="toggle-inline">
+                              <input
+                                type="checkbox"
+                                checked={bt.enabled}
+                                onChange={(e) =>
+                                  onChange({
+                                    ...settings,
+                                    builtinTools: settings.builtinTools.map((item) =>
+                                      item.id === bt.id ? { ...item, enabled: e.target.checked } : item,
+                                    ),
+                                  })
+                                }
+                              />
+                              <span className="toggle-track" />
+                            </label>
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                  </div>
+                </section>
               </div>
             ) : null}
 

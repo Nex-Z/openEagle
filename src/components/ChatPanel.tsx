@@ -523,7 +523,7 @@ export function ChatPanel(props: ChatPanelProps) {
                   <img
                     alt={message.label || "SOLO screenshot"}
                     className="message-image"
-                    src={imageDataUrls[message.imagePath] ?? convertFileSrc(message.imagePath)}
+                    src={imageDataUrls[message.imagePath] ?? convertFileSrc(message.imagePath.replace(/\//g, "\\"))}
                   />
                   <small>{message.imagePath}</small>
                 </div>

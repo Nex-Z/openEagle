@@ -122,6 +122,13 @@ export interface SkillConfig {
   enabled: boolean;
 }
 
+export interface BuiltinToolConfig {
+  id: string;
+  name: string;
+  description: string;
+  enabled: boolean;
+}
+
 export interface AppSettings {
   feishu: FeishuSettings;
   agent: AgentSettings;
@@ -129,6 +136,7 @@ export interface AppSettings {
   permissions: PermissionSettings;
   solo: SoloSettings;
   tools: ToolConfig[];
+  builtinTools: BuiltinToolConfig[];
   mcp: McpServerConfig[];
   skills: SkillConfig[];
 }
@@ -234,6 +242,32 @@ export interface SoloPlanStatus {
   alternative: string;
   agentMessage: string;
   replanCount: number;
+}
+
+export type SoloOverlayControlAction =
+  | "pause"
+  | "resume"
+  | "stop"
+  | "confirm_allow"
+  | "confirm_reject"
+  | "open_main"
+  | "dismiss";
+
+export interface SoloOverlayControlPayload {
+  action: SoloOverlayControlAction;
+}
+
+export interface SoloOverlayState {
+  state: SoloRunState;
+  title: string;
+  detail: string;
+  stepText: string;
+  historyText: string;
+  stepCount: number;
+  maxSteps: number;
+  lastAction?: string;
+  confirmationAction?: string;
+  confirmationReason?: string;
 }
 
 export interface ConversationSummary {

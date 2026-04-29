@@ -9,6 +9,7 @@ import {
   ListTree,
   ShieldAlert,
   Wrench,
+  X,
 } from "lucide-react";
 import type {
   AgentExecutionTrace,
@@ -45,6 +46,30 @@ interface ActivityInspectorProps {
 
 type InspectorTab = "activity" | "traces" | "assets";
 
+function AssetImage({ src, label, onClick }: { src: string; label: string; onClick?: () => void }) {
+  const [failed, setFailed] = useState(false);
+  const [currentSrc, setCurrentSrc] = useState(src);
+
+  if (src !== currentSrc) {
+    setCurrentSrc(src);
+    if (failed) setFailed(false);
+  }
+
+  if (failed) {
+    return <div className="asset-card-fallback">图片不可用</div>;
+  }
+
+  return (
+    <img
+      alt={label}
+      loading="lazy"
+      src={src}
+      onClick={onClick}
+      onError={() => setFailed(true)}
+    />
+  );
+}
+
 function formatTraceValue(value: unknown) {
   if (typeof value === "string") {
     return value;
@@ -77,6 +102,7 @@ export function ActivityInspector(props: ActivityInspectorProps) {
   const [activeTab, setActiveTab] = useState<InspectorTab>("activity");
   const [expandedTraceId, setExpandedTraceId] = useState<string | null>(null);
   const [imageDataUrls, setImageDataUrls] = useState<Record<string, string>>({});
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
 
   useEffect(() => {
     const imagePaths = Array.from(
@@ -92,7 +118,8 @@ export function ActivityInspector(props: ActivityInspectorProps) {
         try {
           const dataUrl = await invoke<string>("read_image_data_url", { path });
           return { path, dataUrl };
-        } catch {
+        } catch (err) {
+          console.warn("[assets] read_image_data_url failed:", path, err);
           return null;
         }
       }),
@@ -114,7 +141,7 @@ export function ActivityInspector(props: ActivityInspectorProps) {
     return () => {
       cancelled = true;
     };
-  }, [assets, imageDataUrls]);
+  }, [assets]);
 
   const statusTone = useMemo(() => {
     switch (soloStatus.state) {
@@ -134,7 +161,7 @@ export function ActivityInspector(props: ActivityInspectorProps) {
   const confirmationCount =
     Number(Boolean(soloConfirmation)) + Number(Boolean(toolConfirmation));
 
-  return (
+  const inspector = (
     <aside
       className={inspectorCollapsed ? "activity-inspector is-collapsed" : "activity-inspector"}
     >
@@ -362,19 +389,21 @@ export function ActivityInspector(props: ActivityInspectorProps) {
                 </div>
                 <div className="asset-list">
                   {assets.length > 0 ? (
-                    assets.map((asset) => (
-                      <figure key={asset.id} className="asset-card">
-                        <img
-                          alt={asset.label}
-                          loading="lazy"
-                          src={imageDataUrls[asset.imagePath] ?? convertFileSrc(asset.imagePath)}
-                        />
-                        <figcaption>
-                          <strong>{asset.label}</strong>
-                          <span>{new Date(asset.createdAt).toLocaleTimeString()}</span>
-                        </figcaption>
-                      </figure>
-                    ))
+                    assets.map((asset) => {
+                      const dataUrl = imageDataUrls[asset.imagePath];
+                      const nativePath = asset.imagePath.replace(/\//g, "\\");
+                      const fileSrc = convertFileSrc(nativePath);
+                      const src = dataUrl || fileSrc;
+                      return (
+                        <figure key={asset.id} className="asset-card">
+                          <AssetImage src={src} label={asset.label} onClick={() => src && setPreviewImage(src)} />
+                          <figcaption>
+                            <strong>{asset.label}</strong>
+                            <span>{new Date(asset.createdAt).toLocaleTimeString()}</span>
+                          </figcaption>
+                        </figure>
+                      );
+                    })
                   ) : (
                     <div className="trace-empty">还没有截图素材。</div>
                   )}
@@ -385,5 +414,34 @@ export function ActivityInspector(props: ActivityInspectorProps) {
         </>
       )}
     </aside>
+  );
+
+  return (
+    <>
+      {inspector}
+      {previewImage ? (
+        <div
+          className="image-preview-backdrop"
+          onClick={() => setPreviewImage(null)}
+          onKeyDown={(e) => { if (e.key === "Escape") setPreviewImage(null); }}
+          role="button"
+          tabIndex={0}
+        >
+          <button
+            className="image-preview-close"
+            onClick={() => setPreviewImage(null)}
+            type="button"
+          >
+            <X size={20} />
+          </button>
+          <img
+            className="image-preview-img"
+            src={previewImage}
+            alt="预览"
+            onClick={(e) => e.stopPropagation()}
+          />
+        </div>
+      ) : null}
+    </>
   );
 }

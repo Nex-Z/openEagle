@@ -2,9 +2,10 @@
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
   "description": "Main capability for openEagle desktop",
-  "windows": ["main"],
+  "windows": ["main", "solo-overlay"],
   "permissions": [
     "core:default",
+    "notification:default",
     "shell:allow-execute",
     {
       "identifier": "shell:allow-spawn",
