@@ -7,8 +7,10 @@ import type {
   AppSettings,
   BackendState,
   ChatMessage,
+  ConversationSummary,
   Envelope,
   ErrorPayload,
+  IMStatusPayload,
   SoloConfirmationPayload,
   SoloDisplayOption,
   SoloControlPayload,
@@ -206,6 +208,11 @@ export function useBackendConnection(
   settings: AppSettings,
   initialMessages: ChatMessage[],
   onMessagesChange: (conversationId: string, messages: ChatMessage[]) => void,
+  onConversationPatch: (
+    conversationId: string,
+    summary: ConversationSummary | undefined,
+    updater: (messages: ChatMessage[]) => ChatMessage[],
+  ) => void,
 ) {
   const [backend, setBackend] = useState<BackendState>(initialState);
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
@@ -221,6 +228,9 @@ export function useBackendConnection(
   const [soloTimeline, setSoloTimeline] = useState<string[]>([]);
   const [soloLastError, setSoloLastError] = useState<string | null>(null);
   const [soloPlan, setSoloPlan] = useState<SoloPlanStatus | null>(null);
+  const [imStatuses, setImStatuses] = useState<
+    Partial<Record<IMStatusPayload["provider"], IMStatusPayload>>
+  >({});
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
@@ -228,6 +238,7 @@ export function useBackendConnection(
   const onMessagesChangeRef = useRef(onMessagesChange);
   const messagesRef = useRef(messages);
   const syncedConversationIdRef = useRef(conversationId);
+  const onConversationPatchRef = useRef(onConversationPatch);
   const skipNextMessageSyncRef = useRef(true);
   const activeSoloRequestIdRef = useRef<string | null>(null);
   const notifiedSoloRequestIdsRef = useRef<Set<string>>(new Set());
@@ -371,6 +382,10 @@ export function useBackendConnection(
   }, [conversationId, initialMessages]);
 
   useEffect(() => {
+    onConversationPatchRef.current = onConversationPatch;
+  }, [onConversationPatch]);
+
+  useEffect(() => {
     if (skipNextMessageSyncRef.current) {
       skipNextMessageSyncRef.current = false;
       return;
@@ -472,12 +487,75 @@ export function useBackendConnection(
           screenshot?: SoloScreenshotPayload;
           label?: string;
           preferredDisplayIndex?: number;
+          conversation?: ConversationSummary;
+          source?: string;
+          provider?: IMStatusPayload["provider"];
+          state?: IMStatusPayload["state"];
+          lastBlockedOpenId?: string;
+          lastBlockedChatId?: string;
         } & ErrorPayload &
           StatusPayload
       >;
 
+      const targetConversationId = envelope.conversationId;
+      const targetConversation = envelope.payload.conversation;
+      const patchMessages = (updater: (messages: ChatMessage[]) => ChatMessage[]) => {
+        if (targetConversationId === conversationId) {
+          setMessages(updater);
+          return;
+        }
+        onConversationPatchRef.current(
+          targetConversationId,
+          targetConversation,
+          updater,
+        );
+      };
+      const appendEnvelopeMessage = (message: Omit<ChatMessage, "id">) => {
+        patchMessages((current) =>
+          appendChatMessage(current, {
+            ...message,
+            id: createId(message.role),
+          }),
+        );
+      };
+
+      if (envelope.type === "server:im_status") {
+        if (envelope.payload.provider && envelope.payload.state) {
+          const nextStatus: IMStatusPayload = {
+            provider: envelope.payload.provider,
+            state: envelope.payload.state,
+            detail: envelope.payload.detail,
+            lastBlockedOpenId: envelope.payload.lastBlockedOpenId,
+            lastBlockedChatId: envelope.payload.lastBlockedChatId,
+          };
+          setImStatuses((current) => ({
+            ...current,
+            [nextStatus.provider]: nextStatus,
+          }));
+        }
+        return;
+      }
+
+      if (envelope.type === "server:external_user_message") {
+        appendEnvelopeMessage({
+          requestId: envelope.requestId,
+          role: "user",
+          label:
+            envelope.payload.source === "feishu"
+              ? "飞书"
+              : envelope.payload.source === "telegram"
+                ? "Telegram"
+                : "IM",
+          content: envelope.payload.content ?? "",
+          createdAt: envelope.timestamp,
+          status: "done",
+          mode: "chat",
+        });
+        return;
+      }
+
       if (envelope.type === "server:message") {
-        setMessages((current) =>
+        patchMessages((current) =>
           upsertAssistantMessage(current, envelope.requestId, (message) => {
             const blocks = cloneAssistantBlocks(message);
             if (blocks.length === 0 && envelope.payload.content) {
@@ -514,7 +592,7 @@ export function useBackendConnection(
       }
 
       if (envelope.type === "server:message_delta") {
-        setMessages((current) =>
+        patchMessages((current) =>
           upsertAssistantMessage(current, envelope.requestId, (message) => {
             const delta = envelope.payload.content ?? "";
             const blocks = cloneAssistantBlocks(message);
@@ -550,7 +628,7 @@ export function useBackendConnection(
 
       if (envelope.type === "server:status") {
         if (envelope.payload.stage === "thinking") {
-          setMessages((current) =>
+          patchMessages((current) =>
             upsertAssistantMessage(current, envelope.requestId, (message) => {
               const blocks = cloneAssistantBlocks(message);
               return {
@@ -571,7 +649,7 @@ export function useBackendConnection(
         }
 
         if (envelope.payload.stage === "idle") {
-          setMessages((current) =>
+          patchMessages((current) =>
             current.map((message) =>
               message.role === "assistant" &&
               message.requestId === envelope.requestId &&
@@ -593,7 +671,7 @@ export function useBackendConnection(
       if (envelope.type === "server:trace" && envelope.payload.trace) {
         const trace = envelope.payload.trace!;
         if (envelope.requestId === activeSoloRequestIdRef.current) {
-          appendSoloMessage({
+          appendEnvelopeMessage({
             requestId: envelope.requestId,
             role: "tool",
             label: trace.name,
@@ -611,7 +689,7 @@ export function useBackendConnection(
             ],
           });
         } else {
-          setMessages((current) =>
+          patchMessages((current) =>
             upsertAssistantTrace(current, envelope.requestId, trace),
           );
         }
@@ -626,18 +704,14 @@ export function useBackendConnection(
         setToolConfirmation(confirmation);
         setStatusLine("等待工具确认");
         setStatusDetail(`${confirmation.name}: ${confirmation.reason}`);
-        setMessages((current) => [
-          ...current,
-          {
-            id: createId("system"),
+        appendEnvelopeMessage({
             requestId: envelope.requestId,
             role: "system",
             label: "工具确认",
             content: `工具 \`${confirmation.name}\` 需要确认。\n\n原因: ${confirmation.reason}`,
             createdAt: envelope.timestamp,
             status: "error" as const,
-          },
-        ]);
+        });
         return;
       }
 
@@ -651,8 +725,8 @@ export function useBackendConnection(
       if (envelope.type === "server:solo_screenshot" && envelope.payload.screenshot) {
         const screenshot = envelope.payload.screenshot;
         activeSoloRequestIdRef.current = envelope.requestId;
-        appendSoloMessage(
-          createChatMessage({
+        patchMessages((current) =>
+          appendChatMessage(current, createChatMessage({
             role: "tool",
             label: envelope.payload.label || "截图预览",
             content: `SOLO 已捕获新的屏幕状态。`,
@@ -661,7 +735,7 @@ export function useBackendConnection(
             mode: "solo",
             imagePath: screenshot.path,
             status: "done",
-          }),
+          })),
         );
         return;
       }
@@ -684,16 +758,17 @@ export function useBackendConnection(
             nextStatus.state === "aborted" ||
             nextStatus.state === "error")
         ) {
-          appendSoloMessage(
-            createChatMessage({
+          const statusDetailText = nextStatus.detail;
+          patchMessages((current) =>
+            appendChatMessage(current, createChatMessage({
               role: nextStatus.state === "error" ? "system" : "assistant",
               label: `SOLO ${nextStatus.state}`,
-              content: nextStatus.detail,
+              content: statusDetailText,
               createdAt: new Date().toISOString(),
               requestId: envelope.requestId,
               mode: "solo",
               status: nextStatus.state === "error" ? "error" : "done",
-            }),
+            })),
           );
         }
         if (nextStatus.state === "running") {
@@ -726,8 +801,8 @@ export function useBackendConnection(
         appendSoloTimeline(
           `第 ${step.stepIndex} 步: ${step.action} · ${visibleText}`,
         );
-        appendSoloMessage(
-          createChatMessage({
+        patchMessages((current) =>
+          appendChatMessage(current, createChatMessage({
             role: "assistant",
             label: `第 ${step.stepIndex} 步`,
             content: visibleText,
@@ -735,9 +810,9 @@ export function useBackendConnection(
             requestId: envelope.requestId,
             mode: "solo",
             status: "done",
-          }),
+          })),
         );
-        appendSoloMessage({
+        appendEnvelopeMessage({
           requestId: envelope.requestId,
           role: "tool",
           label: step.action,
@@ -773,8 +848,8 @@ export function useBackendConnection(
           ],
         });
         if (step.screenshotPath) {
-          appendSoloMessage(
-            createChatMessage({
+          patchMessages((current) =>
+            appendChatMessage(current, createChatMessage({
               role: "tool",
               label: "截图预览",
               content: `当前截图已获取，等待执行动作 \`${step.action}\`。`,
@@ -783,7 +858,7 @@ export function useBackendConnection(
               mode: "solo",
               imagePath: step.screenshotPath,
               status: "done",
-            }),
+            })),
           );
         }
         if (isSoloFinishAction(step.action)) {
@@ -830,8 +905,8 @@ export function useBackendConnection(
         appendSoloTimeline(
           `等待确认: ${confirmation.action} · ${confirmation.reason}`,
         );
-        appendSoloMessage(
-          createChatMessage({
+        patchMessages((current) =>
+          appendChatMessage(current, createChatMessage({
             role: "system",
             label: "危险动作确认",
             content: `${confirmation.thoughtSummary}\n\n动作: \`${confirmation.action}\`\n\n原因: ${confirmation.reason}`,
@@ -839,7 +914,7 @@ export function useBackendConnection(
             requestId: envelope.requestId,
             mode: "solo",
             status: "error",
-          }),
+          })),
         );
         return;
       }
@@ -849,7 +924,7 @@ export function useBackendConnection(
         setStatusDetail(
           envelope.payload.detail ?? envelope.payload.message ?? "未知错误",
         );
-        setMessages((current) => {
+        patchMessages((current) => {
           const next: ChatMessage[] = current.map((message) =>
             message.role === "assistant" &&
             message.requestId === envelope.requestId &&
@@ -1150,6 +1225,7 @@ export function useBackendConnection(
     soloTimeline,
     soloLastError,
     soloPlan,
+    imStatuses,
     canStartSolo,
     startSolo,
     requestSoloDisplays,

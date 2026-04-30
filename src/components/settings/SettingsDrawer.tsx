@@ -4,6 +4,7 @@ import { Monitor, SlidersHorizontal, Sparkles, Wrench, X } from "lucide-react";
 import { ThemeToggle } from "../ThemeToggle";
 import type {
   AppSettings,
+  IMStatusPayload,
   McpServerConfig,
   SkillConfig,
   SoloDisplayOption,
@@ -14,8 +15,8 @@ import { SecretInput } from "./SecretInput";
 export type SettingsSection =
   | "general"
   | "models"
-  | "solo"
   | "im"
+  | "solo"
   | "tools"
   | "mcp"
   | "skills";
@@ -25,6 +26,7 @@ interface SettingsDrawerProps {
   settings: AppSettings;
   activeSection: SettingsSection;
   soloDisplays: SoloDisplayOption[];
+  imStatuses: Partial<Record<IMStatusPayload["provider"], IMStatusPayload>>;
   onRefreshSoloDisplays: () => boolean;
   onChange: (settings: AppSettings) => void;
   onClose: () => void;
@@ -38,8 +40,8 @@ const sectionMeta: Array<{
 }> = [
   { id: "general", title: "General", summary: "外观与基础体验。" },
   { id: "models", title: "Models", summary: "文本模型和视觉模型接入。" },
-  { id: "solo", title: "SOLO", summary: "显示器预览与截图目标。" },
   { id: "im", title: "IM", summary: "飞书与 Telegram 远程接入。" },
+  { id: "solo", title: "SOLO", summary: "显示器预览与截图目标。" },
   { id: "tools", title: "Tools", summary: "本地工具入口。" },
   { id: "mcp", title: "MCP", summary: "MCP Server 配置。" },
   { id: "skills", title: "Skills", summary: "提示技能配置。" },
@@ -89,6 +91,17 @@ function updateListItem<T extends { id: string }>(
 
 function removeListItem<T extends { id: string }>(list: T[], id: string) {
   return list.filter((item) => item.id !== id);
+}
+
+function splitLines(value: string) {
+  return value
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function joinLines(value: string[]) {
+  return value.join("\n");
 }
 
 function getToolQualityMessages(tool: ToolConfig, tools: ToolConfig[]) {
@@ -191,6 +204,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
     settings,
     activeSection,
     soloDisplays,
+    imStatuses,
     onRefreshSoloDisplays,
     onChange,
     onClose,
@@ -246,6 +260,8 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
   }, [previewDataUrls, soloDisplays]);
 
   const activeMeta = sectionMeta.find((section) => section.id === activeSection) ?? sectionMeta[0];
+  const feishuStatus = imStatuses.feishu;
+  const telegramStatus = imStatuses.telegram;
 
   return (
     <>
@@ -316,7 +332,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                   <div className="settings-panel-head">
                     <div>
                       <span className="card-kicker">飞书</span>
-                      <strong>飞书机器人</strong>
+                      <strong>长连接机器人</strong>
                     </div>
                     <Sparkles size={16} />
                   </div>
@@ -367,18 +383,37 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                     />
                   </label>
                   <label className="form-field">
-                    <span>Verification Token</span>
-                    <input
+                    <span>允许的 open_id</span>
+                    <textarea
+                      className="form-textarea"
                       onChange={(event) =>
                         onChange({
                           ...settings,
                           feishu: {
                             ...settings.feishu,
-                            verificationToken: event.target.value,
+                            allowedOpenIds: splitLines(event.target.value),
                           },
                         })
                       }
-                      value={settings.feishu.verificationToken}
+                      placeholder="每行一个 open_id"
+                      value={joinLines(settings.feishu.allowedOpenIds)}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>允许的 chat_id</span>
+                    <textarea
+                      className="form-textarea"
+                      onChange={(event) =>
+                        onChange({
+                          ...settings,
+                          feishu: {
+                            ...settings.feishu,
+                            allowedChatIds: splitLines(event.target.value),
+                          },
+                        })
+                      }
+                      placeholder="每行一个 chat_id"
+                      value={joinLines(settings.feishu.allowedChatIds)}
                     />
                   </label>
                 </section>
@@ -387,7 +422,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                   <div className="settings-panel-head">
                     <div>
                       <span className="card-kicker">Telegram</span>
-                      <strong>Telegram Bot</strong>
+                      <strong>Bot 长轮询</strong>
                     </div>
                     <Sparkles size={16} />
                   </div>
@@ -419,27 +454,70 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                           },
                         })
                       }
-                      placeholder="从 @BotFather 获取"
                       value={settings.telegram.botToken}
                     />
                   </label>
                   <label className="form-field">
-                    <span>Webhook URL</span>
-                    <input
+                    <span>允许的 user_id</span>
+                    <textarea
+                      className="form-textarea"
                       onChange={(event) =>
                         onChange({
                           ...settings,
                           telegram: {
                             ...settings.telegram,
-                            webhookUrl: event.target.value,
+                            allowedUserIds: splitLines(event.target.value),
                           },
                         })
                       }
-                      placeholder="可选，用于接收消息回调"
-                      value={settings.telegram.webhookUrl}
+                      placeholder="每行一个 Telegram user_id"
+                      value={joinLines(settings.telegram.allowedUserIds)}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>允许的 chat_id</span>
+                    <textarea
+                      className="form-textarea"
+                      onChange={(event) =>
+                        onChange({
+                          ...settings,
+                          telegram: {
+                            ...settings.telegram,
+                            allowedChatIds: splitLines(event.target.value),
+                          },
+                        })
+                      }
+                      placeholder="每行一个 Telegram chat_id"
+                      value={joinLines(settings.telegram.allowedChatIds)}
                     />
                   </label>
                 </section>
+
+                <section className="settings-panel">
+                  <div className="settings-panel-head">
+                    <div>
+                      <span className="card-kicker">状态</span>
+                      <strong>IM 连接</strong>
+                    </div>
+                  </div>
+                  <div className="form-hint">
+                    <span>飞书: {feishuStatus?.state ?? "disabled"} · {feishuStatus?.detail || "未启动"}</span>
+                    {feishuStatus?.lastBlockedOpenId ? (
+                      <span>飞书最近拦截 open_id: {feishuStatus.lastBlockedOpenId}</span>
+                    ) : null}
+                    {feishuStatus?.lastBlockedChatId ? (
+                      <span>飞书最近拦截 chat_id: {feishuStatus.lastBlockedChatId}</span>
+                    ) : null}
+                    <span>Telegram: {telegramStatus?.state ?? "disabled"} · {telegramStatus?.detail || "未启动"}</span>
+                    {telegramStatus?.lastBlockedOpenId ? (
+                      <span>Telegram 最近拦截 user_id: {telegramStatus.lastBlockedOpenId}</span>
+                    ) : null}
+                    {telegramStatus?.lastBlockedChatId ? (
+                      <span>Telegram 最近拦截 chat_id: {telegramStatus.lastBlockedChatId}</span>
+                    ) : null}
+                  </div>
+                </section>
+
               </div>
             ) : null}
 

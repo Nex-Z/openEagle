@@ -81,3 +81,14 @@ class ToolConfirmationStore:
             del self._pending[confirmation_id]
             return None
         return pending
+
+    def latest_for_conversation(self, conversation_id: str) -> PendingToolConfirmation | None:
+        self._cleanup_expired()
+        matches = [
+            pending
+            for pending in self._pending.values()
+            if pending.conversation_id == conversation_id
+        ]
+        if not matches:
+            return None
+        return max(matches, key=lambda pending: pending.created_at)

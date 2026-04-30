@@ -69,12 +69,35 @@ export interface FeishuSettings {
   appId: string;
   appSecret: string;
   verificationToken: string;
+  allowedOpenIds: string[];
+  allowedChatIds: string[];
+  status?: string;
 }
 
 export interface TelegramSettings {
   enabled: boolean;
   botToken: string;
   webhookUrl: string;
+  allowedUserIds: string[];
+  allowedChatIds: string[];
+  status?: string;
+}
+
+export interface ImProviderSettings {
+  id: string;
+  type: "feishu" | "telegram";
+  name: string;
+  enabled: boolean;
+  appId?: string;
+  appSecret?: string;
+  botToken?: string;
+  allowedOpenIds?: string[];
+  allowedUserIds?: string[];
+  allowedChatIds: string[];
+}
+
+export interface ImSettings {
+  providers: ImProviderSettings[];
 }
 
 export interface AgentSettings {
@@ -138,6 +161,7 @@ export interface BuiltinToolConfig {
 export interface AppSettings {
   feishu: FeishuSettings;
   telegram: TelegramSettings;
+  im: ImSettings;
   agent: AgentSettings;
   appearance: AppearanceSettings;
   permissions: PermissionSettings;
@@ -281,6 +305,14 @@ export interface ConversationSummary {
   id: string;
   title: string;
   updatedAt: string;
+}
+
+export interface IMStatusPayload {
+  provider: "feishu" | "telegram";
+  state: "disabled" | "starting" | "connected" | "error";
+  detail?: string;
+  lastBlockedOpenId?: string;
+  lastBlockedChatId?: string;
 }
 
 export interface BackendState {

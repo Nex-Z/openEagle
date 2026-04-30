@@ -132,11 +132,18 @@ export const defaultSettings: AppSettings = {
     appId: "",
     appSecret: "",
     verificationToken: "",
+    allowedOpenIds: [],
+    allowedChatIds: [],
   },
   telegram: {
     enabled: false,
     botToken: "",
     webhookUrl: "",
+    allowedUserIds: [],
+    allowedChatIds: [],
+  },
+  im: {
+    providers: [],
   },
   agent: {
     provider: "mock",
@@ -213,10 +220,29 @@ export function loadSettings(): AppSettings {
       feishu: {
         ...defaultSettings.feishu,
         ...parsed.feishu,
+        allowedOpenIds: Array.isArray(parsed.feishu?.allowedOpenIds)
+          ? parsed.feishu.allowedOpenIds
+          : defaultSettings.feishu.allowedOpenIds,
+        allowedChatIds: Array.isArray(parsed.feishu?.allowedChatIds)
+          ? parsed.feishu.allowedChatIds
+          : defaultSettings.feishu.allowedChatIds,
       },
       telegram: {
         ...defaultSettings.telegram,
         ...parsed.telegram,
+        allowedUserIds: Array.isArray(parsed.telegram?.allowedUserIds)
+          ? parsed.telegram.allowedUserIds
+          : defaultSettings.telegram.allowedUserIds,
+        allowedChatIds: Array.isArray(parsed.telegram?.allowedChatIds)
+          ? parsed.telegram.allowedChatIds
+          : defaultSettings.telegram.allowedChatIds,
+      },
+      im: {
+        ...defaultSettings.im,
+        ...parsed.im,
+        providers: Array.isArray(parsed.im?.providers)
+          ? parsed.im.providers
+          : defaultSettings.im.providers,
       },
       agent: {
         ...defaultSettings.agent,

@@ -33,6 +33,17 @@ function createConversation(seed?: Partial<ConversationSummary>): ConversationSu
   };
 }
 
+function createExternalConversationSummary(
+  conversationId: string,
+  seed?: Partial<ConversationSummary>,
+): ConversationSummary {
+  return {
+    id: conversationId,
+    title: seed?.title ?? "IM 对话",
+    updatedAt: seed?.updatedAt ?? new Date().toISOString(),
+  };
+}
+
 function createFallbackConversationStore(): PersistedConversation[] {
   return [
     {
@@ -93,6 +104,8 @@ export default function App() {
   const saveQueueRef = useRef(Promise.resolve());
   const indexSaveTimerRef = useRef<number | null>(null);
   const conversationSaveTimerRef = useRef<number | null>(null);
+  const externalConversationSaveTimerRef = useRef<number | null>(null);
+  const pendingConversationSaveIdsRef = useRef<Set<string>>(new Set());
   const pendingDeletedConversationIdsRef = useRef<Set<string>>(new Set());
   const previousConversationIdsRef = useRef<Set<string>>(
     new Set(conversationStore.map((item) => item.summary.id)),
@@ -168,6 +181,7 @@ export default function App() {
     soloTimeline,
     soloLastError,
     soloPlan,
+    imStatuses,
     canStartSolo,
     startSolo,
     requestSoloDisplays,
@@ -202,6 +216,45 @@ export default function App() {
         ),
       );
     },
+    (conversationId, summary, updater) => {
+      pendingConversationSaveIdsRef.current.add(conversationId);
+      setConversationStore((current) => {
+        const index = current.findIndex((item) => item.summary.id === conversationId);
+        if (index >= 0) {
+          return current.map((item, itemIndex) => {
+            if (itemIndex !== index) {
+              return item;
+            }
+            const nextMessages = updater(item.messages);
+            return {
+              ...item,
+              summary: {
+                ...item.summary,
+                ...(summary ?? {}),
+                id: conversationId,
+                updatedAt:
+                  nextMessages[nextMessages.length - 1]?.createdAt ??
+                  item.summary.updatedAt,
+              },
+              messages: nextMessages,
+            };
+          });
+        }
+
+        const baseSummary = createExternalConversationSummary(conversationId, summary);
+        const messages = updater([]);
+        return [
+          {
+            summary: {
+              ...baseSummary,
+              updatedAt: messages[messages.length - 1]?.createdAt ?? baseSummary.updatedAt,
+            },
+            messages,
+          },
+          ...current,
+        ];
+      });
+    },
   );
 
   useEffect(() => {
@@ -215,6 +268,9 @@ export default function App() {
       }
       if (conversationSaveTimerRef.current) {
         window.clearTimeout(conversationSaveTimerRef.current);
+      }
+      if (externalConversationSaveTimerRef.current) {
+        window.clearTimeout(externalConversationSaveTimerRef.current);
       }
     };
   }, []);
@@ -265,6 +321,32 @@ export default function App() {
       enqueueSave(() => savePersistedConversation(conversationToSave));
     }, 500);
   }, [activeConversation, conversationsHydrated]);
+
+  useEffect(() => {
+    if (!conversationsHydrated || pendingConversationSaveIdsRef.current.size === 0) {
+      return;
+    }
+
+    const pendingIds = new Set(pendingConversationSaveIdsRef.current);
+    pendingConversationSaveIdsRef.current.clear();
+    const conversationsToSave = conversationStore.filter((item) =>
+      pendingIds.has(item.summary.id),
+    );
+    if (conversationsToSave.length === 0) {
+      return;
+    }
+
+    if (externalConversationSaveTimerRef.current) {
+      window.clearTimeout(externalConversationSaveTimerRef.current);
+    }
+    externalConversationSaveTimerRef.current = window.setTimeout(() => {
+      enqueueSave(async () => {
+        for (const conversation of conversationsToSave) {
+          await savePersistedConversation(conversation);
+        }
+      });
+    }, 500);
+  }, [conversationStore, conversationsHydrated]);
 
   useEffect(() => {
     if (conversationStore.some((item) => item.summary.id === activeConversationId)) {
@@ -392,6 +474,7 @@ export default function App() {
 
       <SettingsDrawer
         activeSection={settingsSection}
+        imStatuses={imStatuses}
         onChange={setSettings}
         onClose={() => setSettingsDrawerOpen(false)}
         onRefreshSoloDisplays={requestSoloDisplays}
