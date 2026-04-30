@@ -3,11 +3,12 @@ from __future__ import annotations
 import re
 import unittest
 
-from app.config import FeishuConfig
+from app.config import FeishuConfig, TelegramConfig
 from app.im.commands import parse_im_command
 from app.im.feishu import parse_message_receive_event
 from app.im.models import IMMessageSource
 from app.im.routing import build_conversation_binding, is_source_allowed
+from app.im.telegram import parse_update, split_telegram_text
 
 
 class IMRoutingTest(unittest.TestCase):
@@ -51,6 +52,27 @@ class IMRoutingTest(unittest.TestCase):
         self.assertTrue(
             is_source_allowed(
                 FeishuConfig(enabled=True, allowedChatIds=["oc_chat"]),
+                source,
+            )
+        )
+
+    def test_telegram_user_id_or_chat_id_allow_source(self) -> None:
+        source = IMMessageSource(
+            channel="telegram",
+            chat_id="-100123",
+            chat_type="group",
+            user_id="42",
+        )
+
+        self.assertTrue(
+            is_source_allowed(
+                TelegramConfig(enabled=True, allowedUserIds=["42"]),
+                source,
+            )
+        )
+        self.assertTrue(
+            is_source_allowed(
+                TelegramConfig(enabled=True, allowedChatIds=["-100123"]),
                 source,
             )
         )
@@ -143,6 +165,90 @@ class FeishuEventParseTest(unittest.TestCase):
         )
 
         self.assertIsNone(event)
+
+
+class TelegramEventParseTest(unittest.TestCase):
+    def test_private_text_update_parses(self) -> None:
+        event = parse_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "message_id": 7,
+                    "from": {"id": 42, "first_name": "Ada"},
+                    "chat": {"id": 42, "type": "private"},
+                    "text": "hello",
+                },
+            },
+            bot_username="openEagleBot",
+        )
+
+        self.assertIsNotNone(event)
+        self.assertEqual(event.source.channel, "telegram")
+        self.assertEqual(event.source.chat_type, "private")
+        self.assertEqual(event.text, "hello")
+
+    def test_group_update_requires_bot_mention(self) -> None:
+        without_mention = parse_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "from": {"id": 42},
+                    "chat": {"id": -100123, "type": "supergroup"},
+                    "text": "hello",
+                },
+            },
+            bot_username="openEagleBot",
+        )
+        with_mention = parse_update(
+            {
+                "update_id": 2,
+                "message": {
+                    "from": {"id": 42},
+                    "chat": {"id": -100123, "type": "group"},
+                    "text": "@openEagleBot /help",
+                },
+            },
+            bot_username="openEagleBot",
+        )
+
+        self.assertIsNone(without_mention)
+        self.assertIsNotNone(with_mention)
+        self.assertEqual(with_mention.text, "/help")
+
+    def test_group_command_requires_bot_username_suffix(self) -> None:
+        plain = parse_update(
+            {
+                "update_id": 1,
+                "message": {
+                    "from": {"id": 42},
+                    "chat": {"id": -100123, "type": "group"},
+                    "text": "/help",
+                },
+            },
+            bot_username="openEagleBot",
+        )
+        targeted = parse_update(
+            {
+                "update_id": 2,
+                "message": {
+                    "from": {"id": 42},
+                    "chat": {"id": -100123, "type": "group"},
+                    "text": "/solo@openEagleBot 打开记事本",
+                },
+            },
+            bot_username="openEagleBot",
+        )
+
+        self.assertIsNone(plain)
+        self.assertIsNotNone(targeted)
+        self.assertEqual(targeted.text, "/solo 打开记事本")
+
+    def test_telegram_text_split_uses_api_limit(self) -> None:
+        chunks = split_telegram_text("x" * 4100)
+
+        self.assertEqual(len(chunks), 2)
+        self.assertEqual(len(chunks[0]), 4096)
+        self.assertEqual(len(chunks[1]), 4)
 
 
 if __name__ == "__main__":

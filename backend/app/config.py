@@ -86,14 +86,27 @@ class FeishuConfig(BaseModel):
     }
 
 
+class TelegramConfig(BaseModel):
+    enabled: bool = False
+    bot_token: str | None = Field(default=None, alias="botToken")
+    allowed_user_ids: list[str] = Field(default_factory=list, alias="allowedUserIds")
+    allowed_chat_ids: list[str] = Field(default_factory=list, alias="allowedChatIds")
+
+    model_config = {
+        "populate_by_name": True,
+    }
+
+
 class ImProviderConfig(BaseModel):
     id: str = "feishu"
     type: str = "feishu"
-    name: str = "飞书机器人"
+    name: str = ""
     enabled: bool = False
     app_id: str | None = Field(default=None, alias="appId")
     app_secret: str | None = Field(default=None, alias="appSecret")
+    bot_token: str | None = Field(default=None, alias="botToken")
     allowed_open_ids: list[str] = Field(default_factory=list, alias="allowedOpenIds")
+    allowed_user_ids: list[str] = Field(default_factory=list, alias="allowedUserIds")
     allowed_chat_ids: list[str] = Field(default_factory=list, alias="allowedChatIds")
 
     model_config = {
@@ -108,6 +121,7 @@ class ImConfig(BaseModel):
 class AppConfig(BaseModel):
     agent: AgentConfig = AgentConfig()
     feishu: FeishuConfig = FeishuConfig()
+    telegram: TelegramConfig = TelegramConfig()
     im: ImConfig = ImConfig()
     permissions: PermissionConfig = PermissionConfig()
     solo: SoloConfig = SoloConfig()

@@ -26,7 +26,7 @@ interface SettingsDrawerProps {
   settings: AppSettings;
   activeSection: SettingsSection;
   soloDisplays: SoloDisplayOption[];
-  imStatus: IMStatusPayload | null;
+  imStatuses: Partial<Record<IMStatusPayload["provider"], IMStatusPayload>>;
   onRefreshSoloDisplays: () => boolean;
   onChange: (settings: AppSettings) => void;
   onClose: () => void;
@@ -204,7 +204,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
     settings,
     activeSection,
     soloDisplays,
-    imStatus,
+    imStatuses,
     onRefreshSoloDisplays,
     onChange,
     onClose,
@@ -260,6 +260,8 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
   }, [previewDataUrls, soloDisplays]);
 
   const activeMeta = sectionMeta.find((section) => section.id === activeSection) ?? sectionMeta[0];
+  const feishuStatus = imStatuses.feishu;
+  const telegramStatus = imStatuses.telegram;
 
   return (
     <>
@@ -419,17 +421,99 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                 <section className="settings-panel">
                   <div className="settings-panel-head">
                     <div>
+                      <span className="card-kicker">Telegram</span>
+                      <strong>Bot 长轮询</strong>
+                    </div>
+                    <Sparkles size={16} />
+                  </div>
+                  <label className="form-switch">
+                    <span>启用 Telegram 入口</span>
+                    <input
+                      checked={settings.telegram.enabled}
+                      onChange={(event) =>
+                        onChange({
+                          ...settings,
+                          telegram: {
+                            ...settings.telegram,
+                            enabled: event.target.checked,
+                          },
+                        })
+                      }
+                      type="checkbox"
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Bot Token</span>
+                    <SecretInput
+                      onChange={(value) =>
+                        onChange({
+                          ...settings,
+                          telegram: {
+                            ...settings.telegram,
+                            botToken: value,
+                          },
+                        })
+                      }
+                      value={settings.telegram.botToken}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>允许的 user_id</span>
+                    <textarea
+                      className="form-textarea"
+                      onChange={(event) =>
+                        onChange({
+                          ...settings,
+                          telegram: {
+                            ...settings.telegram,
+                            allowedUserIds: splitLines(event.target.value),
+                          },
+                        })
+                      }
+                      placeholder="每行一个 Telegram user_id"
+                      value={joinLines(settings.telegram.allowedUserIds)}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>允许的 chat_id</span>
+                    <textarea
+                      className="form-textarea"
+                      onChange={(event) =>
+                        onChange({
+                          ...settings,
+                          telegram: {
+                            ...settings.telegram,
+                            allowedChatIds: splitLines(event.target.value),
+                          },
+                        })
+                      }
+                      placeholder="每行一个 Telegram chat_id"
+                      value={joinLines(settings.telegram.allowedChatIds)}
+                    />
+                  </label>
+                </section>
+
+                <section className="settings-panel">
+                  <div className="settings-panel-head">
+                    <div>
                       <span className="card-kicker">状态</span>
-                      <strong>{imStatus?.state ?? "disabled"}</strong>
+                      <strong>IM 连接</strong>
                     </div>
                   </div>
                   <div className="form-hint">
-                    <span>{imStatus?.detail || "飞书入口尚未启动。"}</span>
-                    {imStatus?.lastBlockedOpenId ? (
-                      <span>最近拦截 open_id: {imStatus.lastBlockedOpenId}</span>
+                    <span>飞书: {feishuStatus?.state ?? "disabled"} · {feishuStatus?.detail || "未启动"}</span>
+                    {feishuStatus?.lastBlockedOpenId ? (
+                      <span>飞书最近拦截 open_id: {feishuStatus.lastBlockedOpenId}</span>
                     ) : null}
-                    {imStatus?.lastBlockedChatId ? (
-                      <span>最近拦截 chat_id: {imStatus.lastBlockedChatId}</span>
+                    {feishuStatus?.lastBlockedChatId ? (
+                      <span>飞书最近拦截 chat_id: {feishuStatus.lastBlockedChatId}</span>
+                    ) : null}
+                    <span>Telegram: {telegramStatus?.state ?? "disabled"} · {telegramStatus?.detail || "未启动"}</span>
+                    {telegramStatus?.lastBlockedOpenId ? (
+                      <span>Telegram 最近拦截 user_id: {telegramStatus.lastBlockedOpenId}</span>
+                    ) : null}
+                    {telegramStatus?.lastBlockedChatId ? (
+                      <span>Telegram 最近拦截 chat_id: {telegramStatus.lastBlockedChatId}</span>
                     ) : null}
                   </div>
                 </section>

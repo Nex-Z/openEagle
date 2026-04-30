@@ -135,6 +135,12 @@ export const defaultSettings: AppSettings = {
     allowedOpenIds: [],
     allowedChatIds: [],
   },
+  telegram: {
+    enabled: false,
+    botToken: "",
+    allowedUserIds: [],
+    allowedChatIds: [],
+  },
   im: {
     providers: [],
   },
@@ -200,6 +206,16 @@ export function loadSettings(): AppSettings {
         allowedChatIds: Array.isArray(parsed.feishu?.allowedChatIds)
           ? parsed.feishu.allowedChatIds
           : defaultSettings.feishu.allowedChatIds,
+      },
+      telegram: {
+        ...defaultSettings.telegram,
+        ...parsed.telegram,
+        allowedUserIds: Array.isArray(parsed.telegram?.allowedUserIds)
+          ? parsed.telegram.allowedUserIds
+          : defaultSettings.telegram.allowedUserIds,
+        allowedChatIds: Array.isArray(parsed.telegram?.allowedChatIds)
+          ? parsed.telegram.allowedChatIds
+          : defaultSettings.telegram.allowedChatIds,
       },
       im: {
         ...defaultSettings.im,

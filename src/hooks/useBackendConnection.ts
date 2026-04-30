@@ -228,7 +228,9 @@ export function useBackendConnection(
   const [soloTimeline, setSoloTimeline] = useState<string[]>([]);
   const [soloLastError, setSoloLastError] = useState<string | null>(null);
   const [soloPlan, setSoloPlan] = useState<SoloPlanStatus | null>(null);
-  const [imStatus, setImStatus] = useState<IMStatusPayload | null>(null);
+  const [imStatuses, setImStatuses] = useState<
+    Partial<Record<IMStatusPayload["provider"], IMStatusPayload>>
+  >({});
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
@@ -503,13 +505,17 @@ export function useBackendConnection(
 
       if (envelope.type === "server:im_status") {
         if (envelope.payload.provider && envelope.payload.state) {
-          setImStatus({
+          const nextStatus: IMStatusPayload = {
             provider: envelope.payload.provider,
             state: envelope.payload.state,
             detail: envelope.payload.detail,
             lastBlockedOpenId: envelope.payload.lastBlockedOpenId,
             lastBlockedChatId: envelope.payload.lastBlockedChatId,
-          });
+          };
+          setImStatuses((current) => ({
+            ...current,
+            [nextStatus.provider]: nextStatus,
+          }));
         }
         return;
       }
@@ -518,7 +524,12 @@ export function useBackendConnection(
         appendEnvelopeMessage({
           requestId: envelope.requestId,
           role: "user",
-          label: envelope.payload.source === "feishu" ? "飞书" : "IM",
+          label:
+            envelope.payload.source === "feishu"
+              ? "飞书"
+              : envelope.payload.source === "telegram"
+                ? "Telegram"
+                : "IM",
           content: envelope.payload.content ?? "",
           createdAt: envelope.timestamp,
           status: "done",
@@ -1170,7 +1181,7 @@ export function useBackendConnection(
     soloTimeline,
     soloLastError,
     soloPlan,
-    imStatus,
+    imStatuses,
     canStartSolo,
     startSolo,
     requestSoloDisplays,

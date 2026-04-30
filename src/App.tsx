@@ -181,7 +181,7 @@ export default function App() {
     soloTimeline,
     soloLastError,
     soloPlan,
-    imStatus,
+    imStatuses,
     canStartSolo,
     startSolo,
     requestSoloDisplays,
@@ -474,7 +474,7 @@ export default function App() {
 
       <SettingsDrawer
         activeSection={settingsSection}
-        imStatus={imStatus}
+        imStatuses={imStatuses}
         onChange={setSettings}
         onClose={() => setSettingsDrawerOpen(false)}
         onRefreshSoloDisplays={requestSoloDisplays}

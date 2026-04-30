@@ -4,7 +4,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal
 
 
-IMChannel = Literal["feishu"]
+IMChannel = Literal["feishu", "telegram"]
 IMChatType = Literal["private", "group"]
 
 

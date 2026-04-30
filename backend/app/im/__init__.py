@@ -9,6 +9,7 @@ from .models import (
     IMStatus,
 )
 from .routing import build_conversation_binding, is_source_allowed
+from .telegram import TelegramAdapter
 
 __all__ = [
     "IMCommand",
@@ -17,6 +18,7 @@ __all__ = [
     "IMMessageSource",
     "IMOutboundMessage",
     "IMStatus",
+    "TelegramAdapter",
     "build_conversation_binding",
     "is_source_allowed",
     "parse_im_command",
