@@ -14,6 +14,8 @@ from .agent_service import build_agent_service
 from .config import AppConfig, load_config
 from .confirmations import ToolConfirmationStore
 from .default_tools import build_default_tools, execute_confirmed_tool
+from .im.bridge import IMBridge, bind_config_getter
+from .im.models import IMConversationBinding
 from .models import (
     Envelope,
     ErrorPayload,
@@ -133,6 +135,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     solo_tools = SoloToolkit(solo_executor)
     solo_logger = SoloRunLogger(workspace_root)
     tool_confirmations = ToolConfirmationStore()
+    im_bridge: IMBridge | None = None
 
     async def safe_send(
         type_: str,
@@ -226,6 +229,16 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             session.conversation_id,
             {"status": payload},
         )
+        if (
+            im_bridge is not None
+            and session.conversation_id.startswith("im_")
+            and session.detail
+            and session.state in {"paused", "waiting_user_confirmation", "completed", "aborted", "error"}
+        ):
+            await im_bridge.send_text(
+                session.conversation_id,
+                f"SOLO {session.state}: {session.detail}",
+            )
 
     async def emit_solo_plan(session: SoloSessionState, kernel: SoloAgentKernel) -> None:
         await safe_send(
@@ -279,6 +292,15 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             session.conversation_id,
             {"step": payload},
         )
+        if im_bridge is not None and session.conversation_id.startswith("im_"):
+            visible_text = agent_message or expected_outcome or thought_summary
+            if action == "finish":
+                await im_bridge.send_text(session.conversation_id, visible_text)
+            elif visible_text:
+                await im_bridge.send_text(
+                    session.conversation_id,
+                    f"SOLO 第 {step_index} 步: {action}\n{visible_text}",
+                )
 
     async def emit_confirmation(
         session: SoloSessionState,
@@ -301,6 +323,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             session.conversation_id,
             {"confirmation": payload},
         )
+        if im_bridge is not None and session.conversation_id.startswith("im_"):
+            await im_bridge.send_text(
+                session.conversation_id,
+                f"SOLO 需要确认动作 `{action}`。\n原因: {reason}\n回复 /allow 继续，或 /reject 拒绝。",
+            )
 
 
     def _build_final_report(session: SoloSessionState, decision: "SoloDecision | None" = None) -> str:
@@ -876,6 +903,418 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             # ━━ STEP 7: Loop continues naturally (observe → think → act) ━━
 
+    async def sync_runtime_config(next_config: AppConfig) -> None:
+        runtime_state.update_config(next_config)
+        solo_executor.set_preferred_display_index(next_config.solo.preferred_display_index)
+        solo_executor._default_tools = build_default_tools(
+            workspace_root=workspace_root,
+            builtin_tools=[bt.model_dump() for bt in next_config.builtin_tools],
+        )
+        if im_bridge is not None:
+            await im_bridge.update_config(next_config)
+
+    async def stream_chat_reply(
+        conversation_id: str,
+        request_id: str,
+        content: str,
+    ) -> str:
+        enhanced_prompt = content
+        prev_result = confirmed_tool_results.pop(conversation_id, None)
+        if prev_result:
+            enhanced_prompt = f"{prev_result}\n\n用户新消息：{content}"
+
+        await safe_send(
+            "server:status",
+            request_id,
+            conversation_id,
+            StatusPayload(stage="thinking", detail="后端正在生成回复").model_dump(),
+        )
+
+        agent_service = build_agent_service(
+            runtime_state.get_config(),
+            confirmation_store=tool_confirmations,
+            request_id=request_id,
+            conversation_id=conversation_id,
+        )
+        chunks: list[str] = []
+        async for event in agent_service.stream_reply(conversation_id, enhanced_prompt):
+            if isinstance(event, ReplyChunk):
+                chunks.append(event.content)
+                await safe_send(
+                    "server:message_delta",
+                    request_id,
+                    conversation_id,
+                    {"content": event.content},
+                )
+                continue
+
+            if isinstance(event, ReplyTrace):
+                await safe_send(
+                    "server:trace",
+                    request_id,
+                    conversation_id,
+                    {
+                        "trace": {
+                            "id": event.trace_id,
+                            "kind": event.kind,
+                            "name": event.name,
+                            "status": event.status,
+                            "summary": event.summary,
+                            "params": event.params,
+                            "result": event.result,
+                            "startedAt": event.started_at,
+                            "completedAt": event.completed_at,
+                        }
+                    },
+                )
+                continue
+
+            if isinstance(event, ReplyToolConfirmation):
+                pending = tool_confirmations.get(event.confirmation_id)
+                if pending:
+                    await safe_send(
+                        "server:tool_confirmation_required",
+                        request_id,
+                        conversation_id,
+                        {"confirmation": pending.to_payload()},
+                    )
+                    if im_bridge is not None and conversation_id.startswith("im_"):
+                        await im_bridge.send_text(
+                            conversation_id,
+                            f"工具 `{pending.name}` 需要确认。\n原因: {pending.reason}\n回复 /allow 执行，或 /reject 拒绝。",
+                        )
+
+        reply = "".join(chunks)
+        await safe_send("server:message", request_id, conversation_id, {"content": reply})
+        await safe_send(
+            "server:status",
+            request_id,
+            conversation_id,
+            StatusPayload(stage="idle", detail="回复完成").model_dump(),
+        )
+        return reply
+
+    async def handle_chat_from_im(
+        binding: IMConversationBinding,
+        content: str,
+        request_id: str,
+    ) -> str:
+        return await stream_chat_reply(binding.conversation_id, request_id, content)
+
+    async def start_solo_for_conversation(
+        conversation_id: str,
+        task: str,
+        request_id: str,
+    ) -> str:
+        nonlocal active_solo, solo_service, solo_kernel
+        if active_solo is not None and active_solo.state in {
+            "running",
+            "paused",
+            "waiting_user_confirmation",
+        }:
+            return "已有 SOLO 任务在进行中，请先 /stop 或等待它结束。"
+
+        current_config = runtime_state.get_config()
+        if not current_config.agent.vl_model_id or not current_config.agent.vl_api_key:
+            return "SOLO 配置缺失，请先在 openEagle 设置中配置 VL 模型 ID 与 API Key。"
+
+        solo_service = SoloService(current_config.agent)
+        solo_kernel = SoloAgentKernel.create(task)
+        solo_executor.set_preferred_display_index(current_config.solo.preferred_display_index)
+        first_screenshot = await asyncio.to_thread(solo_tools.screenshot)
+        slog(f"start request={request_id} conv={conversation_id} task={task[:120]}")
+        active_solo = SoloSessionState(
+            request_id=request_id,
+            conversation_id=conversation_id,
+            task=task,
+            started_at=utc_now(),
+            last_screenshot_path=str(first_screenshot.get("path", "")) or None,
+            last_screenshot_hash=(
+                str(first_screenshot.get("contentHash", ""))
+                if first_screenshot.get("contentHash")
+                else None
+            ),
+            last_screenshot_at=(
+                str(first_screenshot.get("capturedAt", ""))
+                if first_screenshot.get("capturedAt")
+                else None
+            ),
+            detail="SOLO 已启动，正在分析首帧截图。",
+            display_index=current_config.solo.preferred_display_index,
+        )
+        active_solo.log_path = solo_logger.start(request_id, task)
+        await emit_solo_plan(active_solo, solo_kernel)
+        await emit_solo_status(active_solo)
+        if not active_solo.last_screenshot_path:
+            active_solo.state = "error"
+            active_solo.detail = "首帧截图失败，无法启动 SOLO。"
+            await emit_solo_status(active_solo)
+            return active_solo.detail
+
+        async def _start_agent() -> None:
+            nonlocal solo_service
+            if solo_service is None or active_solo is None or not is_solo_running(active_solo):
+                return
+            try:
+                slog(
+                    f"request={active_solo.request_id} agent_loop starting "
+                    f"task={active_solo.task[:100]}"
+                )
+                solo_logger.write("agent_start", {"task": active_solo.task})
+                await emit_solo_trace(
+                    active_solo,
+                    "agent",
+                    "started",
+                    "Agent 开始自主决策执行任务...",
+                )
+                await emit_solo_status(active_solo)
+                await agent_loop(active_solo, active_solo.last_screenshot_path)
+            except Exception as exc:  # noqa: BLE001
+                if active_solo is None or not is_solo_running(active_solo):
+                    return
+                active_solo.state = "error"
+                active_solo.detail = f"Agent 启动失败: {exc}"
+                slog(f"request={active_solo.request_id} agent_start error={exc}")
+                solo_logger.write("error", {"reason": active_solo.detail})
+                await emit_solo_status(active_solo)
+
+        schedule_solo_task(_start_agent())
+        return "SOLO 已启动，我会把关键状态和最终结果发回这个飞书会话。"
+
+    async def start_solo_from_im(
+        binding: IMConversationBinding,
+        task: str,
+        request_id: str,
+    ) -> str:
+        return await start_solo_for_conversation(binding.conversation_id, task, request_id)
+
+    async def apply_solo_control(
+        conversation_id: str,
+        request_id: str,
+        action: str,
+    ) -> str:
+        nonlocal active_solo
+        if active_solo is None:
+            return "当前没有进行中的 SOLO 任务。"
+        if active_solo.conversation_id != conversation_id:
+            return "当前 SOLO 任务属于另一个对话，不能从这里控制。"
+
+        if action == "pause":
+            active_solo.state = "paused"
+            active_solo.detail = "用户已暂停 SOLO。"
+            cancel_active_solo_task()
+            solo_logger.write("paused", {"reason": active_solo.detail})
+            await emit_solo_trace(active_solo, "control", "completed", "用户暂停 SOLO", params={"action": "pause"})
+            await emit_solo_status(active_solo)
+            return "SOLO 已暂停。"
+
+        if action == "resume":
+            if active_solo.last_screenshot_path is None:
+                active_solo.state = "error"
+                active_solo.detail = "缺少截图，无法恢复 SOLO。"
+                solo_logger.write("error", {"reason": active_solo.detail})
+                await emit_solo_status(active_solo)
+                return active_solo.detail
+            active_solo.state = "running"
+            active_solo.detail = "SOLO 已恢复。"
+            await emit_solo_trace(active_solo, "control", "completed", "用户恢复 SOLO", params={"action": "resume"})
+            await emit_solo_status(active_solo)
+            schedule_solo_task(agent_loop(active_solo, active_solo.last_screenshot_path))
+            return "SOLO 已恢复。"
+
+        if action == "stop":
+            active_solo.state = "aborted"
+            active_solo.detail = "用户已结束 SOLO。"
+            active_solo.completed_at = utc_now()
+            active_solo.pending_confirmation = None
+            cancel_active_solo_task()
+            solo_logger.write("aborted", {"reason": active_solo.detail})
+            await emit_solo_trace(active_solo, "control", "completed", "用户结束 SOLO", params={"action": "stop"})
+            await emit_solo_status(active_solo)
+            return "SOLO 已结束。"
+
+        if action == "confirm_reject":
+            if not active_solo.pending_confirmation:
+                return "没有待确认的 SOLO 动作。"
+            active_solo.pending_confirmation = None
+            active_solo.state = "paused"
+            active_solo.detail = "用户拒绝了危险动作，SOLO 已暂停。"
+            solo_logger.write("paused", {"reason": active_solo.detail})
+            await emit_solo_status(active_solo)
+            return "已拒绝危险动作，SOLO 已暂停。"
+
+        if action != "confirm_allow":
+            return f"不支持的 SOLO 控制动作: {action}"
+
+        pending = active_solo.pending_confirmation
+        if not pending:
+            return "没有待确认的 SOLO 动作。"
+        active_solo.pending_confirmation = None
+        active_solo.state = "running"
+        active_solo.detail = "用户已允许危险动作，继续执行。"
+        solo_logger.write(
+            "confirmation_required",
+            {
+                "decision": "allow",
+                "action": pending["action"],
+                "actionArgs": pending["action_args"],
+            },
+        )
+        await emit_solo_status(active_solo)
+        await emit_solo_step(
+            active_solo,
+            step_index=active_solo.step_count + 1,
+            action=pending["action"],
+            action_args=pending["action_args"],
+            thought_summary=pending["thought_summary"],
+            expected_outcome=pending["expected_outcome"],
+            agent_message=str(pending.get("agent_message") or "") or None,
+            screenshot_path=active_solo.last_screenshot_path,
+        )
+
+        async def _execute_confirmed_and_continue() -> None:
+            if active_solo is None:
+                return
+            result = await execute_solo_step(active_solo, str(pending["action"]), dict(pending["action_args"]))
+            if active_solo is None or not is_solo_running(active_solo):
+                return
+            active_solo.step_count += 1
+            action_str = str(pending["action"])
+            if action_str == active_solo.last_action:
+                active_solo.repeat_action_count += 1
+            else:
+                active_solo.repeat_action_count = 1
+            active_solo.last_action = action_str
+
+            screenshot = result.get("screenshot")
+            if isinstance(screenshot, dict):
+                new_path = screenshot.get("path")
+                new_hash = screenshot.get("contentHash")
+                if isinstance(new_path, str):
+                    active_solo.last_screenshot_path = new_path
+                if isinstance(new_hash, str):
+                    if new_hash == active_solo.last_screenshot_hash:
+                        active_solo.same_screenshot_count += 1
+                    else:
+                        active_solo.same_screenshot_count = 0
+                    active_solo.last_screenshot_hash = new_hash
+
+            result_summary = summarize_solo_step_result(result)
+            if active_solo.history:
+                active_solo.history[-1]["result"] = result_summary
+
+            if not result.get("success"):
+                active_solo.state = "paused"
+                active_solo.detail = f"确认动作执行失败: {result.get('executionError', 'unknown')}"
+                await emit_solo_status(active_solo)
+                return
+            next_screenshot = active_solo.last_screenshot_path or ""
+            if next_screenshot:
+                await agent_loop(active_solo, next_screenshot)
+
+        schedule_solo_task(_execute_confirmed_and_continue())
+        return "已允许危险动作，SOLO 会继续执行。"
+
+    async def handle_tool_decision_from_im(
+        conversation_id: str,
+        request_id: str,
+        decision: str,
+    ) -> str:
+        pending = tool_confirmations.latest_for_conversation(conversation_id)
+        if pending is None:
+            solo_action = "confirm_allow" if decision == "allow" else "confirm_reject"
+            return await apply_solo_control(conversation_id, request_id, solo_action)
+
+        pending = tool_confirmations.pop(pending.confirmation_id)
+        if pending is None:
+            return "待确认工具动作已过期。"
+        if decision != "allow":
+            await safe_send(
+                "server:message",
+                pending.request_id,
+                pending.conversation_id,
+                {"content": f"已拒绝执行工具动作：{pending.name}。"},
+            )
+            return f"已拒绝执行工具动作：{pending.name}。"
+
+        now = utc_now()
+        await safe_send(
+            "server:trace",
+            pending.request_id,
+            pending.conversation_id,
+            {
+                "trace": {
+                    "id": f"confirmed-{pending.confirmation_id}",
+                    "kind": "tool",
+                    "name": pending.name,
+                    "status": "started",
+                    "summary": "用户已确认，开始执行工具动作。",
+                    "params": pending.params,
+                    "startedAt": now,
+                }
+            },
+        )
+        try:
+            result = await asyncio.to_thread(execute_confirmed_tool, workspace_root, pending)
+            confirmed_tool_results[pending.conversation_id] = (
+                f"上一轮确认执行的工具 `{pending.name}` 结果：\n{result}"
+            )
+            completed_at = utc_now()
+            await safe_send(
+                "server:trace",
+                pending.request_id,
+                pending.conversation_id,
+                {
+                    "trace": {
+                        "id": f"confirmed-{pending.confirmation_id}",
+                        "kind": "tool",
+                        "name": pending.name,
+                        "status": "completed",
+                        "summary": "用户确认后的工具动作已完成。",
+                        "params": pending.params,
+                        "result": result,
+                        "startedAt": now,
+                        "completedAt": completed_at,
+                    }
+                },
+            )
+            content = f"已执行确认动作 `{pending.name}`。\n\n```text\n{result}\n```"
+            await safe_send("server:message", pending.request_id, pending.conversation_id, {"content": content})
+            return content
+        except Exception as exc:  # noqa: BLE001
+            completed_at = utc_now()
+            await safe_send(
+                "server:trace",
+                pending.request_id,
+                pending.conversation_id,
+                {
+                    "trace": {
+                        "id": f"confirmed-{pending.confirmation_id}",
+                        "kind": "tool",
+                        "name": pending.name,
+                        "status": "error",
+                        "summary": "用户确认后的工具动作执行失败。",
+                        "params": pending.params,
+                        "result": str(exc),
+                        "startedAt": now,
+                        "completedAt": completed_at,
+                    }
+                },
+            )
+            content = f"确认后的工具动作 `{pending.name}` 执行失败：{exc}"
+            await safe_send("server:message", pending.request_id, pending.conversation_id, {"content": content})
+            return content
+
+    im_bridge = IMBridge(
+        send_client=safe_send,
+        handle_chat=handle_chat_from_im,
+        start_solo=start_solo_from_im,
+        solo_control=apply_solo_control,
+        tool_decision=handle_tool_decision_from_im,
+    )
+    bind_config_getter(im_bridge, runtime_state.get_config)
+    await im_bridge.update_config(runtime_state.get_config())
+
     try:
         while True:
             raw = await websocket.receive_text()
@@ -883,15 +1322,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             if envelope.type == "client:update_settings":
                 next_config = AppConfig.model_validate(envelope.payload["settings"])
-                runtime_state.update_config(next_config)
-                solo_executor.set_preferred_display_index(
-                    next_config.solo.preferred_display_index
-                )
-                # Recreate default tools if builtin config changed
-                solo_executor._default_tools = build_default_tools(
-                    workspace_root=workspace_root,
-                    builtin_tools=[bt.model_dump() for bt in next_config.builtin_tools],
-                )
+                await sync_runtime_config(next_config)
                 await safe_send(
                     "server:status",
                     envelope.request_id,
@@ -1371,6 +1802,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             "unknown",
             ErrorPayload(message=str(exc), code="internal_error").model_dump(),
         )
+    finally:
+        if im_bridge is not None:
+            try:
+                await im_bridge.stop()
+            except Exception:
+                pass
 
 
 def find_free_port(host: str) -> int:

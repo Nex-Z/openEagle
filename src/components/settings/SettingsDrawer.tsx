@@ -4,6 +4,7 @@ import { Monitor, SlidersHorizontal, Sparkles, Wrench, X } from "lucide-react";
 import { ThemeToggle } from "../ThemeToggle";
 import type {
   AppSettings,
+  IMStatusPayload,
   McpServerConfig,
   SkillConfig,
   SoloDisplayOption,
@@ -14,6 +15,7 @@ import { SecretInput } from "./SecretInput";
 export type SettingsSection =
   | "general"
   | "models"
+  | "im"
   | "solo"
   | "tools"
   | "mcp"
@@ -24,6 +26,7 @@ interface SettingsDrawerProps {
   settings: AppSettings;
   activeSection: SettingsSection;
   soloDisplays: SoloDisplayOption[];
+  imStatus: IMStatusPayload | null;
   onRefreshSoloDisplays: () => boolean;
   onChange: (settings: AppSettings) => void;
   onClose: () => void;
@@ -37,6 +40,7 @@ const sectionMeta: Array<{
 }> = [
   { id: "general", title: "General", summary: "外观与基础体验。" },
   { id: "models", title: "Models", summary: "文本模型和视觉模型接入。" },
+  { id: "im", title: "IM", summary: "飞书等即时通信入口。" },
   { id: "solo", title: "SOLO", summary: "显示器预览与截图目标。" },
   { id: "tools", title: "Tools", summary: "本地工具入口。" },
   { id: "mcp", title: "MCP", summary: "MCP Server 配置。" },
@@ -87,6 +91,17 @@ function updateListItem<T extends { id: string }>(
 
 function removeListItem<T extends { id: string }>(list: T[], id: string) {
   return list.filter((item) => item.id !== id);
+}
+
+function splitLines(value: string) {
+  return value
+    .split(/\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function joinLines(value: string[]) {
+  return value.join("\n");
 }
 
 function getToolQualityMessages(tool: ToolConfig, tools: ToolConfig[]) {
@@ -189,6 +204,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
     settings,
     activeSection,
     soloDisplays,
+    imStatus,
     onRefreshSoloDisplays,
     onChange,
     onClose,
@@ -305,12 +321,16 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                     value={settings.appearance.themeMode}
                   />
                 </section>
+              </div>
+            ) : null}
 
+            {activeSection === "im" ? (
+              <div className="settings-stack">
                 <section className="settings-panel">
                   <div className="settings-panel-head">
                     <div>
-                      <span className="card-kicker">接入</span>
-                      <strong>飞书机器人</strong>
+                      <span className="card-kicker">飞书</span>
+                      <strong>长连接机器人</strong>
                     </div>
                     <Sparkles size={16} />
                   </div>
@@ -361,20 +381,57 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                     />
                   </label>
                   <label className="form-field">
-                    <span>Verification Token</span>
-                    <input
+                    <span>允许的 open_id</span>
+                    <textarea
+                      className="form-textarea"
                       onChange={(event) =>
                         onChange({
                           ...settings,
                           feishu: {
                             ...settings.feishu,
-                            verificationToken: event.target.value,
+                            allowedOpenIds: splitLines(event.target.value),
                           },
                         })
                       }
-                      value={settings.feishu.verificationToken}
+                      placeholder="每行一个 open_id"
+                      value={joinLines(settings.feishu.allowedOpenIds)}
                     />
                   </label>
+                  <label className="form-field">
+                    <span>允许的 chat_id</span>
+                    <textarea
+                      className="form-textarea"
+                      onChange={(event) =>
+                        onChange({
+                          ...settings,
+                          feishu: {
+                            ...settings.feishu,
+                            allowedChatIds: splitLines(event.target.value),
+                          },
+                        })
+                      }
+                      placeholder="每行一个 chat_id"
+                      value={joinLines(settings.feishu.allowedChatIds)}
+                    />
+                  </label>
+                </section>
+
+                <section className="settings-panel">
+                  <div className="settings-panel-head">
+                    <div>
+                      <span className="card-kicker">状态</span>
+                      <strong>{imStatus?.state ?? "disabled"}</strong>
+                    </div>
+                  </div>
+                  <div className="form-hint">
+                    <span>{imStatus?.detail || "飞书入口尚未启动。"}</span>
+                    {imStatus?.lastBlockedOpenId ? (
+                      <span>最近拦截 open_id: {imStatus.lastBlockedOpenId}</span>
+                    ) : null}
+                    {imStatus?.lastBlockedChatId ? (
+                      <span>最近拦截 chat_id: {imStatus.lastBlockedChatId}</span>
+                    ) : null}
+                  </div>
                 </section>
               </div>
             ) : null}

@@ -132,6 +132,11 @@ export const defaultSettings: AppSettings = {
     appId: "",
     appSecret: "",
     verificationToken: "",
+    allowedOpenIds: [],
+    allowedChatIds: [],
+  },
+  im: {
+    providers: [],
   },
   agent: {
     provider: "mock",
@@ -189,6 +194,19 @@ export function loadSettings(): AppSettings {
       feishu: {
         ...defaultSettings.feishu,
         ...parsed.feishu,
+        allowedOpenIds: Array.isArray(parsed.feishu?.allowedOpenIds)
+          ? parsed.feishu.allowedOpenIds
+          : defaultSettings.feishu.allowedOpenIds,
+        allowedChatIds: Array.isArray(parsed.feishu?.allowedChatIds)
+          ? parsed.feishu.allowedChatIds
+          : defaultSettings.feishu.allowedChatIds,
+      },
+      im: {
+        ...defaultSettings.im,
+        ...parsed.im,
+        providers: Array.isArray(parsed.im?.providers)
+          ? parsed.im.providers
+          : defaultSettings.im.providers,
       },
       agent: {
         ...defaultSettings.agent,

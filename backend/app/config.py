@@ -78,15 +78,37 @@ class FeishuConfig(BaseModel):
     app_id: str | None = Field(default=None, alias="appId")
     app_secret: str | None = Field(default=None, alias="appSecret")
     verification_token: str | None = Field(default=None, alias="verificationToken")
+    allowed_open_ids: list[str] = Field(default_factory=list, alias="allowedOpenIds")
+    allowed_chat_ids: list[str] = Field(default_factory=list, alias="allowedChatIds")
 
     model_config = {
         "populate_by_name": True,
     }
 
 
+class ImProviderConfig(BaseModel):
+    id: str = "feishu"
+    type: str = "feishu"
+    name: str = "飞书机器人"
+    enabled: bool = False
+    app_id: str | None = Field(default=None, alias="appId")
+    app_secret: str | None = Field(default=None, alias="appSecret")
+    allowed_open_ids: list[str] = Field(default_factory=list, alias="allowedOpenIds")
+    allowed_chat_ids: list[str] = Field(default_factory=list, alias="allowedChatIds")
+
+    model_config = {
+        "populate_by_name": True,
+    }
+
+
+class ImConfig(BaseModel):
+    providers: list[ImProviderConfig] = Field(default_factory=list)
+
+
 class AppConfig(BaseModel):
     agent: AgentConfig = AgentConfig()
     feishu: FeishuConfig = FeishuConfig()
+    im: ImConfig = ImConfig()
     permissions: PermissionConfig = PermissionConfig()
     solo: SoloConfig = SoloConfig()
     tools: list[ToolConfig] = Field(default_factory=list)
