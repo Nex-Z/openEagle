@@ -19,6 +19,7 @@ ToolDecision = Callable[[str, str, str], Awaitable[str]]
 
 
 HELP_TEXT = """openEagle IM 命令：
+/chat <内容> - 只进入 Chat 对话，不启动 SOLO
 /solo <任务> - 启动 SOLO 桌面任务
 /pause - 暂停 SOLO
 /resume - 恢复 SOLO
@@ -27,7 +28,7 @@ HELP_TEXT = """openEagle IM 命令：
 /reject - 拒绝当前危险动作或工具确认
 /help - 查看命令
 
-普通文本会进入 Chat 对话，不会自动启动 SOLO。"""
+普通文本默认按 SOLO 任务处理；想聊天请用 /chat <内容>。"""
 
 
 class IMBridge:

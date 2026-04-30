@@ -331,6 +331,31 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                 <section className="settings-panel">
                   <div className="settings-panel-head">
                     <div>
+                      <span className="card-kicker">状态</span>
+                      <strong>IM 连接</strong>
+                    </div>
+                  </div>
+                  <div className="form-hint">
+                    <span>飞书: {feishuStatus?.state ?? "disabled"} · {feishuStatus?.detail || "未启动"}</span>
+                    {feishuStatus?.lastBlockedOpenId ? (
+                      <span>飞书最近拦截 open_id: {feishuStatus.lastBlockedOpenId}</span>
+                    ) : null}
+                    {feishuStatus?.lastBlockedChatId ? (
+                      <span>飞书最近拦截 chat_id: {feishuStatus.lastBlockedChatId}</span>
+                    ) : null}
+                    <span>Telegram: {telegramStatus?.state ?? "disabled"} · {telegramStatus?.detail || "未启动"}</span>
+                    {telegramStatus?.lastBlockedOpenId ? (
+                      <span>Telegram 最近拦截 user_id: {telegramStatus.lastBlockedOpenId}</span>
+                    ) : null}
+                    {telegramStatus?.lastBlockedChatId ? (
+                      <span>Telegram 最近拦截 chat_id: {telegramStatus.lastBlockedChatId}</span>
+                    ) : null}
+                  </div>
+                </section>
+
+                <section className="settings-panel">
+                  <div className="settings-panel-head">
+                    <div>
                       <span className="card-kicker">飞书</span>
                       <strong>长连接机器人</strong>
                     </div>
@@ -382,6 +407,11 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                       value={settings.feishu.appSecret}
                     />
                   </label>
+                  <div className="form-hint">
+                    <span>open_id 用于授权单个飞书用户，chat_id 用于授权一个私聊或群聊。</span>
+                    <span>两者任意一个命中即可放行；都为空时会拦截所有飞书消息。</span>
+                    <span>首次配置可先给机器人发一条消息，再从下方“最近拦截”的 open_id / chat_id 复制到这里。</span>
+                  </div>
                   <label className="form-field">
                     <span>允许的 open_id</span>
                     <textarea
@@ -491,31 +521,6 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                       value={joinLines(settings.telegram.allowedChatIds)}
                     />
                   </label>
-                </section>
-
-                <section className="settings-panel">
-                  <div className="settings-panel-head">
-                    <div>
-                      <span className="card-kicker">状态</span>
-                      <strong>IM 连接</strong>
-                    </div>
-                  </div>
-                  <div className="form-hint">
-                    <span>飞书: {feishuStatus?.state ?? "disabled"} · {feishuStatus?.detail || "未启动"}</span>
-                    {feishuStatus?.lastBlockedOpenId ? (
-                      <span>飞书最近拦截 open_id: {feishuStatus.lastBlockedOpenId}</span>
-                    ) : null}
-                    {feishuStatus?.lastBlockedChatId ? (
-                      <span>飞书最近拦截 chat_id: {feishuStatus.lastBlockedChatId}</span>
-                    ) : null}
-                    <span>Telegram: {telegramStatus?.state ?? "disabled"} · {telegramStatus?.detail || "未启动"}</span>
-                    {telegramStatus?.lastBlockedOpenId ? (
-                      <span>Telegram 最近拦截 user_id: {telegramStatus.lastBlockedOpenId}</span>
-                    ) : null}
-                    {telegramStatus?.lastBlockedChatId ? (
-                      <span>Telegram 最近拦截 chat_id: {telegramStatus.lastBlockedChatId}</span>
-                    ) : null}
-                  </div>
                 </section>
 
               </div>

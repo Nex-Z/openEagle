@@ -102,6 +102,7 @@ Frontend      →  connects via WebSocket to ws://127.0.0.1:<port>/ws
 | Automation | mss (screenshots), pyautogui (input) |
 | Agent framework | agno |
 | Search | baidusearch (free, no API key) |
+| Remote IM | Feishu long connection, Telegram Bot polling |
 
 ### SOLO Mode — How It Works
 
@@ -113,6 +114,26 @@ SOLO is a **goal-driven agent**, not a task executor with a fixed plan:
 4. **Repeat** — loops until the task is complete or you stop it
 
 The model autonomously decides what to do at each step. No pre-programmed scripts. No brittle selectors. Just visual understanding and reasoning.
+
+### Remote IM Control
+
+openEagle can accept tasks from Feishu or Telegram after you enable the provider in **Settings -> IM**.
+
+- Feishu requires the app `App ID` and `App Secret`. The whitelist accepts either `open_id` for a single user or `chat_id` for a private chat/group chat. Send one message first, then copy the blocked `open_id` / `chat_id` from the IM status panel if you are not sure what to fill in.
+- Telegram requires a Bot Token. The whitelist accepts either `user_id` or `chat_id`.
+- Empty whitelists reject all remote messages by default.
+- Plain remote text starts a SOLO task by default. Use `/chat <message>` when you only want a text chat.
+
+Remote commands:
+
+| Command | Behavior |
+|---------|----------|
+| `<plain text>` | Start a SOLO desktop task |
+| `/solo <task>` | Start a SOLO desktop task explicitly |
+| `/chat <message>` | Send a Chat-only message |
+| `/pause`, `/resume`, `/stop` | Control the current SOLO task |
+| `/allow`, `/reject` | Approve or reject pending confirmations |
+| `/help` | Show command help |
 
 ### Safety Model
 
@@ -140,6 +161,12 @@ Key settings (accessible from the in-app Settings panel):
 | `agent.vlProvider` | Vision model provider (`openai`, `openai-like`) |
 | `agent.vlModelId` | Vision-Language model for SOLO |
 | `agent.vlBaseUrl` | OpenAI-compatible API base URL for the vision model |
+| `feishu.enabled` | Enable the Feishu remote entry |
+| `feishu.appId` / `feishu.appSecret` | Feishu app credentials for long-connection events |
+| `feishu.allowedOpenIds` / `feishu.allowedChatIds` | Feishu user/chat whitelist |
+| `telegram.enabled` | Enable the Telegram remote entry |
+| `telegram.botToken` | Telegram Bot API token |
+| `telegram.allowedUserIds` / `telegram.allowedChatIds` | Telegram user/chat whitelist |
 | `tools` | Custom tool definitions |
 | `mcp` | MCP server connections |
 | `skills` | Custom skill prompts |

@@ -1079,7 +1079,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await emit_solo_status(active_solo)
 
         schedule_solo_task(_start_agent())
-        return "SOLO 已启动，我会把关键状态和最终结果发回这个飞书会话。"
+        return "收到，开始处理。"
 
     async def start_solo_from_im(
         binding: IMConversationBinding,

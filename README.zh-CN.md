@@ -101,6 +101,7 @@ Frontend      →  通过 WebSocket 连接 ws://127.0.0.1:<端口>/ws
 | 自动化     | mss（截图）, pyautogui（输入）    |
 | Agent 框架 | agno                              |
 | 搜索       | baidusearch（免费，无需 API Key） |
+| 远程 IM    | 飞书长连接、Telegram Bot 长轮询   |
 
 ### SOLO 模式 — 工作原理
 
@@ -112,6 +113,26 @@ SOLO 是一个**目标驱动的 Agent**，而非按固定脚本执行的任务�
 4. **循环** — 重复直到任务完成或手动停止
 
 模型在每一步自主决策。没有预编程脚本，没有脆弱的元素选择器。纯视觉理解 + 推理。
+
+### 远程 IM 控制
+
+在 **Settings -> IM** 中启用飞书或 Telegram 后，openEagle 可以从远程会话接收任务。
+
+- 飞书需要填写应用的 `App ID` 和 `App Secret`。白名单支持单个用户的 `open_id`，也支持私聊或群聊的 `chat_id`。如果不知道该填什么，可以先给机器人发一条消息，再从 IM 状态面板里的“最近拦截 open_id / chat_id”复制。
+- Telegram 需要填写 Bot Token。白名单支持 `user_id` 或 `chat_id`。
+- 白名单为空时默认拦截所有远程消息。
+- 远程普通文本默认启动 SOLO 任务；只想文字聊天时使用 `/chat <内容>`。
+
+远程命令：
+
+| 命令 | 行为 |
+| ---- | ---- |
+| `<普通文本>` | 启动 SOLO 桌面任务 |
+| `/solo <任务>` | 显式启动 SOLO 桌面任务 |
+| `/chat <内容>` | 只进入 Chat 对话 |
+| `/pause`、`/resume`、`/stop` | 控制当前 SOLO 任务 |
+| `/allow`、`/reject` | 确认或拒绝待确认动作 |
+| `/help` | 查看命令帮助 |
 
 ### 安全模型
 
@@ -139,6 +160,12 @@ openEagle 支持灵活的模型路由——Chat（文本）和 Vision-Language�
 | `agent.vlProvider` | SOLO 视觉模型提供商（`openai`、`openai-like`）    |
 | `agent.vlModelId` | SOLO 用的视觉语言模型                             |
 | `agent.vlBaseUrl` | 视觉模型的 OpenAI 兼容 API 地址                    |
+| `feishu.enabled` | 启用飞书远程入口                                  |
+| `feishu.appId` / `feishu.appSecret` | 飞书长连接应用凭据                 |
+| `feishu.allowedOpenIds` / `feishu.allowedChatIds` | 飞书用户/会话白名单     |
+| `telegram.enabled` | 启用 Telegram 远程入口                            |
+| `telegram.botToken` | Telegram Bot API Token                          |
+| `telegram.allowedUserIds` / `telegram.allowedChatIds` | Telegram 用户/会话白名单 |
 | `tools`           | 自定义工具定义                                    |
 | `mcp`             | MCP 服务器连接                                    |
 | `skills`          | 自定义 Skill Prompt                               |

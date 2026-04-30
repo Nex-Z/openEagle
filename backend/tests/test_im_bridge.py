@@ -79,18 +79,24 @@ class IMRoutingTest(unittest.TestCase):
 
 
 class IMCommandTest(unittest.TestCase):
-    def test_parse_plain_chat_and_control_commands(self) -> None:
-        self.assertEqual(parse_im_command("你好").name, "chat")
+    def test_parse_plain_solo_chat_and_control_commands(self) -> None:
+        self.assertEqual(parse_im_command("你好").name, "solo")
+        self.assertEqual(parse_im_command("你好").argument, "你好")
+        self.assertEqual(parse_im_command("/chat 你好").name, "chat")
+        self.assertEqual(parse_im_command("/chat 你好").argument, "你好")
         self.assertEqual(parse_im_command("/pause").name, "pause")
         self.assertEqual(parse_im_command("/resume").name, "resume")
         self.assertEqual(parse_im_command("/stop").name, "stop")
         self.assertEqual(parse_im_command("/allow").name, "allow")
         self.assertEqual(parse_im_command("/reject").name, "reject")
+        self.assertEqual(parse_im_command("/wat").name, "help")
 
-    def test_solo_requires_argument(self) -> None:
+    def test_chat_and_solo_require_argument(self) -> None:
+        empty_chat = parse_im_command("/chat")
         empty = parse_im_command("/solo")
         task = parse_im_command("/solo 打开记事本")
 
+        self.assertEqual(empty_chat.name, "help")
         self.assertEqual(empty.name, "help")
         self.assertEqual(task.name, "solo")
         self.assertEqual(task.argument, "打开记事本")

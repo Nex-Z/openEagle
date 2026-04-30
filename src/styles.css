@@ -1544,6 +1544,8 @@ a {
   grid-template-rows: auto minmax(0, 1fr);
   gap: 14px;
   min-width: 0;
+  min-height: 0;
+  overflow: hidden;
 }
 
 .settings-drawer-header h2 {
@@ -2090,6 +2092,7 @@ a {
     inset: 12px;
     width: auto;
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
   }
 
   .settings-drawer-nav {

@@ -14,6 +14,31 @@ StatusCallback = Callable[[IMStatus], Awaitable[None]]
 EventCallback = Callable[[IMEvent], Awaitable[None]]
 
 
+def _bind_lark_ws_loop(loop: asyncio.AbstractEventLoop) -> None:
+    import lark_oapi.ws.client as ws_client
+
+    ws_client.loop = loop
+
+
+async def _disconnect_and_stop(client: Any) -> None:
+    try:
+        await asyncio.wait_for(client._disconnect(), timeout=3)
+    except Exception:
+        pass
+    finally:
+        asyncio.get_running_loop().stop()
+
+
+def _close_loop(loop: asyncio.AbstractEventLoop) -> None:
+    pending = [task for task in asyncio.all_tasks(loop) if not task.done()]
+    for task in pending:
+        task.cancel()
+    if pending:
+        loop.run_until_complete(asyncio.gather(*pending, return_exceptions=True))
+    loop.run_until_complete(loop.shutdown_asyncgens())
+    loop.close()
+
+
 class FeishuAdapter:
     def __init__(
         self,
@@ -25,6 +50,7 @@ class FeishuAdapter:
         self._on_event = on_event
         self._on_status = on_status
         self._loop = asyncio.get_running_loop()
+        self._ws_loop: asyncio.AbstractEventLoop | None = None
         self._thread: threading.Thread | None = None
         self._ws_client: Any | None = None
         self._api_client: Any | None = None
@@ -58,6 +84,8 @@ class FeishuAdapter:
             .register_p2_im_message_receive_v1(self._handle_message_event)
             .build()
         )
+        self._ws_loop = asyncio.new_event_loop()
+        _bind_lark_ws_loop(self._ws_loop)
         self._ws_client = lark.ws.Client(
             self._config.app_id,
             self._config.app_secret,
@@ -76,16 +104,19 @@ class FeishuAdapter:
     async def stop(self) -> None:
         self._stopped = True
         client = self._ws_client
-        if client is not None:
-            try:
-                client._auto_reconnect = False
-                import lark_oapi.ws.client as ws_client
-
-                ws_client.loop.call_soon_threadsafe(
-                    lambda: asyncio.create_task(client._disconnect())
+        loop = self._ws_loop
+        if client is not None and loop is not None and not loop.is_closed():
+            client._auto_reconnect = False
+            if loop.is_running():
+                loop.call_soon_threadsafe(
+                    lambda: asyncio.create_task(_disconnect_and_stop(client))
                 )
-            except Exception:
-                pass
+        thread = self._thread
+        if thread is not None and thread.is_alive():
+            await asyncio.to_thread(thread.join, 5)
+        self._thread = None
+        self._ws_client = None
+        self._ws_loop = None
         await self._emit_status("disabled", "飞书长连接已停止。")
 
     async def send_text(self, message: IMOutboundMessage) -> None:
@@ -121,12 +152,21 @@ class FeishuAdapter:
             await self._emit_status("error", detail)
 
     def _run_ws_client(self) -> None:
+        loop = self._ws_loop
+        if loop is not None:
+            asyncio.set_event_loop(loop)
+            _bind_lark_ws_loop(loop)
+        if self._stopped:
+            return
         try:
             if self._ws_client is not None:
                 self._ws_client.start()
         except Exception as exc:  # noqa: BLE001
             if not self._stopped:
                 self._submit_status("error", f"飞书长连接异常: {exc}")
+        finally:
+            if loop is not None and not loop.is_closed():
+                _close_loop(loop)
 
     def _handle_message_event(self, data: Any) -> None:
         event = parse_message_receive_event(data)
