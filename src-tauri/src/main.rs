@@ -32,7 +32,6 @@ const SOLO_OVERLAY_LABEL: &str = "solo_overlay";
 const SOLO_OVERLAY_WIDTH: f64 = 400.0;
 const SOLO_OVERLAY_HEIGHT: f64 = 240.0;
 const SOLO_OVERLAY_MARGIN: i32 = 18;
-const SOLO_OVERLAY_AUTO_HIDE_MS: u64 = 4000;
 const CONVERSATION_INDEX_FILE: &str = "conversation-index.json";
 const CONVERSATION_DIR: &str = "conversations";
 
@@ -156,6 +155,21 @@ fn conversation_index_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn conversations_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(conversation_store_root(app)?.join(CONVERSATION_DIR))
+}
+
+fn solo_run_log_candidates(app: &AppHandle, request_id: &str) -> Result<Vec<PathBuf>, String> {
+    validate_conversation_id(request_id)?;
+    let file_name = format!("{request_id}.jsonl");
+    Ok(vec![
+        project_root()
+            .join(".open-eagle")
+            .join("solo-runs")
+            .join(&file_name),
+        conversation_store_root(app)?
+            .join(".open-eagle")
+            .join("solo-runs")
+            .join(&file_name),
+    ])
 }
 
 fn validate_conversation_id(conversation_id: &str) -> Result<(), String> {
@@ -312,6 +326,39 @@ fn save_conversation_file(app: AppHandle, conversation: Value) -> Result<Value, 
     let path = conversation_file_path(&app, conversation_id)?;
     atomic_write_json(&path, &normalized)?;
     Ok(json!({"ok": true}))
+}
+
+#[tauri::command]
+fn load_solo_run_log(app: AppHandle, request_id: String) -> Result<Value, String> {
+    let candidates = solo_run_log_candidates(&app, &request_id)?;
+    let Some(path) = candidates.iter().find(|candidate| candidate.exists()) else {
+        return Ok(json!({
+            "requestId": request_id,
+            "records": [],
+        }));
+    };
+
+    let text = fs::read_to_string(path)
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let mut records = Vec::new();
+    let mut parse_errors = 0usize;
+    for line in text.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        match serde_json::from_str::<Value>(trimmed) {
+            Ok(value) => records.push(value),
+            Err(_) => parse_errors += 1,
+        }
+    }
+
+    Ok(json!({
+        "requestId": request_id,
+        "path": path,
+        "records": records,
+        "parseErrors": parse_errors,
+    }))
 }
 
 #[tauri::command]
@@ -549,7 +596,6 @@ fn show_solo_overlay(app: AppHandle, payload: OverlayPayload) -> Result<Value, S
     if let Some(window) = app.get_webview_window(SOLO_OVERLAY_LABEL) {
         position_overlay(&window);
         let _ = window.show();
-        let _ = window.set_focus();
         let serialized = serde_json::to_string(&payload).map_err(|err| err.to_string())?;
         let _ = window.eval(&format!("window.__SOLO_OVERLAY__={serialized};"));
         let _ = window.emit("solo://overlay_state", payload);
@@ -572,6 +618,7 @@ fn show_solo_overlay(app: AppHandle, payload: OverlayPayload) -> Result<Value, S
     .skip_taskbar(true)
     .resizable(false)
     .focused(false)
+    .visible(false)
     .inner_size(SOLO_OVERLAY_WIDTH, SOLO_OVERLAY_HEIGHT)
     .initialization_script(&init_script)
     .build()
@@ -594,21 +641,6 @@ fn update_solo_overlay(app: AppHandle, payload: OverlayPayload) -> Result<Value,
         position_overlay(&window);
         let _ = window.emit("solo://overlay_state", payload.clone());
         let _ = window.set_ignore_cursor_events(true);
-
-        if matches!(
-            payload.state.as_deref(),
-            Some("completed" | "aborted" | "error")
-        ) {
-            let app_clone = app.clone();
-            let window_label = SOLO_OVERLAY_LABEL.to_string();
-            tauri::async_runtime::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(SOLO_OVERLAY_AUTO_HIDE_MS)).await;
-                if let Some(w) = app_clone.get_webview_window(&window_label) {
-                    let _ = w.hide();
-                    let _ = w.close();
-                }
-            });
-        }
     }
     Ok(json!({"ok": true}))
 }
@@ -619,6 +651,14 @@ fn hide_solo_overlay(app: AppHandle) -> Result<Value, String> {
     if let Some(window) = app.get_webview_window(SOLO_OVERLAY_LABEL) {
         let _ = window.hide();
         let _ = window.close();
+    }
+    Ok(json!({"ok": true}))
+}
+
+#[tauri::command]
+fn solo_overlay_ready(app: AppHandle) -> Result<Value, String> {
+    if let Some(window) = app.get_webview_window(SOLO_OVERLAY_LABEL) {
+        let _ = window.show();
     }
     Ok(json!({"ok": true}))
 }
@@ -874,6 +914,7 @@ fn main() {
             save_conversation_file,
             save_conversation_index,
             delete_conversation_file,
+            load_solo_run_log,
             capture_screenshot,
             read_image_data_url,
             perform_mouse_action,
@@ -881,8 +922,16 @@ fn main() {
             show_solo_overlay,
             update_solo_overlay,
             hide_solo_overlay,
+            solo_overlay_ready,
             notify_solo_result
         ])
+        .on_window_event(|window, event| {
+            if window.label() == "main" {
+                if let tauri::WindowEvent::Focused(focused) = event {
+                    let _ = window.emit("main://focus_changed", focused);
+                }
+            }
+        })
         .setup(|app| {
             spawn_backend(app.handle().clone());
             Ok(())

@@ -71,6 +71,12 @@ export interface FeishuSettings {
   verificationToken: string;
 }
 
+export interface TelegramSettings {
+  enabled: boolean;
+  botToken: string;
+  webhookUrl: string;
+}
+
 export interface AgentSettings {
   provider: "mock" | "openai" | "openai-like";
   modelId: string;
@@ -131,6 +137,7 @@ export interface BuiltinToolConfig {
 
 export interface AppSettings {
   feishu: FeishuSettings;
+  telegram: TelegramSettings;
   agent: AgentSettings;
   appearance: AppearanceSettings;
   permissions: PermissionSettings;

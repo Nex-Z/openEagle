@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
+import { emit, listen } from "@tauri-apps/api/event";
 import { SoloOverlay } from "./SoloOverlay";
 
 interface OverlayState {
@@ -35,6 +35,12 @@ export function SoloOverlayWindow() {
   );
 
   useEffect(() => {
+    void invoke("solo_overlay_ready").catch((err: unknown) =>
+      console.error("[SOLO] solo_overlay_ready failed:", err),
+    );
+  }, []);
+
+  useEffect(() => {
     const unlisten = listen<OverlayState>("solo://overlay_state", (event) => {
       setOverlay(event.payload);
     });
@@ -53,7 +59,7 @@ export function SoloOverlayWindow() {
       stepCount={overlay.stepCount}
       maxSteps={overlay.maxSteps}
       onDismiss={() => {
-        invoke("hide_solo_overlay");
+        void emit("solo://user_dismissed");
       }}
     />
   );

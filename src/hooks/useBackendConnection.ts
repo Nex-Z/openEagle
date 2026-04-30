@@ -226,11 +226,21 @@ export function useBackendConnection(
   const retryCountRef = useRef(0);
   const activePortRef = useRef<number | null>(null);
   const onMessagesChangeRef = useRef(onMessagesChange);
+  const messagesRef = useRef(messages);
+  const syncedConversationIdRef = useRef(conversationId);
   const skipNextMessageSyncRef = useRef(true);
   const activeSoloRequestIdRef = useRef<string | null>(null);
   const notifiedSoloRequestIdsRef = useRef<Set<string>>(new Set());
-  const overlayHideTimerRef = useRef<number | null>(null);
+  const mainWindowFocusedRef = useRef(true);
+  const userDismissedOverlayRef = useRef(false);
   const [overlayVisible, setOverlayVisible] = useState(false);
+  const soloStatusRef = useRef(soloStatus);
+  soloStatusRef.current = soloStatus;
+  const soloStepRef = useRef(soloStep);
+  soloStepRef.current = soloStep;
+  const soloTimelineRef = useRef(soloTimeline);
+  soloTimelineRef.current = soloTimeline;
+  messagesRef.current = messages;
 
   const syncSettings = () => {
     const socket = socketRef.current;
@@ -350,9 +360,15 @@ export function useBackendConnection(
   }, [onMessagesChange]);
 
   useEffect(() => {
+    const conversationChanged = syncedConversationIdRef.current !== conversationId;
+    const externalMessagesChanged = initialMessages !== messagesRef.current;
+    if (!conversationChanged && !externalMessagesChanged) {
+      return;
+    }
+    syncedConversationIdRef.current = conversationId;
     skipNextMessageSyncRef.current = true;
     setMessages(initialMessages);
-  }, [conversationId]);
+  }, [conversationId, initialMessages]);
 
   useEffect(() => {
     if (skipNextMessageSyncRef.current) {
@@ -857,40 +873,80 @@ export function useBackendConnection(
     });
   }, [backend.phase, backend.port, conversationId, settings]);
 
+  const buildOverlayPayload = () => ({
+    title: undefined as string | undefined,
+    detail: soloStatusRef.current.detail ?? undefined,
+    stepText: soloStepRef.current
+      ? `第 ${soloStepRef.current.stepIndex} 步: ${soloStepRef.current.action}`
+      : undefined,
+    historyText: soloTimelineRef.current.slice(-3).join("\n") || undefined,
+    state: soloStatusRef.current.state,
+    stepCount: soloStatusRef.current.stepCount,
+    maxSteps: soloStatusRef.current.maxSteps,
+  });
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+
+    const unlisten = listen<boolean>("main://focus_changed", (event) => {
+      const focused = event.payload;
+      mainWindowFocusedRef.current = focused;
+
+      if (focused) {
+        userDismissedOverlayRef.current = false;
+        setOverlayVisible(false);
+        void invoke("hide_solo_overlay").catch(() => {});
+      } else {
+        const s = soloStatusRef.current;
+        if (activeSoloStates.has(s.state) && !userDismissedOverlayRef.current) {
+          setOverlayVisible(true);
+          void invoke("show_solo_overlay", { payload: buildOverlayPayload() }).catch(() => {});
+        }
+      }
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
+  useEffect(() => {
+    if (!isTauriRuntime()) return;
+    const unlisten = listen("solo://user_dismissed", () => {
+      userDismissedOverlayRef.current = true;
+      setOverlayVisible(false);
+      void invoke("hide_solo_overlay").catch(() => {});
+    });
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, []);
+
   useEffect(() => {
     if (!isTauriRuntime()) {
       return;
     }
 
-    const overlayPayload = {
-      title: undefined as string | undefined,
-      detail: soloStatus.detail ?? undefined,
-      stepText: soloStep
-        ? `第 ${soloStep.stepIndex} 步: ${soloStep.action}`
-        : undefined,
-      historyText: soloTimeline.slice(-3).join("\n") || undefined,
-      state: soloStatus.state,
-      stepCount: soloStatus.stepCount,
-      maxSteps: soloStatus.maxSteps,
-    };
+    const payload = buildOverlayPayload();
+    const focused = mainWindowFocusedRef.current;
 
-    // Show overlay when solo becomes active
     if (activeSoloStates.has(soloStatus.state)) {
-      setOverlayVisible(true);
-      if (overlayHideTimerRef.current) {
-        clearTimeout(overlayHideTimerRef.current);
-        overlayHideTimerRef.current = null;
+      if (!focused && !userDismissedOverlayRef.current) {
+        setOverlayVisible(true);
+        void invoke("show_solo_overlay", { payload }).catch(
+          (err) => console.error("[SOLO] show_solo_overlay failed:", err),
+        );
+      } else if (!focused) {
+        void invoke("update_solo_overlay", { payload }).catch(
+          (err) => console.error("[SOLO] update_solo_overlay failed:", err),
+        );
       }
-      void invoke("show_solo_overlay", { payload: overlayPayload }).catch(
-        (err) => console.error("[SOLO] show_solo_overlay failed:", err),
-      );
     } else if (soloStatus.state !== "idle") {
-      void invoke("update_solo_overlay", { payload: overlayPayload }).catch(
+      void invoke("update_solo_overlay", { payload }).catch(
         (err) => console.error("[SOLO] update_solo_overlay failed:", err),
       );
     }
 
-    // Send OS notification on terminal states
     if (isTerminalSoloState(soloStatus.state)) {
       const requestId =
         activeSoloRequestIdRef.current ??
@@ -906,15 +962,6 @@ export function useBackendConnection(
           },
         }).catch((err) => console.error("[SOLO] notify_solo_result failed:", err));
       }
-
-      // Auto-hide overlay after delay
-      overlayHideTimerRef.current = window.setTimeout(() => {
-        overlayHideTimerRef.current = null;
-        setOverlayVisible(false);
-        void invoke("hide_solo_overlay").catch(
-          (err) => console.error("[SOLO] hide_solo_overlay failed:", err),
-        );
-      }, 4500);
     }
   }, [soloStatus, soloStep, soloTimeline]);
 
@@ -922,9 +969,6 @@ export function useBackendConnection(
     return () => {
       if (reconnectTimerRef.current) {
         window.clearTimeout(reconnectTimerRef.current);
-      }
-      if (overlayHideTimerRef.current) {
-        clearTimeout(overlayHideTimerRef.current);
       }
       const socket = socketRef.current;
       socketRef.current = null;

@@ -84,9 +84,20 @@ class FeishuConfig(BaseModel):
     }
 
 
+class TelegramConfig(BaseModel):
+    enabled: bool = False
+    bot_token: str | None = Field(default=None, alias="botToken")
+    webhook_url: str | None = Field(default=None, alias="webhookUrl")
+
+    model_config = {
+        "populate_by_name": True,
+    }
+
+
 class AppConfig(BaseModel):
     agent: AgentConfig = AgentConfig()
     feishu: FeishuConfig = FeishuConfig()
+    telegram: TelegramConfig = TelegramConfig()
     permissions: PermissionConfig = PermissionConfig()
     solo: SoloConfig = SoloConfig()
     tools: list[ToolConfig] = Field(default_factory=list)

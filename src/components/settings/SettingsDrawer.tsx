@@ -15,6 +15,7 @@ export type SettingsSection =
   | "general"
   | "models"
   | "solo"
+  | "im"
   | "tools"
   | "mcp"
   | "skills";
@@ -38,6 +39,7 @@ const sectionMeta: Array<{
   { id: "general", title: "General", summary: "外观与基础体验。" },
   { id: "models", title: "Models", summary: "文本模型和视觉模型接入。" },
   { id: "solo", title: "SOLO", summary: "显示器预览与截图目标。" },
+  { id: "im", title: "IM", summary: "飞书与 Telegram 远程接入。" },
   { id: "tools", title: "Tools", summary: "本地工具入口。" },
   { id: "mcp", title: "MCP", summary: "MCP Server 配置。" },
   { id: "skills", title: "Skills", summary: "提示技能配置。" },
@@ -305,11 +307,15 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                     value={settings.appearance.themeMode}
                   />
                 </section>
+              </div>
+            ) : null}
 
+            {activeSection === "im" ? (
+              <div className="settings-stack">
                 <section className="settings-panel">
                   <div className="settings-panel-head">
                     <div>
-                      <span className="card-kicker">接入</span>
+                      <span className="card-kicker">飞书</span>
                       <strong>飞书机器人</strong>
                     </div>
                     <Sparkles size={16} />
@@ -373,6 +379,64 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                         })
                       }
                       value={settings.feishu.verificationToken}
+                    />
+                  </label>
+                </section>
+
+                <section className="settings-panel">
+                  <div className="settings-panel-head">
+                    <div>
+                      <span className="card-kicker">Telegram</span>
+                      <strong>Telegram Bot</strong>
+                    </div>
+                    <Sparkles size={16} />
+                  </div>
+                  <label className="form-switch">
+                    <span>启用 Telegram 入口</span>
+                    <input
+                      checked={settings.telegram.enabled}
+                      onChange={(event) =>
+                        onChange({
+                          ...settings,
+                          telegram: {
+                            ...settings.telegram,
+                            enabled: event.target.checked,
+                          },
+                        })
+                      }
+                      type="checkbox"
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Bot Token</span>
+                    <SecretInput
+                      onChange={(value) =>
+                        onChange({
+                          ...settings,
+                          telegram: {
+                            ...settings.telegram,
+                            botToken: value,
+                          },
+                        })
+                      }
+                      placeholder="从 @BotFather 获取"
+                      value={settings.telegram.botToken}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Webhook URL</span>
+                    <input
+                      onChange={(event) =>
+                        onChange({
+                          ...settings,
+                          telegram: {
+                            ...settings.telegram,
+                            webhookUrl: event.target.value,
+                          },
+                        })
+                      }
+                      placeholder="可选，用于接收消息回调"
+                      value={settings.telegram.webhookUrl}
                     />
                   </label>
                 </section>

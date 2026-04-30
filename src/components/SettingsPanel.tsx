@@ -11,7 +11,7 @@ import type {
 import { SecretInput } from "./settings/SecretInput";
 import { ThemeToggle } from "./ThemeToggle";
 
-type SettingsSection = "general" | "tools" | "mcp" | "skills";
+type SettingsSection = "general" | "im" | "tools" | "mcp" | "skills";
 
 interface SettingsPanelProps {
   settings: AppSettings;
@@ -33,7 +33,13 @@ const sectionMeta: Array<{
     id: "general",
     eyebrow: "集成配置",
     title: "基础设置",
-    summary: "统一管理外观、模型接入和飞书入口。",
+    summary: "统一管理外观和模型接入。",
+  },
+  {
+    id: "im",
+    eyebrow: "远程接入",
+    title: "IM 配置",
+    summary: "飞书与 Telegram 远程通信入口。",
   },
   {
     id: "tools",
@@ -165,86 +171,6 @@ function renderGeneralSection(
             />
           </label>
           <p className="field-hint">支持固定日间、固定夜间，或自动跟随系统主题。</p>
-        </div>
-
-        <div className="settings-card settings-card-compact">
-          <div className="settings-card-heading">
-            <div>
-              <p className="eyebrow">接入</p>
-              <h3>飞书机器人</h3>
-            </div>
-            <span className="settings-pill">规划中</span>
-          </div>
-          <p className="field-hint">
-            当前版本保留配置入口，但飞书事件接入暂未启用。
-          </p>
-          <label className="switch-row">
-            <span>启用飞书入口</span>
-            <input
-              checked={settings.feishu.enabled}
-              onChange={(event) =>
-                onChange({
-                  ...settings,
-                  feishu: {
-                    ...settings.feishu,
-                    enabled: event.target.checked,
-                  },
-                })
-              }
-              type="checkbox"
-            />
-          </label>
-
-          <label className="field">
-            <span>App ID</span>
-            <input
-              onChange={(event) =>
-                onChange({
-                  ...settings,
-                  feishu: {
-                    ...settings.feishu,
-                    appId: event.target.value,
-                  },
-                })
-              }
-              placeholder="飞书应用的 App ID"
-              value={settings.feishu.appId}
-            />
-          </label>
-
-          <label className="field">
-            <span>App Secret</span>
-            <input
-              onChange={(event) =>
-                onChange({
-                  ...settings,
-                  feishu: {
-                    ...settings.feishu,
-                    appSecret: event.target.value,
-                  },
-                })
-              }
-              placeholder="飞书应用的 App Secret"
-              value={settings.feishu.appSecret}
-            />
-          </label>
-
-          <label className="field">
-            <span>Verification Token</span>
-            <input
-              onChange={(event) =>
-                onChange({
-                  ...settings,
-                  feishu: {
-                    ...settings.feishu,
-                    verificationToken: event.target.value,
-                  },
-                })
-              }
-              placeholder="事件订阅校验 Token"
-              value={settings.feishu.verificationToken}
-            />
-          </label>
         </div>
       </div>
 
@@ -462,6 +388,154 @@ function renderGeneralSection(
             })}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+function renderImSection(
+  settings: AppSettings,
+  onChange: (settings: AppSettings) => void,
+) {
+  return (
+    <div className="settings-grid">
+      <div className="settings-column">
+        <div className="settings-card settings-card-compact">
+          <div className="settings-card-heading">
+            <div>
+              <p className="eyebrow">飞书</p>
+              <h3>飞书机器人</h3>
+            </div>
+          </div>
+          <label className="switch-row">
+            <span>启用飞书入口</span>
+            <input
+              checked={settings.feishu.enabled}
+              onChange={(event) =>
+                onChange({
+                  ...settings,
+                  feishu: {
+                    ...settings.feishu,
+                    enabled: event.target.checked,
+                  },
+                })
+              }
+              type="checkbox"
+            />
+          </label>
+
+          <label className="field">
+            <span>App ID</span>
+            <input
+              onChange={(event) =>
+                onChange({
+                  ...settings,
+                  feishu: {
+                    ...settings.feishu,
+                    appId: event.target.value,
+                  },
+                })
+              }
+              placeholder="飞书应用的 App ID"
+              value={settings.feishu.appId}
+            />
+          </label>
+
+          <label className="field">
+            <span>App Secret</span>
+            <SecretInput
+              onChange={(value) =>
+                onChange({
+                  ...settings,
+                  feishu: {
+                    ...settings.feishu,
+                    appSecret: value,
+                  },
+                })
+              }
+              placeholder="飞书应用的 App Secret"
+              value={settings.feishu.appSecret}
+            />
+          </label>
+
+          <label className="field">
+            <span>Verification Token</span>
+            <input
+              onChange={(event) =>
+                onChange({
+                  ...settings,
+                  feishu: {
+                    ...settings.feishu,
+                    verificationToken: event.target.value,
+                  },
+                })
+              }
+              placeholder="事件订阅校验 Token"
+              value={settings.feishu.verificationToken}
+            />
+          </label>
+        </div>
+      </div>
+
+      <div className="settings-column">
+        <div className="settings-card settings-card-compact">
+          <div className="settings-card-heading">
+            <div>
+              <p className="eyebrow">Telegram</p>
+              <h3>Telegram Bot</h3>
+            </div>
+          </div>
+          <label className="switch-row">
+            <span>启用 Telegram 入口</span>
+            <input
+              checked={settings.telegram.enabled}
+              onChange={(event) =>
+                onChange({
+                  ...settings,
+                  telegram: {
+                    ...settings.telegram,
+                    enabled: event.target.checked,
+                  },
+                })
+              }
+              type="checkbox"
+            />
+          </label>
+
+          <label className="field">
+            <span>Bot Token</span>
+            <SecretInput
+              onChange={(value) =>
+                onChange({
+                  ...settings,
+                  telegram: {
+                    ...settings.telegram,
+                    botToken: value,
+                  },
+                })
+              }
+              placeholder="从 @BotFather 获取"
+              value={settings.telegram.botToken}
+            />
+          </label>
+
+          <label className="field">
+            <span>Webhook URL</span>
+            <input
+              onChange={(event) =>
+                onChange({
+                  ...settings,
+                  telegram: {
+                    ...settings.telegram,
+                    webhookUrl: event.target.value,
+                  },
+                })
+              }
+              placeholder="可选，用于接收消息回调"
+              value={settings.telegram.webhookUrl}
+            />
+          </label>
+        </div>
       </div>
     </div>
   );
@@ -1101,6 +1175,9 @@ export function SettingsPanel(props: SettingsPanelProps) {
             })),
             onRefreshSoloDisplays,
           )
+        : null}
+      {activeSection === "im"
+        ? renderImSection(settings, onChange)
         : null}
       {activeSection === "tools"
         ? renderToolsSection({
