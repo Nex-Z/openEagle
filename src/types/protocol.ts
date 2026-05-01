@@ -33,7 +33,7 @@ export interface ChatMessage {
   blocks?: AssistantMessageBlock[];
 }
 
-export type AgentExecutionKind = "tool" | "mcp" | "skill";
+export type AgentExecutionKind = "tool" | "mcp" | "skill" | "agent";
 
 export type AgentExecutionStatus = "started" | "completed" | "error";
 

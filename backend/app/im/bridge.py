@@ -163,7 +163,7 @@ class IMBridge:
 
         if reply.strip():
             await self.send_text(binding.conversation_id, reply)
-            if command.name != "chat":
+            if command.name not in {"chat", "solo"}:
                 await self._send_client(
                     "server:message",
                     request_id,

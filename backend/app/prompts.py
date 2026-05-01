@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 
 from .config import McpConfig, SkillConfig, ToolConfig
+from .subagent_models import AgentTaskRecord
 
 
 def current_datetime_hint() -> str:
@@ -52,6 +53,10 @@ def build_chat_instructions(
             "不要对同一失败操作无限重试。"
         ),
         (
+            "自我迭代：遇到坏输出、工具参数错误或执行出错时，先把错误当成 observation 自己修正并重试；"
+            "不要把第一轮错误直接甩给用户。"
+        ),
+        (
             "意图澄清：当用户指令模糊或可能有多种理解时，先简短确认再执行；"
             "例如用户说「把这个改好」时，先说明你理解的修改方向，确认后再操作。"
         ),
@@ -86,6 +91,68 @@ def build_chat_instructions(
     return instructions
 
 
+def build_main_router_instructions() -> list[str]:
+    return [
+        "你是 openEagle 的 main agent，只负责理解意图、选择执行者、汇总方向，不直接执行写入类工具。",
+        "所有输出必须是一个合法 JSON 对象，不能包含 Markdown、解释或 JSON 外文本。",
+        (
+            "route 只能是 answer_directly、delegate_new、delegate_existing、start_solo、"
+            "control_solo、clarify。"
+        ),
+        "worker_kind 只能是 general、coding、research、solo。",
+        (
+            "普通代码、文件、命令、测试、构建、文档任务交给 coding；资料查询交给 research；"
+            "一般解释和轻量任务交给 general；需要屏幕、鼠标、键盘、GUI 的任务交给 solo。"
+        ),
+        (
+            "preferred_mode=solo 时，除非用户明确是在聊天或控制，否则优先 start_solo；"
+            "preferred_mode=chat 时不要启动 SOLO。"
+        ),
+        "不要把 worker 的执行细节写进 task_brief；只给干净、可执行的任务说明和成功标准。",
+    ]
+
+
+def build_main_router_prompt(
+    conversation_id: str,
+    content: str,
+    preferred_mode: str | None = None,
+    recent_tasks: list[AgentTaskRecord] | None = None,
+) -> str:
+    recent_tasks = recent_tasks or []
+    tasks_payload = [
+        {
+            "worker_id": task.worker_id,
+            "worker_kind": task.worker_kind,
+            "title": task.title,
+            "state": task.state,
+            "requires_write": task.requires_write,
+            "requires_gui": task.requires_gui,
+            "summary": task.last_report.summary if task.last_report else "",
+        }
+        for task in recent_tasks[-6:]
+    ]
+    return (
+        f"conversation_id: {conversation_id}\n"
+        f"preferred_mode: {preferred_mode or 'auto'}\n"
+        f"用户消息:\n{content}\n\n"
+        "最近 worker 摘要:\n"
+        f"{json.dumps(tasks_payload, ensure_ascii=False)}\n\n"
+        "请输出如下 JSON 结构：\n"
+        "{\n"
+        '  "route": "answer_directly | delegate_new | delegate_existing | start_solo | control_solo | clarify",\n'
+        '  "task_title": "短标题",\n'
+        '  "task_brief": "给 worker 的干净任务说明",\n'
+        '  "success_criteria": ["完成标准"],\n'
+        '  "worker_kind": "general | coding | research | solo",\n'
+        '  "target_worker_id": null,\n'
+        '  "requires_write": false,\n'
+        '  "requires_gui": false,\n'
+        '  "user_visible_summary": "给用户看的调度说明",\n'
+        '  "context_summary": "只给 worker 的必要上下文"\n'
+        "}"
+    )
+
+
 def solo_decision_instructions(system_platform: str = "当前系统") -> list[str]:
     return [
         (
@@ -109,6 +176,7 @@ def solo_decision_instructions(system_platform: str = "当前系统") -> list[st
             "  Q1b: 这件事是打开网页、搜索、查询资料吗？优先 open_url 直达目标 URL，"
             "不要拆成点击浏览器、点击地址栏、输入、回车多轮动作。\n"
             "  Q2: 上一步是否成功？如果没有成功，必须换策略，不能原样重复。\n"
+            "  Q2b: 如果系统反馈 action_args、工具参数或执行结果错误，把它当成 observation 自己修正，重新输出合法动作；不要把第一轮错误直接交给用户。\n"
             "  Q3: 当前截图是否有弹窗、遮挡、未聚焦窗口或加载状态？先处理屏幕状态。\n"
             "  Q4: 我是否已经有足够 findings 给用户一个有用汇报？没有就继续收集。"
         ),
@@ -211,6 +279,33 @@ def build_solo_decision_prompt(
         recent_history = history[:2] + history[-6:]
     history_text = json.dumps(recent_history, ensure_ascii=False)
     step_count = len(history)
+    stability_items = []
+    for item in history[-3:]:
+        result = item.get("result") if isinstance(item, dict) else None
+        decision = item.get("decision") if isinstance(item, dict) else None
+        if not isinstance(result, dict):
+            continue
+        if not isinstance(decision, dict):
+            decision = {}
+        stability_items.append(
+            {
+                "step": item.get("step"),
+                "action": decision.get("action") or result.get("action"),
+                "actionSignature": result.get("actionSignature"),
+                "outcomeClass": result.get("outcomeClass"),
+                "visualChange": result.get("visualChange"),
+                "repeatActionSignatureCount": result.get("repeatActionSignatureCount"),
+                "screenshotHash": (result.get("screenshot") or {}).get("contentHash")
+                if isinstance(result.get("screenshot"), dict)
+                else None,
+            }
+        )
+    stability_hint = ""
+    if stability_items:
+        stability_hint = (
+            "稳定性上下文（最近 3 步，帮助你判断是否卡住；不要原样重复相同 actionSignature）：\n"
+            f"{json.dumps(stability_items, ensure_ascii=False)}\n\n"
+        )
     display_hint = ""
     if display_index is not None:
         display_hint = f"你正在操作显示器 {display_index}。\n"
@@ -249,6 +344,7 @@ def build_solo_decision_prompt(
         f"{app_hint}"
         f"{findings_hint}"
         f"{kernel_hint}"
+        f"{stability_hint}"
         f"{first_step_hint}"
         f"步骤历史（最新在后，共 {step_count} 步）：\n"
         f"{history_text}\n\n"

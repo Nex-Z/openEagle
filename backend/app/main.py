@@ -10,7 +10,7 @@ from typing import Any
 import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
-from .agent_service import build_agent_service
+from .agent_runtime import AgentRuntime
 from .config import AppConfig, load_config
 from .confirmations import ToolConfirmationStore
 from .default_tools import build_default_tools, execute_confirmed_tool
@@ -29,11 +29,10 @@ from .models import (
     ToolConfirmationPayload,
     utc_now,
 )
-from .providers.base import ReplyChunk, ReplyToolConfirmation, ReplyTrace
 from .runtime_state import RuntimeState
-from .safety import assess_solo_action
+from .safety import assess_solo_action, is_repairable_solo_block
 from .solo_executor import SoloExecutor
-from .solo_kernel import SoloAgentKernel
+from .solo_kernel import SoloAgentKernel, action_signature
 from .solo_run_logger import SoloRunLogger
 from .solo_service import SoloService, SoloSessionState, summarize_solo_step_result
 from .solo_toolkit import SoloToolkit
@@ -57,6 +56,7 @@ POST_ACTION_CAPTURE_DELAYS_MS: dict[str, list[int]] = {
     "open_url": [700, 1400, 2200],
     "wait": [0],
 }
+POST_ACTION_STABLE_CAPTURE_ACTIONS = {"click", "double_click", "press_keys", "open_url"}
 
 
 def slog(message: str) -> None:
@@ -84,6 +84,41 @@ def _infer_app_context(task: str) -> str | None:
     if detected:
         return f"任务涉及以下应用: {', '.join(detected)}。"
     return None
+
+
+def record_solo_action_progress(
+    session: SoloSessionState,
+    action: str,
+    action_args: dict[str, Any],
+) -> str:
+    signature = action_signature(action, action_args)
+    if action == session.last_action:
+        session.repeat_action_count += 1
+    else:
+        session.repeat_action_count = 1
+    if signature == session.last_action_signature:
+        session.repeat_action_signature_count += 1
+    else:
+        session.repeat_action_signature_count = 1
+    session.last_action = action
+    session.last_action_signature = signature
+    return signature
+
+
+def solo_stability_summary(session: SoloSessionState, final_reason: str) -> dict[str, Any]:
+    return {
+        "finalReason": final_reason,
+        "totalSteps": session.step_count,
+        "noOpCount": session.no_op_count,
+        "uncertainCount": session.uncertain_count,
+        "failedCount": session.failed_count,
+        "recoveryModeEntries": session.recovery_mode_entries,
+        "batchSuppressedCount": session.batch_suppressed_count,
+        "repeatActionSignatureCount": session.repeat_action_signature_count,
+        "sameScreenshotCount": session.same_screenshot_count,
+        "lastAction": session.last_action,
+        "lastActionSignature": session.last_action_signature,
+    }
 
 
 @app.on_event("startup")
@@ -369,8 +404,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             screenshot = execution_result.get("screenshot")
             capture_attempts = 1 if isinstance(screenshot, dict) else 0
             post_action_delay_ms = 0
+            post_action_total_delay_ms = 0
             visual_change = None
             used_virtual_capture = False
+            stable_after_change = None
+            stability_samples = 0
             if not capture_after:
                 return {
                     "success": True,
@@ -379,13 +417,20 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     "screenshot": screenshot,
                     "captureAttempts": capture_attempts,
                     "postActionDelayMs": post_action_delay_ms,
+                    "postActionTotalDelayMs": post_action_total_delay_ms,
                     "visualChange": visual_change,
                     "usedVirtualCapture": used_virtual_capture,
+                    "stableAfterChange": stable_after_change,
+                    "stabilitySamples": stability_samples,
                 }
             if not isinstance(screenshot, dict):
                 delays = POST_ACTION_CAPTURE_DELAYS_MS.get(action, [220, 520, 900])
+                wait_for_stable_frame = action in POST_ACTION_STABLE_CAPTURE_ACTIONS
+                saw_visual_change = False
+                previous_capture_hash: str | None = None
                 for delay_ms in delays:
                     post_action_delay_ms = delay_ms
+                    post_action_total_delay_ms += delay_ms
                     if delay_ms > 0:
                         await asyncio.sleep(delay_ms / 1000)
                     screenshot = await asyncio.to_thread(solo_tools.screenshot)
@@ -395,19 +440,43 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     if not isinstance(screenshot, dict):
                         continue
                     new_hash = screenshot.get("contentHash")
-                    if not session.last_screenshot_hash or new_hash != session.last_screenshot_hash:
+                    if not isinstance(new_hash, str):
+                        continue
+                    changed_from_last = (
+                        not session.last_screenshot_hash or new_hash != session.last_screenshot_hash
+                    )
+                    if changed_from_last:
                         visual_change = True
+                        if wait_for_stable_frame:
+                            if saw_visual_change and new_hash == previous_capture_hash:
+                                stability_samples += 1
+                                stable_after_change = True
+                                break
+                            saw_visual_change = True
+                            previous_capture_hash = new_hash
+                            stable_after_change = False
+                            continue
                         break
                     visual_change = False
+                    if wait_for_stable_frame and saw_visual_change:
+                        if new_hash == previous_capture_hash:
+                            stability_samples += 1
+                            stable_after_change = True
+                            break
+                        previous_capture_hash = new_hash
+                        stable_after_change = False
                 if visual_change is False:
                     solo_executor.set_capture_all_displays(True)
                     used_virtual_capture = True
                     await asyncio.sleep(0.2)
                     screenshot = await asyncio.to_thread(solo_tools.screenshot)
                     capture_attempts += 1
+                    post_action_total_delay_ms += 200
                     if isinstance(screenshot, dict):
                         new_hash = screenshot.get("contentHash")
-                        if not session.last_screenshot_hash or new_hash != session.last_screenshot_hash:
+                        if isinstance(new_hash, str) and (
+                            not session.last_screenshot_hash or new_hash != session.last_screenshot_hash
+                        ):
                             visual_change = True
             return {
                 "success": True,
@@ -416,8 +485,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 "screenshot": screenshot,
                 "captureAttempts": capture_attempts,
                 "postActionDelayMs": post_action_delay_ms,
+                "postActionTotalDelayMs": post_action_total_delay_ms,
                 "visualChange": visual_change,
                 "usedVirtualCapture": used_virtual_capture,
+                "stableAfterChange": stable_after_change,
+                "stabilitySamples": stability_samples,
             }
         except Exception as exc:  # noqa: BLE001
             if not is_solo_running(session):
@@ -435,6 +507,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 "screenshot": screenshot_payload,
                 "captureAttempts": 1 if screenshot_payload else 0,
                 "postActionDelayMs": 250,
+                "postActionTotalDelayMs": 250,
                 "visualChange": False,
             }
 
@@ -617,6 +690,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 session.detail = None
                 slog(f"request={session.request_id} completed at step={session.step_count}")
                 solo_logger.write("completed", {"step": session.step_count, "source": "agent_loop"})
+                solo_logger.write("stability_summary", solo_stability_summary(session, "completed"))
                 await emit_solo_plan(session, solo_kernel)
                 await emit_solo_status(session)
                 return
@@ -624,52 +698,139 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             planned_actions = [
                 {"action": decision.action, "action_args": decision.action_args, "batch_index": 0}
             ]
-            for batch_index, item in enumerate(decision.batch_actions, start=1):
-                planned_actions.append(
+            if solo_kernel.recovery_mode and decision.batch_actions:
+                session.batch_suppressed_count += len(decision.batch_actions)
+                solo_logger.write(
+                    "batch_suppressed",
                     {
-                        "action": str(item["action"]),
-                        "action_args": dict(item.get("action_args") or {}),
-                        "batch_index": batch_index,
-                    }
+                        "step": session.step_count + 1,
+                        "reason": "recovery_mode",
+                        "count": len(decision.batch_actions),
+                    },
                 )
+            else:
+                for batch_index, item in enumerate(decision.batch_actions, start=1):
+                    planned_actions.append(
+                        {
+                            "action": str(item["action"]),
+                            "action_args": dict(item.get("action_args") or {}),
+                            "batch_index": batch_index,
+                        }
+                    )
 
             # ━━ STEP 3: Safety checks ━━
+            permission_mode = runtime_state.get_config().permissions.mode
             blocking_action: dict[str, Any] | None = None
             assessment = None
-            for planned_action in planned_actions:
-                current_assessment = assess_solo_action(
-                    str(planned_action["action"]),
-                    dict(planned_action["action_args"]),
-                    workspace_root,
-                )
-                if current_assessment.level == "blocked":
-                    blocking_action = planned_action
-                    assessment = current_assessment
-                    break
-                if current_assessment.level == "confirm" and assessment is None:
-                    blocking_action = planned_action
-                    assessment = current_assessment
+            if permission_mode != "all":
+                for planned_action in planned_actions:
+                    current_assessment = assess_solo_action(
+                        str(planned_action["action"]),
+                        dict(planned_action["action_args"]),
+                        workspace_root,
+                    )
+                    if current_assessment.level == "blocked":
+                        blocking_action = planned_action
+                        assessment = current_assessment
+                        break
+                    if current_assessment.level == "confirm" and assessment is None:
+                        blocking_action = planned_action
+                        assessment = current_assessment
 
-            if assessment is None:
-                assessment = assess_solo_action(decision.action, decision.action_args, workspace_root)
+                if assessment is None:
+                    assessment = assess_solo_action(decision.action, decision.action_args, workspace_root)
 
-            if assessment.level == "blocked":
+            if assessment is not None and assessment.level == "blocked":
                 session.state = "paused"
                 session.detail = f"动作已阻断: {assessment.reason}"
                 blocked_action = blocking_action or planned_actions[0]
+                blocked_action_name = str(blocked_action["action"])
+                blocked_action_args = dict(blocked_action["action_args"])
+                if is_repairable_solo_block(blocked_action_name, assessment.reason):
+                    session.state = "running"
+                    outcome = solo_kernel.record_repairable_action_block(assessment.reason)
+                    session.detail = f"SOLO 正在恢复: {outcome.recovery_hint}"
+                    session.failed_count += 1
+                    session.recovery_mode_entries += 1
+                    blocked_decision = decision.model_copy(
+                        update={
+                            "action": blocked_action_name,
+                            "action_args": blocked_action_args,
+                            "batch_actions": [],
+                            "progress": assessment.reason,
+                        }
+                    )
+                    result_summary = {
+                        "success": False,
+                        "action": blocked_action_name,
+                        "executionError": assessment.reason,
+                        "outcomeClass": outcome.outcome_class,
+                        "blockedBeforeExecution": True,
+                        "repairable": True,
+                    }
+                    session.history.append(
+                        {
+                            "step": session.step_count + 1,
+                            "decision": solo_service.decision_dict(blocked_decision),
+                            "timestamp": utc_now(),
+                            "result": result_summary,
+                        }
+                    )
+                    solo_logger.write(
+                        "action_feedback",
+                        {
+                            "step": session.step_count + 1,
+                            "action": blocked_action_name,
+                            "actionArgs": blocked_action_args,
+                            "reason": assessment.reason,
+                            "outcomeClass": outcome.outcome_class,
+                        },
+                    )
+                    await emit_solo_trace(
+                        session,
+                        "decision",
+                        "error",
+                        "动作参数无效，已反馈给 SOLO 重新决策",
+                        params={
+                            "action": blocked_action_name,
+                            "reason": assessment.reason,
+                            "repairable": True,
+                        },
+                        result=assessment.reason,
+                    )
+                    if outcome.plan_changed:
+                        await emit_solo_plan(session, solo_kernel)
+                    await emit_solo_status(session)
+                    if outcome.should_pause:
+                        session.state = "paused"
+                        session.detail = f"SOLO 连续修复动作参数失败，已暂停: {outcome.pause_reason}"
+                        solo_logger.write(
+                            "paused",
+                            {
+                                "reason": session.detail,
+                                "action": blocked_action_name,
+                                "actionArgs": blocked_action_args,
+                            },
+                        )
+                        solo_logger.write(
+                            "stability_summary",
+                            solo_stability_summary(session, "repairable_action_block_failed"),
+                        )
+                        await emit_solo_status(session)
+                        return
+                    continue
                 solo_logger.write(
                     "paused",
                     {
                         "reason": session.detail,
-                        "action": blocked_action["action"],
-                        "actionArgs": blocked_action["action_args"],
+                        "action": blocked_action_name,
+                        "actionArgs": blocked_action_args,
                     },
                 )
                 await emit_solo_status(session)
                 return
 
-            permission_mode = runtime_state.get_config().permissions.mode
-            if assessment.level == "confirm" and permission_mode != "all":
+            if assessment is not None and assessment.level == "confirm":
                 confirm_action = blocking_action or planned_actions[0]
                 session.state = "waiting_user_confirmation"
                 session.pending_confirmation = {
@@ -820,11 +981,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     return
 
                 session.step_count += 1
-                if current_action == session.last_action:
-                    session.repeat_action_count += 1
-                else:
-                    session.repeat_action_count = 1
-                session.last_action = current_action
+                current_signature = record_solo_action_progress(
+                    session,
+                    current_action,
+                    current_args,
+                )
 
                 new_screenshot = result.get("screenshot")
                 if isinstance(new_screenshot, dict):
@@ -855,7 +1016,19 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     result_summary,
                     repeat_action_count=session.repeat_action_count,
                     same_screenshot_count=session.same_screenshot_count,
+                    repeat_action_signature_count=session.repeat_action_signature_count,
                 )
+                result_summary["outcomeClass"] = outcome.outcome_class
+                result_summary["actionSignature"] = current_signature
+                result_summary["repeatActionSignatureCount"] = session.repeat_action_signature_count
+                if outcome.outcome_class == "no_op":
+                    session.no_op_count += 1
+                elif outcome.outcome_class == "uncertain":
+                    session.uncertain_count += 1
+                elif outcome.outcome_class == "failed":
+                    session.failed_count += 1
+                if outcome.recovery_hint:
+                    session.recovery_mode_entries += 1
                 if outcome.recovery_hint:
                     session.detail = f"SOLO 正在恢复: {outcome.recovery_hint}"
                 solo_logger.write(
@@ -866,6 +1039,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         "batchIndex": planned_offset if planned_offset else None,
                         "result": result_summary,
                         "semanticSuccess": outcome.semantic_success,
+                        "outcomeClass": outcome.outcome_class,
                         "recoveryHint": outcome.recovery_hint,
                     },
                 )
@@ -889,6 +1063,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     session.state = "paused"
                     session.detail = f"SOLO 连续恢复失败，已暂停: {outcome.pause_reason}"
                     solo_logger.write("paused", {"reason": session.detail, "action": current_action})
+                    solo_logger.write("stability_summary", solo_stability_summary(session, "recovery_failed"))
                     await emit_solo_status(session)
                     return
 
@@ -897,6 +1072,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     session.state = "paused"
                     session.detail = f"超过最大步数 {session.max_steps}，已自动暂停。"
                     solo_logger.write("paused", {"reason": session.detail})
+                    solo_logger.write("stability_summary", solo_stability_summary(session, "max_steps"))
                     await emit_solo_plan(session, solo_kernel)
                     await emit_solo_status(session)
                     return
@@ -917,89 +1093,26 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         conversation_id: str,
         request_id: str,
         content: str,
+        preferred_mode: str | None = None,
     ) -> str:
-        enhanced_prompt = content
-        prev_result = confirmed_tool_results.pop(conversation_id, None)
-        if prev_result:
-            enhanced_prompt = f"{prev_result}\n\n用户新消息：{content}"
-
-        await safe_send(
-            "server:status",
-            request_id,
+        return await agent_runtime.handle_user_message(
             conversation_id,
-            StatusPayload(stage="thinking", detail="后端正在生成回复").model_dump(),
-        )
-
-        agent_service = build_agent_service(
-            runtime_state.get_config(),
-            confirmation_store=tool_confirmations,
-            request_id=request_id,
-            conversation_id=conversation_id,
-        )
-        chunks: list[str] = []
-        async for event in agent_service.stream_reply(conversation_id, enhanced_prompt):
-            if isinstance(event, ReplyChunk):
-                chunks.append(event.content)
-                await safe_send(
-                    "server:message_delta",
-                    request_id,
-                    conversation_id,
-                    {"content": event.content},
-                )
-                continue
-
-            if isinstance(event, ReplyTrace):
-                await safe_send(
-                    "server:trace",
-                    request_id,
-                    conversation_id,
-                    {
-                        "trace": {
-                            "id": event.trace_id,
-                            "kind": event.kind,
-                            "name": event.name,
-                            "status": event.status,
-                            "summary": event.summary,
-                            "params": event.params,
-                            "result": event.result,
-                            "startedAt": event.started_at,
-                            "completedAt": event.completed_at,
-                        }
-                    },
-                )
-                continue
-
-            if isinstance(event, ReplyToolConfirmation):
-                pending = tool_confirmations.get(event.confirmation_id)
-                if pending:
-                    await safe_send(
-                        "server:tool_confirmation_required",
-                        request_id,
-                        conversation_id,
-                        {"confirmation": pending.to_payload()},
-                    )
-                    if im_bridge is not None and conversation_id.startswith("im_"):
-                        await im_bridge.send_text(
-                            conversation_id,
-                            f"工具 `{pending.name}` 需要确认。\n原因: {pending.reason}\n回复 /allow 执行，或 /reject 拒绝。",
-                        )
-
-        reply = "".join(chunks)
-        await safe_send("server:message", request_id, conversation_id, {"content": reply})
-        await safe_send(
-            "server:status",
             request_id,
-            conversation_id,
-            StatusPayload(stage="idle", detail="回复完成").model_dump(),
+            content,
+            preferred_mode=preferred_mode,
         )
-        return reply
 
     async def handle_chat_from_im(
         binding: IMConversationBinding,
         content: str,
         request_id: str,
     ) -> str:
-        return await stream_chat_reply(binding.conversation_id, request_id, content)
+        return await stream_chat_reply(
+            binding.conversation_id,
+            request_id,
+            content,
+            preferred_mode="chat",
+        )
 
     async def start_solo_for_conversation(
         conversation_id: str,
@@ -1086,7 +1199,12 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         task: str,
         request_id: str,
     ) -> str:
-        return await start_solo_for_conversation(binding.conversation_id, task, request_id)
+        return await stream_chat_reply(
+            binding.conversation_id,
+            request_id,
+            task,
+            preferred_mode="solo",
+        )
 
     async def apply_solo_control(
         conversation_id: str,
@@ -1180,11 +1298,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 return
             active_solo.step_count += 1
             action_str = str(pending["action"])
-            if action_str == active_solo.last_action:
-                active_solo.repeat_action_count += 1
-            else:
-                active_solo.repeat_action_count = 1
-            active_solo.last_action = action_str
+            record_solo_action_progress(
+                active_solo,
+                action_str,
+                dict(pending["action_args"]),
+            )
 
             screenshot = result.get("screenshot")
             if isinstance(screenshot, dict):
@@ -1214,6 +1332,15 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
         schedule_solo_task(_execute_confirmed_and_continue())
         return "已允许危险动作，SOLO 会继续执行。"
+
+    agent_runtime = AgentRuntime(
+        config_getter=runtime_state.get_config,
+        confirmation_store=tool_confirmations,
+        confirmed_tool_results=confirmed_tool_results,
+        send_event=safe_send,
+        start_solo=start_solo_for_conversation,
+        solo_control=apply_solo_control,
+    )
 
     async def handle_tool_decision_from_im(
         conversation_id: str,
@@ -1453,74 +1580,18 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             if envelope.type == "client:start_solo":
                 payload = SoloStartPayload.model_validate(envelope.payload)
-                current_config = runtime_state.get_config()
-                solo_service = SoloService(current_config.agent)
-                solo_kernel = SoloAgentKernel.create(payload.content)
-                solo_executor.set_preferred_display_index(
-                    current_config.solo.preferred_display_index
+                solo_reply = await start_solo_for_conversation(
+                    envelope.conversation_id,
+                    payload.content,
+                    envelope.request_id,
                 )
-                first_screenshot = await asyncio.to_thread(solo_tools.screenshot)
-                slog(
-                    f"start request={envelope.request_id} conv={envelope.conversation_id} task={payload.content[:120]}"
-                )
-                active_solo = SoloSessionState(
-                    request_id=envelope.request_id,
-                    conversation_id=envelope.conversation_id,
-                    task=payload.content,
-                    started_at=utc_now(),
-                    last_screenshot_path=str(first_screenshot.get("path", "")) or None,
-                    last_screenshot_hash=(
-                        str(first_screenshot.get("contentHash", ""))
-                        if first_screenshot.get("contentHash")
-                        else None
-                    ),
-                    last_screenshot_at=(
-                        str(first_screenshot.get("capturedAt", ""))
-                        if first_screenshot.get("capturedAt")
-                        else None
-                    ),
-                    detail="SOLO 已启动，正在分析首帧截图。",
-                    display_index=current_config.solo.preferred_display_index,
-                )
-                active_solo.log_path = solo_logger.start(envelope.request_id, payload.content)
-                await emit_solo_plan(active_solo, solo_kernel)
-                await emit_solo_status(active_solo)
-                if not active_solo.last_screenshot_path:
-                    active_solo.state = "error"
-                    active_solo.detail = "首帧截图失败，无法启动 SOLO。"
-                    await emit_solo_status(active_solo)
-                else:
-                    async def _start_agent() -> None:
-                        nonlocal solo_service
-                        if solo_service is None or not is_solo_running(active_solo):
-                            return
-                        try:
-                            slog(
-                                f"request={active_solo.request_id} agent_loop starting "
-                                f"task={active_solo.task[:100]}"
-                            )
-                            solo_logger.write(
-                                "agent_start",
-                                {"task": active_solo.task},
-                            )
-                            await emit_solo_trace(
-                                active_solo,
-                                "agent",
-                                "started",
-                                "Agent 开始自主决策执行任务...",
-                            )
-                            await emit_solo_status(active_solo)
-                            await agent_loop(active_solo, active_solo.last_screenshot_path)
-                        except Exception as exc:  # noqa: BLE001
-                            if not is_solo_running(active_solo):
-                                return
-                            active_solo.state = "error"
-                            active_solo.detail = f"Agent 启动失败: {exc}"
-                            slog(f"request={active_solo.request_id} agent_start error={exc}")
-                            solo_logger.write("error", {"reason": active_solo.detail})
-                            await emit_solo_status(active_solo)
-
-                    schedule_solo_task(_start_agent())
+                if solo_reply != "收到，开始处理。":
+                    await safe_send(
+                        "server:message",
+                        envelope.request_id,
+                        envelope.conversation_id,
+                        {"content": solo_reply},
+                    )
                 continue
 
             if envelope.type == "client:solo_control":
@@ -1639,11 +1710,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         # Update session state from execution
                         active_solo.step_count += 1
                         action_str = str(pending["action"])
-                        if action_str == active_solo.last_action:
-                            active_solo.repeat_action_count += 1
-                        else:
-                            active_solo.repeat_action_count = 1
-                        active_solo.last_action = action_str
+                        record_solo_action_progress(
+                            active_solo,
+                            action_str,
+                            dict(pending["action_args"]),
+                        )
 
                         screenshot = result.get("screenshot")
                         if isinstance(screenshot, dict):
@@ -1711,87 +1782,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 continue
 
             payload = MessagePayload.model_validate(envelope.payload)
-            enhanced_prompt = payload.content
-            prev_result = confirmed_tool_results.pop(envelope.conversation_id, None)
-            if prev_result:
-                enhanced_prompt = f"{prev_result}\n\n用户新消息：{payload.content}"
-
-            await safe_send(
-                "server:status",
+            await stream_chat_reply(
+                envelope.conversation_id,
                 envelope.request_id,
-                envelope.conversation_id,
-                StatusPayload(
-                    stage="thinking",
-                    detail="后端正在生成回复",
-                ).model_dump(),
-            )
-
-            agent_service = build_agent_service(
-                runtime_state.get_config(),
-                confirmation_store=tool_confirmations,
-                request_id=envelope.request_id,
-                conversation_id=envelope.conversation_id,
-            )
-            chunks: list[str] = []
-            async for event in agent_service.stream_reply(
-                envelope.conversation_id,
-                enhanced_prompt,
-            ):
-                if isinstance(event, ReplyChunk):
-                    chunks.append(event.content)
-                    await safe_send(
-                        "server:message_delta",
-                        envelope.request_id,
-                        envelope.conversation_id,
-                        {"content": event.content},
-                    )
-                    continue
-
-                if isinstance(event, ReplyTrace):
-                    await safe_send(
-                        "server:trace",
-                        envelope.request_id,
-                        envelope.conversation_id,
-                        {
-                            "trace": {
-                                "id": event.trace_id,
-                                "kind": event.kind,
-                                "name": event.name,
-                                "status": event.status,
-                                "summary": event.summary,
-                                "params": event.params,
-                                "result": event.result,
-                                "startedAt": event.started_at,
-                                "completedAt": event.completed_at,
-                            }
-                        },
-                    )
-                    continue
-
-                if isinstance(event, ReplyToolConfirmation):
-                    pending = tool_confirmations.get(event.confirmation_id)
-                    if pending:
-                        await safe_send(
-                            "server:tool_confirmation_required",
-                            envelope.request_id,
-                            envelope.conversation_id,
-                            {"confirmation": pending.to_payload()},
-                        )
-
-            reply = "".join(chunks)
-
-            await safe_send(
-                "server:message",
-                envelope.request_id,
-                envelope.conversation_id,
-                {"content": reply},
-            )
-
-            await safe_send(
-                "server:status",
-                envelope.request_id,
-                envelope.conversation_id,
-                StatusPayload(stage="idle", detail="回复完成").model_dump(),
+                payload.content,
             )
     except WebSocketDisconnect:
         return

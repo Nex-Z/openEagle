@@ -167,7 +167,15 @@ def summarize_solo_step_result(
         if isinstance(value, str) and value:
             summary[key] = value
 
-    for key in ("captureAttempts", "postActionDelayMs", "visualChange", "usedVirtualCapture"):
+    for key in (
+        "captureAttempts",
+        "postActionDelayMs",
+        "postActionTotalDelayMs",
+        "visualChange",
+        "usedVirtualCapture",
+        "stableAfterChange",
+        "stabilitySamples",
+    ):
         value = result.get(key)
         if value is not None:
             summary[key] = value
@@ -241,8 +249,10 @@ class SoloSessionState:
     step_count: int = 0
     max_steps: int = 150
     repeat_action_count: int = 0
+    repeat_action_signature_count: int = 0
     same_screenshot_count: int = 0
     last_action: str | None = None
+    last_action_signature: str | None = None
     last_screenshot_path: str | None = None
     last_screenshot_hash: str | None = None
     last_screenshot_at: str | None = None
@@ -256,6 +266,11 @@ class SoloSessionState:
     log_path: str | None = None
     display_index: int | None = None
     last_agent_message: str | None = None
+    no_op_count: int = 0
+    uncertain_count: int = 0
+    failed_count: int = 0
+    recovery_mode_entries: int = 0
+    batch_suppressed_count: int = 0
 
 
 class SoloService:

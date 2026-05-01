@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+from urllib.parse import urlsplit
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -85,6 +87,83 @@ OPERATION_TASK_KEYWORDS = (
     "close",
 )
 
+VISUAL_MUTATING_ACTIONS = {
+    "click",
+    "double_click",
+    "right_click",
+    "move_mouse",
+    "scroll",
+    "type_text",
+    "press_keys",
+    "open_url",
+}
+OBSERVATIONAL_ACTIONS = {"screenshot", "wait", "get_current_time"}
+COMMAND_OR_FILE_ACTIONS = {
+    "execute_command",
+    "get_file_info",
+    "list_directory",
+    "read_text_file",
+    "search_files",
+    "search_text",
+    "web_search",
+}
+
+
+def action_signature(action: str, action_args: dict[str, Any] | None = None) -> str:
+    args = action_args or {}
+    if action in {"click", "double_click", "right_click", "move_mouse"}:
+        return f"{action}:{_coord_bucket(args.get('x'))},{_coord_bucket(args.get('y'))}"
+    if action == "scroll":
+        delta = _number(args.get("delta") or args.get("amount") or 0)
+        direction = "down" if delta < 0 else "up" if delta > 0 else "none"
+        magnitude = "small" if abs(delta) <= 3 else "medium" if abs(delta) <= 8 else "large"
+        return f"scroll:{direction}:{magnitude}"
+    if action == "type_text":
+        text = str(args.get("text") or "")
+        size = "empty" if not text else "short" if len(text) <= 16 else "medium" if len(text) <= 80 else "long"
+        return f"type_text:{size}"
+    if action == "press_keys":
+        keys = args.get("keys")
+        if isinstance(keys, list):
+            joined = "+".join(str(key).strip().lower() for key in keys if str(key).strip())
+        else:
+            joined = str(keys or args.get("key") or "").strip().lower()
+        return f"press_keys:{joined or 'unknown'}"
+    if action == "open_url":
+        raw = str(args.get("url") or "")
+        try:
+            parsed = urlsplit(raw)
+            safe_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+        except ValueError:
+            safe_url = raw.split("?", 1)[0]
+        return f"open_url:{safe_url[:120]}"
+    if action == "execute_command":
+        command = str(args.get("command") or "").strip()
+        head = command.split(maxsplit=1)[0] if command else "empty"
+        return f"execute_command:{head}:{_short_hash(command)}"
+    if action in {"get_file_info", "list_directory", "read_text_file", "search_files", "search_text"}:
+        pathish = str(args.get("path") or args.get("root") or args.get("query") or "")
+        return f"{action}:{_short_hash(pathish)}"
+    return action
+
+
+def _coord_bucket(value: Any) -> str:
+    number = _number(value)
+    if 0 <= number <= 1:
+        return f"{number:.2f}"
+    return str(int(round(number / 20.0) * 20))
+
+
+def _number(value: Any) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _short_hash(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8", errors="ignore")).hexdigest()[:10]
+
 
 @dataclass
 class SoloPlanItem:
@@ -105,6 +184,7 @@ class SoloPlanItem:
 @dataclass
 class SoloStepOutcome:
     semantic_success: bool
+    outcome_class: str = "success"
     should_pause: bool = False
     pause_reason: str | None = None
     recovery_hint: str | None = None
@@ -121,9 +201,12 @@ class SoloAgentKernel:
     replan_count: int = 0
     findings: list[str] = field(default_factory=list)
     consecutive_failures: int = 0
+    consecutive_no_ops: int = 0
+    consecutive_uncertain: int = 0
     repeated_action_recoveries: int = 0
     stalled_screen_recoveries: int = 0
     last_recovery_hint: str = ""
+    recovery_mode: bool = False
     max_consecutive_failures: int = 4
     max_stall_recoveries: int = 3
 
@@ -172,6 +255,9 @@ class SoloAgentKernel:
             "completionRequirement": requirement["description"],
             "requiresFindings": requirement["mode"] == "information",
             "consecutiveFailures": self.consecutive_failures,
+            "consecutiveNoOps": self.consecutive_no_ops,
+            "consecutiveUncertain": self.consecutive_uncertain,
+            "recoveryMode": self.recovery_mode,
             "lastRecoveryHint": self.last_recovery_hint,
             "replanCount": self.replan_count,
         }
@@ -279,6 +365,23 @@ class SoloAgentKernel:
             report_item.status = "pending"
         return True
 
+    def record_repairable_action_block(self, reason: str) -> SoloStepOutcome:
+        self.consecutive_failures += 1
+        hint = (
+            f"上一轮动作没有执行，因为 action_args 格式或参数不合法：{reason} "
+            "请重新观察当前屏幕，并输出一个合法动作；不要原样重复同一个错误参数。"
+        )
+        plan_changed = self._mark_recovery(hint)
+        should_pause = self.consecutive_failures >= self.max_consecutive_failures
+        return SoloStepOutcome(
+            semantic_success=False,
+            outcome_class="failed",
+            should_pause=should_pause,
+            pause_reason=hint if should_pause else None,
+            recovery_hint=hint,
+            plan_changed=plan_changed,
+        )
+
     def record_decision(self, decision: Any) -> bool:
         changed = False
         findings = getattr(decision, "findings", []) or []
@@ -308,29 +411,53 @@ class SoloAgentKernel:
         result_summary: dict[str, Any],
         repeat_action_count: int,
         same_screenshot_count: int,
+        repeat_action_signature_count: int | None = None,
     ) -> SoloStepOutcome:
-        semantic_success = self._result_semantically_successful(result_summary)
+        outcome_class = self._classify_step_outcome(
+            decision,
+            result_summary,
+            same_screenshot_count=same_screenshot_count,
+        )
+        semantic_success = outcome_class == "success"
         recovery_hint = ""
         plan_changed = False
+        repeat_count = repeat_action_signature_count or repeat_action_count
 
         if semantic_success:
             self.consecutive_failures = 0
+            self.consecutive_no_ops = 0
+            self.consecutive_uncertain = 0
+            self.recovery_mode = False
             self.last_recovery_hint = ""
             plan_changed = self._mark_progress_after_success(getattr(decision, "action", ""))
+        elif outcome_class == "no_op":
+            self.consecutive_no_ops += 1
+            self.consecutive_uncertain = 0
+            recovery_hint = self._build_no_op_recovery_hint(decision)
+            if self.consecutive_no_ops >= 2:
+                plan_changed = self._mark_recovery(recovery_hint)
+        elif outcome_class == "uncertain":
+            self.consecutive_uncertain += 1
+            recovery_hint = "上一步结果还不够确定。请优先观察加载状态、等待或补一张截图，再决定是否换路线。"
+            if self.consecutive_uncertain >= 2:
+                plan_changed = self._mark_recovery(recovery_hint)
         else:
             self.consecutive_failures += 1
+            self.consecutive_no_ops = 0
+            self.consecutive_uncertain = 0
             recovery_hint = self._build_failure_recovery_hint(decision, result_summary)
             plan_changed = self._mark_recovery(recovery_hint)
 
-        if repeat_action_count >= 3:
+        if repeat_count >= 3:
             self.repeated_action_recoveries += 1
             recovery_hint = (
-                "同一动作已经连续重复。请换路线：重新观察目标位置、改用命令行或先切换窗口，"
+                "同一动作签名已经连续重复。请换路线：重新观察目标位置、改用命令行或先切换窗口，"
                 "不要原样重复上一步。"
             )
             plan_changed = self._mark_recovery(recovery_hint) or plan_changed
 
-        if same_screenshot_count >= 2:
+        action = str(getattr(decision, "action", ""))
+        if same_screenshot_count >= 2 and action in VISUAL_MUTATING_ACTIONS:
             self.stalled_screen_recoveries += 1
             recovery_hint = (
                 "连续截图几乎没有变化。请判断是否点错、窗口未聚焦、页面未加载或需要滚动/切换应用，"
@@ -349,6 +476,7 @@ class SoloAgentKernel:
 
         return SoloStepOutcome(
             semantic_success=semantic_success,
+            outcome_class=outcome_class,
             should_pause=should_pause,
             pause_reason=pause_reason,
             recovery_hint=recovery_hint or None,
@@ -421,6 +549,7 @@ class SoloAgentKernel:
 
     def _mark_recovery(self, recovery_hint: str) -> bool:
         self.last_recovery_hint = recovery_hint
+        self.recovery_mode = True
         self.replan_count += 1
         self.alternative = recovery_hint
         self.agent_message = "检测到执行没有按预期推进，SOLO 将换路线继续尝试。"
@@ -445,6 +574,46 @@ class SoloAgentKernel:
         if output_tail.startswith("[TIMEOUT]"):
             return False
         return True
+
+    def _classify_step_outcome(
+        self,
+        decision: Any,
+        result_summary: dict[str, Any],
+        *,
+        same_screenshot_count: int,
+    ) -> str:
+        if not self._result_semantically_successful(result_summary):
+            return "failed"
+
+        action = str(getattr(decision, "action", "") or result_summary.get("action") or "")
+        if action in OBSERVATIONAL_ACTIONS or action in COMMAND_OR_FILE_ACTIONS:
+            return "success"
+        if action == "finish":
+            return "success"
+
+        if action in VISUAL_MUTATING_ACTIONS:
+            if "screenshot" not in result_summary and result_summary.get("captureAttempts"):
+                return "uncertain"
+            if result_summary.get("visualChange") is False or same_screenshot_count >= 1:
+                if action in {"open_url", "press_keys"} and self.consecutive_uncertain < 1:
+                    return "uncertain"
+                return "no_op"
+            return "success"
+
+        return "success"
+
+    @staticmethod
+    def _build_no_op_recovery_hint(decision: Any) -> str:
+        action = str(getattr(decision, "action", "unknown"))
+        if action == "type_text":
+            return "输入动作没有造成可见变化。请检查焦点是否在输入框，必要时重新点击目标或改用命令行。"
+        if action in {"click", "double_click", "right_click"}:
+            return "点击动作没有造成可见变化。请重新确认目标位置、窗口焦点或改用不同入口。"
+        if action == "scroll":
+            return "滚动后界面没有变化。可能滚错区域或已经到底，请换滚动目标、切换焦点或改用搜索/命令。"
+        if action == "open_url":
+            return "打开网页后状态还不明确。请等待加载、检查地址栏或换直接入口。"
+        return "上一步看起来没有推进任务。请重新观察并换一个策略，不要原样重复。"
 
     @staticmethod
     def _build_failure_recovery_hint(decision: Any, result_summary: dict[str, Any]) -> str:

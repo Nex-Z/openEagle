@@ -56,6 +56,18 @@ BLOCKED_COMMAND_PATTERNS = [
     r"\bgit\s+checkout\s+--\b",
 ]
 COMMAND_WRITE_OPERATORS = (">", ">>", "2>", "*>")
+REPAIRABLE_SOLO_BLOCK_REASONS = (
+    "press_keys 缺少有效按键列表",
+    "press_keys 缺少有效按键",
+    "open_url 只允许",
+    "命令为空或未提供",
+    "cwd 无效",
+    "不支持的动作",
+)
+HARD_SOLO_BLOCK_REASONS = (
+    "明确高危操作",
+    "路径超出工作区范围",
+)
 
 
 @dataclass(frozen=True)
@@ -169,6 +181,14 @@ def assess_solo_action(action: str, action_args: dict[str, Any], workspace_root:
         return assess_command_action("execute_command", action_args, workspace_root)
 
     return RiskAssessment("blocked", f"不支持的动作: {action}")
+
+
+def is_repairable_solo_block(action: str, reason: str) -> bool:
+    if any(marker in reason for marker in HARD_SOLO_BLOCK_REASONS):
+        return False
+    if any(marker in reason for marker in REPAIRABLE_SOLO_BLOCK_REASONS):
+        return True
+    return action in {"press_keys", "open_url"} and "缺少" in reason
 
 
 def assess_tool_action(name: str, params: dict[str, Any], workspace_root: Path) -> RiskAssessment:

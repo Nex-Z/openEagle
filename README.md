@@ -80,7 +80,7 @@ Frontend      →  connects via WebSocket to ws://127.0.0.1:<port>/ws
 │  Overlay window · Notifications                     │
 ├──────────────────────────────────────────────────────┤
 │                Python Backend (FastAPI)               │
-│  Agent loop · SOLO orchestration · Tool execution    │
+│  Main/Sub-agent runtime · SOLO orchestration · Tools │
 │  Safety assessment · Prompt engine · Model routing   │
 ├──────────────────────────────────────────────────────┤
 │               React Frontend (TypeScript)             │
@@ -104,6 +104,21 @@ Frontend      →  connects via WebSocket to ws://127.0.0.1:<port>/ws
 | Search | baidusearch (free, no API key) |
 | Remote IM | Feishu long connection, Telegram Bot polling |
 
+### Main/Sub-Agent Runtime
+
+Every user message first goes through a lightweight main agent. The main agent decides whether to answer directly, delegate to a clean worker, start SOLO, or control an existing SOLO task. Workers use scoped internal conversation IDs, so task execution stays focused while the visible conversation only keeps summaries, evidence, and final results.
+
+Built-in worker kinds:
+
+| Worker | Use case |
+|--------|----------|
+| `general` | General explanation, light tool use, read-only checks |
+| `coding` | Code edits, docs, builds, tests, file-changing work |
+| `research` | Search, lookup, information gathering |
+| `solo` | Visual desktop automation through SOLO |
+
+Read-only workers may run concurrently. Coding/write work and SOLO are kept serial to avoid file and desktop conflicts.
+
 ### SOLO Mode — How It Works
 
 SOLO is a **goal-driven agent**, not a task executor with a fixed plan:
@@ -114,6 +129,8 @@ SOLO is a **goal-driven agent**, not a task executor with a fixed plan:
 4. **Repeat** — loops until the task is complete or you stop it
 
 The model autonomously decides what to do at each step. No pre-programmed scripts. No brittle selectors. Just visual understanding and reasoning.
+
+SOLO now uses soft stability signals instead of rigid scripts: action signatures detect true repeated actions, visual no-op and uncertain outcomes trigger recovery hints, and batch actions are only suppressed while recovering. Navigation-like actions such as `open_url`, click, double-click, and `press_keys` use short post-action screenshot stabilization so the next model step sees the loaded page instead of an early loading frame. This keeps SOLO flexible for general tasks while still reducing repeated clicks and stalled screens.
 
 ### Remote IM Control
 
@@ -145,7 +162,7 @@ Every action is evaluated against a three-tier risk model:
 | `confirm` | Waits for your approval (file writes, delete/move actions, system shortcuts, etc.) |
 | `blocked` | Refuses outright (dangerous commands like `rm -rf`) |
 
-Additional guardrails: max 150 steps, consecutive duplicate detection, screenshot no-change detection.
+Additional guardrails: max 150 steps, action-signature duplicate detection, screenshot no-change detection, recovery-mode batch suppression, and feedback loops that return malformed actions or execution errors to the active agent for self-repair before surfacing them to the user.
 
 ## Configuration
 

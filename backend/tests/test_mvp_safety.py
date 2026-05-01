@@ -1,25 +1,35 @@
 from __future__ import annotations
 
 import sys
+import asyncio
 import hashlib
 import inspect
 import tempfile
 import unittest
 from pathlib import Path
 
-from app.config import ToolConfig
+from app.agent_router import AgentRouter
+from app.agent_runtime import AgentRuntime
+from app.config import AppConfig, ToolConfig
 from app.confirmations import ToolConfirmationStore
 from app.default_tools import build_configured_tool_functions, build_default_tools
 from app.prompts import (
     build_chat_instructions,
+    build_main_router_prompt,
     build_solo_decision_prompt,
     build_solo_repair_prompt,
     current_datetime_hint,
     solo_decision_instructions,
 )
-from app.safety import assess_solo_action, assess_tool_action, classify_command_risk
+from app.providers.base import ReplyTrace
+from app.safety import (
+    assess_solo_action,
+    assess_tool_action,
+    classify_command_risk,
+    is_repairable_solo_block,
+)
 from app.solo_executor import SoloExecutor
-from app.solo_kernel import SoloAgentKernel
+from app.solo_kernel import SoloAgentKernel, action_signature
 from app.solo_service import (
     MODEL_IMAGE_MAX_LONG_EDGE,
     SoloDecision,
@@ -27,6 +37,7 @@ from app.solo_service import (
     prepare_model_image,
     summarize_solo_step_result,
 )
+from app.subagent_manager import SubAgentManager
 
 
 class SafetyAssessmentTest(unittest.TestCase):
@@ -53,6 +64,26 @@ class SafetyAssessmentTest(unittest.TestCase):
 
             unknown = assess_solo_action("unknown", {}, root)
             self.assertEqual(unknown.level, "blocked")
+
+    def test_solo_repairable_blocks_can_be_fed_back_to_agent(self) -> None:
+        self.assertTrue(
+            is_repairable_solo_block(
+                "press_keys",
+                "press_keys 缺少有效按键列表。",
+            )
+        )
+        self.assertTrue(
+            is_repairable_solo_block(
+                "execute_command",
+                "命令为空或未提供。",
+            )
+        )
+        self.assertFalse(
+            is_repairable_solo_block(
+                "execute_command",
+                "命令包含明确高危操作，已阻断。",
+            )
+        )
 
     def test_solo_open_url_allows_only_http_urls(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -440,8 +471,11 @@ class SoloResultSummaryTest(unittest.TestCase):
                 "action": "execute_command",
                 "captureAttempts": 3,
                 "postActionDelayMs": 900,
+                "postActionTotalDelayMs": 1880,
                 "visualChange": False,
                 "usedVirtualCapture": True,
+                "stableAfterChange": True,
+                "stabilitySamples": 1,
                 "executionResult": {
                     "ok": False,
                     "command": "dir",
@@ -467,8 +501,11 @@ class SoloResultSummaryTest(unittest.TestCase):
         self.assertTrue(summary["outputTruncated"])
         self.assertEqual(summary["captureAttempts"], 3)
         self.assertEqual(summary["postActionDelayMs"], 900)
+        self.assertEqual(summary["postActionTotalDelayMs"], 1880)
         self.assertFalse(summary["visualChange"])
         self.assertTrue(summary["usedVirtualCapture"])
+        self.assertTrue(summary["stableAfterChange"])
+        self.assertEqual(summary["stabilitySamples"], 1)
         self.assertEqual(summary["screenshot"]["contentHash"], "abc")
         self.assertNotIn("path", summary["screenshot"])
 
@@ -659,6 +696,238 @@ class SoloAgentKernelTest(unittest.TestCase):
 
         self.assertIsNotNone(outcome)
         self.assertTrue(outcome.should_pause)
+
+
+class AgentRouterTest(unittest.TestCase):
+    def test_router_parse_accepts_json_wrapper(self) -> None:
+        decision = AgentRouter.parse(
+            '路由如下：{"route":"delegate_new","task_title":"改 README",'
+            '"task_brief":"修改 README 并验证","success_criteria":["README 已更新"],'
+            '"worker_kind":"coding","requires_write":true,"requires_gui":false,'
+            '"user_visible_summary":"交给 coding worker","context_summary":""}',
+            "修改 README 并验证",
+        )
+
+        self.assertEqual(decision.route, "delegate_new")
+        self.assertEqual(decision.worker_kind, "coding")
+        self.assertTrue(decision.requires_write)
+
+    def test_router_bad_json_falls_back_to_general_worker(self) -> None:
+        decision = AgentRouter.parse("not json", "解释一下项目结构")
+
+        self.assertEqual(decision.route, "delegate_new")
+        self.assertEqual(decision.worker_kind, "general")
+
+    def test_router_prefers_solo_for_im_default(self) -> None:
+        decision = AgentRouter.heuristic("打开浏览器查今天新闻", preferred_mode="solo")
+
+        self.assertEqual(decision.route, "start_solo")
+        self.assertEqual(decision.worker_kind, "solo")
+
+    def test_router_chat_mode_does_not_start_solo(self) -> None:
+        decision = AgentRouter.heuristic("打开浏览器是什么意思", preferred_mode="chat")
+
+        self.assertNotEqual(decision.route, "start_solo")
+
+    def test_main_router_prompt_includes_recent_workers(self) -> None:
+        manager = SubAgentManager()
+        decision = AgentRouter.heuristic("修改 README")
+        task = manager.create_or_reuse("conv", decision)
+        prompt = build_main_router_prompt("conv", "继续刚才的任务", recent_tasks=[task])
+
+        self.assertIn(task.worker_id, prompt)
+        self.assertIn("preferred_mode", prompt)
+
+
+class SubAgentManagerTest(unittest.TestCase):
+    def test_manager_reuses_existing_worker_for_followup(self) -> None:
+        manager = SubAgentManager()
+        first = manager.create_or_reuse("conv", AgentRouter.heuristic("修改 README"))
+        followup = AgentRouter.heuristic("继续刚才那个", recent_tasks=[first])
+        reused = manager.create_or_reuse("conv", followup)
+
+        self.assertEqual(first.worker_id, reused.worker_id)
+        self.assertIn(":worker:", reused.scoped_conversation_id)
+
+    def test_manager_creates_new_worker_for_new_task(self) -> None:
+        manager = SubAgentManager()
+        first = manager.create_or_reuse("conv", AgentRouter.heuristic("修改 README"))
+        second = manager.create_or_reuse("conv", AgentRouter.heuristic("查询天气"))
+
+        self.assertNotEqual(first.worker_id, second.worker_id)
+
+    def test_worker_detects_tool_errors_for_agent_feedback(self) -> None:
+        trace = ReplyTrace(
+            trace_id="tool-1",
+            kind="tool",
+            name="read_text_file",
+            status="completed",
+            result="Error: 路径不存在",
+            started_at="now",
+        )
+
+        self.assertTrue(SubAgentManager._trace_needs_agent_feedback(trace))
+        self.assertTrue(
+            SubAgentManager._should_retry_worker_output(
+                "执行失败：路径不存在",
+                [SubAgentManager._trace_feedback_text(trace)],
+            )
+        )
+        self.assertFalse(
+            SubAgentManager._should_retry_worker_output(
+                "已完成，并使用了替代路径。",
+                [SubAgentManager._trace_feedback_text(trace)],
+            )
+        )
+
+    def test_worker_retry_prompt_tells_agent_to_self_repair(self) -> None:
+        manager = SubAgentManager()
+        task = manager.create_or_reuse("conv", AgentRouter.heuristic("读取文件"))
+
+        prompt = SubAgentManager._build_worker_retry_prompt(
+            task,
+            errors=["Error: 路径不存在"],
+            previous_output="执行失败",
+            attempt=1,
+        )
+
+        self.assertIn("不要把下面的错误直接交给用户", prompt)
+        self.assertIn("自己修正", prompt)
+
+    def test_worker_provider_configuration_errors_are_not_self_retried(self) -> None:
+        self.assertFalse(SubAgentManager._is_recoverable_worker_exception(ValueError("当前 provider 需要配置 API Key。")))
+
+
+class AgentRuntimeTest(unittest.TestCase):
+    def test_runtime_emits_agent_traces_for_delegated_worker(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+
+        async def send_event(
+            type_: str,
+            request_id: str,
+            conversation_id: str,
+            payload: dict[str, object],
+        ) -> None:
+            _ = (request_id, conversation_id)
+            events.append((type_, payload))
+
+        async def start_solo(conversation_id: str, task: str, request_id: str) -> str:
+            _ = (conversation_id, task, request_id)
+            return "solo started"
+
+        async def solo_control(conversation_id: str, request_id: str, action: str) -> str:
+            _ = (conversation_id, request_id)
+            return f"solo {action}"
+
+        runtime = AgentRuntime(
+            config_getter=AppConfig,
+            confirmation_store=ToolConfirmationStore(),
+            confirmed_tool_results={},
+            send_event=send_event,
+            start_solo=start_solo,
+            solo_control=solo_control,
+        )
+
+        reply = asyncio.run(runtime.handle_user_message("conv", "req", "修改 README"))
+
+        self.assertIn("openEagle 已收到你的请求", reply)
+        traces = [payload["trace"] for type_, payload in events if type_ == "server:trace"]
+        self.assertTrue(any(trace["kind"] == "agent" for trace in traces))
+        self.assertTrue(any(trace["name"] == "main-router" for trace in traces))
+        self.assertTrue(any(trace["name"] == "coding-worker" for trace in traces))
+
+
+class SoloStabilityTest(unittest.TestCase):
+    def test_action_signature_redacts_text_url_query_and_command_body(self) -> None:
+        self.assertEqual(action_signature("type_text", {"text": "secret token"}), "type_text:short")
+        self.assertEqual(
+            action_signature("open_url", {"url": "https://example.com/path?token=secret"}),
+            "open_url:https://example.com/path",
+        )
+        command_signature = action_signature("execute_command", {"command": "git status --short"})
+        self.assertTrue(command_signature.startswith("execute_command:git:"))
+        self.assertNotIn("status --short", command_signature)
+
+    def test_kernel_classifies_visual_no_op_without_immediate_pause(self) -> None:
+        kernel = SoloAgentKernel.create("点击按钮")
+        decision = SoloDecision(
+            screen_state="按钮可见",
+            thought_summary="[状态] 按钮可见 [上步] 未知 [决策] 点击",
+            action="click",
+            action_args={"x": 0.5, "y": 0.5},
+            progress="点击按钮",
+            is_task_done=False,
+            confidence=0.8,
+        )
+
+        outcome = kernel.assess_step(
+            decision,
+            {"success": True, "action": "click", "visualChange": False},
+            repeat_action_count=1,
+            same_screenshot_count=1,
+            repeat_action_signature_count=1,
+        )
+
+        self.assertFalse(outcome.semantic_success)
+        self.assertEqual(outcome.outcome_class, "no_op")
+        self.assertFalse(outcome.should_pause)
+
+    def test_kernel_recovers_after_repeated_same_signature(self) -> None:
+        kernel = SoloAgentKernel.create("点击按钮")
+        decision = SoloDecision(
+            screen_state="按钮可见",
+            thought_summary="[状态] 按钮可见 [上步] 没变化 [决策] 点击",
+            action="click",
+            action_args={"x": 0.5, "y": 0.5},
+            progress="点击按钮",
+            is_task_done=False,
+            confidence=0.5,
+        )
+
+        outcome = kernel.assess_step(
+            decision,
+            {"success": True, "action": "click", "visualChange": False},
+            repeat_action_count=3,
+            same_screenshot_count=1,
+            repeat_action_signature_count=3,
+        )
+
+        self.assertTrue(kernel.recovery_mode)
+        self.assertIn("动作签名", outcome.recovery_hint or "")
+
+    def test_kernel_treats_successful_command_as_success_without_visual_change(self) -> None:
+        kernel = SoloAgentKernel.create("运行测试")
+        decision = SoloDecision(
+            screen_state="终端可见",
+            thought_summary="[状态] 终端 [上步] 成功 [决策] 命令",
+            action="execute_command",
+            action_args={"command": "echo ok"},
+            progress="运行命令",
+            is_task_done=False,
+            confidence=0.9,
+        )
+
+        outcome = kernel.assess_step(
+            decision,
+            {"success": True, "action": "execute_command", "ok": True, "exitCode": 0, "visualChange": False},
+            repeat_action_count=1,
+            same_screenshot_count=2,
+            repeat_action_signature_count=1,
+        )
+
+        self.assertTrue(outcome.semantic_success)
+        self.assertEqual(outcome.outcome_class, "success")
+
+    def test_kernel_records_repairable_action_block_without_immediate_pause(self) -> None:
+        kernel = SoloAgentKernel.create("按回车")
+
+        outcome = kernel.record_repairable_action_block("press_keys 缺少有效按键列表。")
+
+        self.assertFalse(outcome.semantic_success)
+        self.assertEqual(outcome.outcome_class, "failed")
+        self.assertFalse(outcome.should_pause)
+        self.assertTrue(kernel.recovery_mode)
+        self.assertIn("action_args", outcome.recovery_hint or "")
 
 
 class SoloDecisionParsingTest(unittest.TestCase):
