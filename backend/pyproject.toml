@@ -8,6 +8,7 @@ dependencies = [
   "baidusearch>=1.0.0",
   "fastapi>=0.115.12",
   "lark-oapi>=1.4.14",
+  "mcp",
   "openai",
   "mss>=10.1.0",
   "pyautogui>=0.9.54",

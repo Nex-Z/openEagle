@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 
 from .config import McpConfig, SkillConfig, ToolConfig
+from .solo_actions import allowed_actions_text
 from .subagent_models import AgentTaskRecord
 
 
@@ -226,11 +227,7 @@ def solo_decision_instructions(system_platform: str = "当前系统") -> list[st
         ),
         (
             "可以用的动作：\n"
-            "  finish | wait | screenshot | click | double_click | right_click |\n"
-            "  move_mouse | scroll | type_text | press_keys | execute_command"
-            " | open_url |\n"
-            "  web_search | get_current_time | get_file_info | list_directory"
-            " | read_text_file | search_files | search_text"
+            f"  {allowed_actions_text()}"
         ),
         (
             "action_args 参数规范：\n"
@@ -251,7 +248,9 @@ def solo_decision_instructions(system_platform: str = "当前系统") -> list[st
             "  list_directory: {\"path\"?: string}，列出目录内容\n"
             "  read_text_file: {\"path\": string}，读取文本文件内容\n"
             "  search_files: {\"keyword\": string, \"path\"?: string}，按文件名搜索\n"
-            "  search_text: {\"keyword\": string, \"path\"?: string}，按内容搜索文本"
+            "  search_text: {\"keyword\": string, \"path\"?: string}，按内容搜索文本\n"
+            "  run_configured_tool: {\"tool_id\": string, \"arguments\"?: object}，调用设置里启用的自定义工具\n"
+            "  call_mcp_tool: {\"server_id\": string, \"tool_name\": string, \"arguments\"?: object}，调用设置里启用的 MCP 工具"
         ),
         (
             "注意事项：\n"
@@ -272,6 +271,7 @@ def build_solo_decision_prompt(
     app_context: str | None = None,
     findings: list[str] | None = None,
     kernel_state: dict[str, object] | None = None,
+    capability_context: str | None = None,
 ) -> str:
     if len(history) <= 8:
         recent_history = history
@@ -325,6 +325,12 @@ def build_solo_decision_prompt(
             "SOLO 内核状态（计划、失败恢复、当前约束）：\n"
             f"{json.dumps(kernel_state, ensure_ascii=False)}\n\n"
         )
+    capability_hint = ""
+    if capability_context:
+        capability_hint = (
+            "本轮已启用能力（用户不需要点名；你应根据任务主动选择最合适的工具、MCP 或 Skill）：\n"
+            f"{capability_context}\n\n"
+        )
     first_step_hint = ""
     if step_count == 0:
         first_step_hint = (
@@ -344,6 +350,7 @@ def build_solo_decision_prompt(
         f"{app_hint}"
         f"{findings_hint}"
         f"{kernel_hint}"
+        f"{capability_hint}"
         f"{stability_hint}"
         f"{first_step_hint}"
         f"步骤历史（最新在后，共 {step_count} 步）：\n"
@@ -372,6 +379,7 @@ def build_solo_repair_prompt(
     raw_output: str,
     error: str,
     findings: list[str] | None = None,
+    capability_context: str | None = None,
 ) -> str:
     if len(history) <= 8:
         recent_history = history
@@ -385,11 +393,18 @@ def build_solo_repair_prompt(
     if findings:
         findings_text = "\n".join(f"  - {f}" for f in findings[-10:])
         findings_hint = f"你已经收集到的信息：\n{findings_text}\n\n"
+    capability_hint = ""
+    if capability_context:
+        capability_hint = (
+            "当前启用能力（可主动使用）：\n"
+            f"{capability_context}\n\n"
+        )
     return (
         "你上一次的回复无法解析为动作决策 JSON，系统没能执行。\n"
         f"具体错误：{error}\n\n"
         f"用户在等你帮忙做的事：{task}\n\n"
         f"{findings_hint}"
+        f"{capability_hint}"
         f"你的操作记录（共 {len(history)} 步）：\n"
         f"{history_text}\n\n"
         "你上一次回复的内容：\n"
@@ -397,8 +412,7 @@ def build_solo_repair_prompt(
         "请根据当前截图重新给出一个动作决策。"
         "仅返回一个合法 JSON 对象，不要 markdown 包裹。\n"
         "如果上一次只是跟用户说话，把那句话放到 agent_message 里，然后选一个动作继续。\n"
-        "action 仅可取 finish | wait | screenshot | click | double_click | right_click | "
-        "move_mouse | scroll | type_text | press_keys | execute_command | open_url。\n"
+        f"action 仅可取 {allowed_actions_text()}。\n"
         "必填：screen_state, thought_summary, action, action_args, progress, is_task_done, confidence。\n"
         "可选：findings, agent_message, plan_updates, finish_report, batch_actions。"
     )

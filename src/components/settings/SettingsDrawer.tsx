@@ -1025,10 +1025,12 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                           >
                             <option value="stdio">stdio</option>
                             <option value="http">http</option>
+                            <option value="streamable-http">streamable-http</option>
+                            <option value="sse">sse</option>
                           </select>
                         </label>
                         <label className="form-field">
-                          <span>端点 / 启动命令</span>
+                          <span>{server.transport === "stdio" ? "启动命令" : "端点 URL"}</span>
                           <input
                             onChange={(event) =>
                               onChange({
@@ -1038,6 +1040,11 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                                   endpoint: event.target.value,
                                 })),
                               })
+                            }
+                            placeholder={
+                              server.transport === "stdio"
+                                ? "例如 npx @modelcontextprotocol/server-filesystem ."
+                                : "例如 http://localhost:3001/mcp"
                             }
                             value={server.endpoint}
                           />

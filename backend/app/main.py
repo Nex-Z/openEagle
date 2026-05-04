@@ -31,6 +31,7 @@ from .models import (
 )
 from .runtime_state import RuntimeState
 from .safety import assess_solo_action, is_repairable_solo_block
+from .solo_capabilities import SoloCapabilityRuntime
 from .solo_executor import SoloExecutor
 from .solo_kernel import SoloAgentKernel, action_signature
 from .solo_run_logger import SoloRunLogger
@@ -162,6 +163,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     active_solo_task: asyncio.Task[None] | None = None
     solo_service: SoloService | None = None
     solo_kernel: SoloAgentKernel | None = None
+    solo_capabilities: SoloCapabilityRuntime | None = None
     solo_default_tools = build_default_tools(
         workspace_root=workspace_root,
         builtin_tools=[bt.model_dump() for bt in config.builtin_tools],
@@ -196,6 +198,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             active_solo.detail = f"SOLO 后台任务异常: {exc}"
             solo_logger.write("error", {"reason": active_solo.detail})
             await emit_solo_status(active_solo)
+            await close_solo_capabilities()
 
     def schedule_solo_task(coro: Any) -> None:
         nonlocal active_solo_task
@@ -218,6 +221,24 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             active_solo_task.cancel()
         active_solo_task = None
 
+    async def close_solo_capabilities() -> None:
+        nonlocal solo_capabilities
+        if solo_capabilities is None:
+            return
+        try:
+            await solo_capabilities.close()
+        except Exception as exc:  # noqa: BLE001
+            slog(f"capability close error={exc}")
+        finally:
+            solo_capabilities = None
+
+    def assess_current_solo_action(action: str, action_args: dict[str, Any]):
+        if solo_capabilities is not None:
+            capability_assessment = solo_capabilities.assess_action(action, action_args)
+            if capability_assessment is not None:
+                return capability_assessment
+        return assess_solo_action(action, action_args, workspace_root)
+
     async def emit_solo_trace(
         session: SoloSessionState,
         name: str,
@@ -225,25 +246,27 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         summary: str,
         params: dict[str, Any] | None = None,
         result: Any | None = None,
+        kind: str = "skill",
     ) -> None:
         now = utc_now()
+        trace_status = status if status in {"started", "completed", "error"} else "completed"
+        trace = {
+            "id": f"solo-trace-{session.step_count}-{name}-{status}",
+            "kind": kind,
+            "name": f"SOLO/{name}",
+            "status": trace_status,
+            "summary": summary,
+            "params": params or {},
+            "result": json.dumps(result, ensure_ascii=False) if result is not None else None,
+            "startedAt": now,
+        }
+        if trace_status != "started":
+            trace["completedAt"] = now
         await safe_send(
             "server:trace",
             session.request_id,
             session.conversation_id,
-            {
-                "trace": {
-                    "id": f"solo-trace-{session.step_count}-{name}-{status}",
-                    "kind": "skill",
-                    "name": f"SOLO/{name}",
-                    "status": "completed" if status != "error" else "error",
-                    "summary": summary,
-                    "params": params or {},
-                    "result": json.dumps(result, ensure_ascii=False) if result is not None else None,
-                    "startedAt": now,
-                    "completedAt": now,
-                }
-            },
+            {"trace": trace},
         )
 
     async def emit_solo_status(session: SoloSessionState) -> None:
@@ -394,11 +417,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             return {"success": False, "action": action, "executionError": "session not running"}
 
         try:
-            execution_result = await asyncio.to_thread(
-                solo_tools.execute,
-                action,
-                action_args,
-            )
+            if action in {"run_configured_tool", "call_mcp_tool"} and solo_capabilities is not None:
+                execution_result = await solo_capabilities.execute_action_async(action, action_args)
+            else:
+                execution_result = await asyncio.to_thread(
+                    solo_tools.execute,
+                    action,
+                    action_args,
+                )
             if not is_solo_running(session):
                 return {"success": False, "action": action, "executionError": "session stopped"}
             screenshot = execution_result.get("screenshot")
@@ -522,6 +548,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             session.detail = "SOLO 服务未初始化。"
             solo_logger.write("error", {"reason": session.detail})
             await emit_solo_status(session)
+            await close_solo_capabilities()
             return
         if solo_kernel is None:
             solo_kernel = SoloAgentKernel.create(session.task)
@@ -551,6 +578,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     session, "decision", "error", "VL 推理失败", result=str(exc),
                 )
                 await emit_solo_status(session)
+                await close_solo_capabilities()
                 return
 
             if not is_solo_running(session):
@@ -558,6 +586,17 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             if decision.agent_message:
                 session.last_agent_message = decision.agent_message
+
+            for trace in decision.tool_traces:
+                await emit_solo_trace(
+                    session,
+                    str(trace.get("name") or "capability"),
+                    str(trace.get("status") or "completed"),
+                    str(trace.get("summary") or "SOLO 能力调用"),
+                    params=trace.get("params") if isinstance(trace.get("params"), dict) else {},
+                    result=trace.get("result"),
+                    kind=str(trace.get("kind") or "tool"),
+                )
 
             # Sanitize thought_summary: if VL returned a JSON object as the string,
             # extract the actual text so the frontend doesn't show raw JSON.
@@ -693,6 +732,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 solo_logger.write("stability_summary", solo_stability_summary(session, "completed"))
                 await emit_solo_plan(session, solo_kernel)
                 await emit_solo_status(session)
+                await close_solo_capabilities()
                 return
 
             planned_actions = [
@@ -724,10 +764,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             assessment = None
             if permission_mode != "all":
                 for planned_action in planned_actions:
-                    current_assessment = assess_solo_action(
+                    current_assessment = assess_current_solo_action(
                         str(planned_action["action"]),
                         dict(planned_action["action_args"]),
-                        workspace_root,
                     )
                     if current_assessment.level == "blocked":
                         blocking_action = planned_action
@@ -738,7 +777,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         assessment = current_assessment
 
                 if assessment is None:
-                    assessment = assess_solo_action(decision.action, decision.action_args, workspace_root)
+                    assessment = assess_current_solo_action(decision.action, decision.action_args)
 
             if assessment is not None and assessment.level == "blocked":
                 session.state = "paused"
@@ -1119,7 +1158,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         task: str,
         request_id: str,
     ) -> str:
-        nonlocal active_solo, solo_service, solo_kernel
+        nonlocal active_solo, solo_service, solo_kernel, solo_capabilities
         if active_solo is not None and active_solo.state in {
             "running",
             "paused",
@@ -1131,8 +1170,13 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         if not current_config.agent.vl_model_id or not current_config.agent.vl_api_key:
             return "SOLO 配置缺失，请先在 openEagle 设置中配置 VL 模型 ID 与 API Key。"
 
-        solo_service = SoloService(current_config.agent)
-        solo_kernel = SoloAgentKernel.create(task)
+        await close_solo_capabilities()
+        solo_capabilities = SoloCapabilityRuntime(
+            current_config,
+            workspace_root=workspace_root,
+            request_id=request_id,
+            conversation_id=conversation_id,
+        )
         solo_executor.set_preferred_display_index(current_config.solo.preferred_display_index)
         first_screenshot = await asyncio.to_thread(solo_tools.screenshot)
         slog(f"start request={request_id} conv={conversation_id} task={task[:120]}")
@@ -1156,12 +1200,26 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             display_index=current_config.solo.preferred_display_index,
         )
         active_solo.log_path = solo_logger.start(request_id, task)
+        capability_traces = await solo_capabilities.initialize()
+        for trace in capability_traces:
+            await emit_solo_trace(
+                active_solo,
+                trace.name,
+                trace.status,
+                trace.summary,
+                params=trace.params,
+                result=trace.result,
+                kind=trace.kind,
+            )
+        solo_service = SoloService(current_config.agent, solo_capabilities)
+        solo_kernel = SoloAgentKernel.create(task)
         await emit_solo_plan(active_solo, solo_kernel)
         await emit_solo_status(active_solo)
         if not active_solo.last_screenshot_path:
             active_solo.state = "error"
             active_solo.detail = "首帧截图失败，无法启动 SOLO。"
             await emit_solo_status(active_solo)
+            await close_solo_capabilities()
             return active_solo.detail
 
         async def _start_agent() -> None:
@@ -1190,6 +1248,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 slog(f"request={active_solo.request_id} agent_start error={exc}")
                 solo_logger.write("error", {"reason": active_solo.detail})
                 await emit_solo_status(active_solo)
+                await close_solo_capabilities()
 
         schedule_solo_task(_start_agent())
         return "收到，开始处理。"
@@ -1232,6 +1291,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 active_solo.detail = "缺少截图，无法恢复 SOLO。"
                 solo_logger.write("error", {"reason": active_solo.detail})
                 await emit_solo_status(active_solo)
+                await close_solo_capabilities()
                 return active_solo.detail
             active_solo.state = "running"
             active_solo.detail = "SOLO 已恢复。"
@@ -1249,6 +1309,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             solo_logger.write("aborted", {"reason": active_solo.detail})
             await emit_solo_trace(active_solo, "control", "completed", "用户结束 SOLO", params={"action": "stop"})
             await emit_solo_status(active_solo)
+            await close_solo_capabilities()
             return "SOLO 已结束。"
 
         if action == "confirm_reject":
@@ -1630,6 +1691,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         active_solo.detail = "缺少截图，无法恢复 SOLO。"
                         solo_logger.write("error", {"reason": active_solo.detail})
                         await emit_solo_status(active_solo)
+                        await close_solo_capabilities()
                     else:
                         active_solo.state = "running"
                         active_solo.detail = "SOLO 已恢复。"
@@ -1664,6 +1726,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         params={"action": "stop"},
                     )
                     await emit_solo_status(active_solo)
+                    await close_solo_capabilities()
                     continue
 
                 if control.action == "confirm_allow":
@@ -1797,6 +1860,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             ErrorPayload(message=str(exc), code="internal_error").model_dump(),
         )
     finally:
+        await close_solo_capabilities()
         if im_bridge is not None:
             try:
                 await im_bridge.stop()

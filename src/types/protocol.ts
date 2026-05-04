@@ -137,7 +137,7 @@ export interface ToolConfig {
 export interface McpServerConfig {
   id: string;
   name: string;
-  transport: "stdio" | "http";
+  transport: "stdio" | "http" | "sse" | "streamable-http";
   endpoint: string;
   description: string;
   enabled: boolean;

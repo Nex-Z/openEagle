@@ -138,4 +138,14 @@ class SoloToolkit(Toolkit):
             )
         if action == "open_url":
             return self.open_url(url=str(action_args.get("url", "")))
+        if action in {
+            "web_search",
+            "get_current_time",
+            "get_file_info",
+            "list_directory",
+            "read_text_file",
+            "search_files",
+            "search_text",
+        }:
+            return self._executor.execute_action(action, action_args)
         raise ValueError(f"unsupported action: {action}")

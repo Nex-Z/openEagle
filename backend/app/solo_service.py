@@ -15,6 +15,13 @@ from agno.agent import Agent
 from agno.media import Image as AgnoImage
 from agno.models.openai import OpenAIResponses
 from agno.models.openai.like import OpenAILike
+from agno.run.agent import (
+    IntermediateRunContentEvent,
+    RunContentEvent,
+    ToolCallCompletedEvent,
+    ToolCallErrorEvent,
+    ToolCallStartedEvent,
+)
 from pydantic import BaseModel, Field, ValidationError
 
 from .config import AgentConfig
@@ -24,31 +31,15 @@ from .prompts import (
     solo_decision_instructions,
 )
 from .safety import assess_solo_action
+from .solo_capabilities import (
+    SoloCapabilityRuntime,
+    SoloConfirmationRequest,
+    parse_confirmation_request,
+    stringify_tool_result,
+)
+from .solo_actions import ALLOWED_SOLO_ACTIONS, BATCH_EXECUTABLE_ACTIONS
 
-ALLOWED_ACTIONS = {
-    "finish",
-    "wait",
-    "screenshot",
-    "click",
-    "double_click",
-    "right_click",
-    "move_mouse",
-    "scroll",
-    "type_text",
-    "press_keys",
-    "execute_command",
-    "open_url",
-    # Default tools (also available in Chat mode)
-    "web_search",
-    "get_current_time",
-    "get_file_info",
-    "list_directory",
-    "read_text_file",
-    "search_files",
-    "search_text",
-}
-
-BATCH_EXECUTABLE_ACTIONS = {"click", "double_click", "scroll", "type_text", "press_keys", "wait"}
+ALLOWED_ACTIONS = ALLOWED_SOLO_ACTIONS
 
 MODEL_IMAGE_MAX_LONG_EDGE = 1920
 MODEL_IMAGE_JPEG_QUALITY = 85
@@ -153,6 +144,13 @@ def prepare_model_image(
     }
 
 
+@dataclass
+class SoloAgentRunOutput:
+    text: str
+    confirmation: SoloConfirmationRequest | None = None
+    tool_traces: list[dict[str, Any]] = field(default_factory=list)
+
+
 def summarize_solo_step_result(
     result: dict[str, Any],
     max_output_chars: int = 1200,
@@ -235,6 +233,7 @@ class SoloDecision(BaseModel):
     model_image_width: int | None = Field(default=None, exclude=True)
     model_image_height: int | None = Field(default=None, exclude=True)
     model_image_scale: float | None = Field(default=None, exclude=True)
+    tool_traces: list[dict[str, Any]] = Field(default_factory=list, exclude=True)
 
     model_config = {
         "populate_by_name": True,
@@ -274,8 +273,13 @@ class SoloSessionState:
 
 
 class SoloService:
-    def __init__(self, agent_config: AgentConfig) -> None:
+    def __init__(
+        self,
+        agent_config: AgentConfig,
+        capability_runtime: SoloCapabilityRuntime | None = None,
+    ) -> None:
         self._agent_config = agent_config
+        self._capability_runtime = capability_runtime
         self._agent: Agent | None = None
 
     def _build_agent(self) -> Agent:
@@ -299,10 +303,22 @@ class SoloService:
                 api_key=api_key,
             )
 
+        instructions = solo_decision_instructions(current_system_platform())
+        tools: list[Any] = []
+        if self._capability_runtime is not None:
+            instructions.extend(self._capability_runtime.skill_instructions())
+            instructions.append(
+                "你可以主动调用已启用的 Agno 工具和 MCP 工具，不需要用户显式点名。"
+                "工具结果是观察信息，最终仍必须输出 SOLO 决策 JSON。"
+                "如果工具返回 SOLO_CONFIRMATION_REQUIRED，停止继续调用工具，按该请求等待用户确认。"
+            )
+            tools = self._capability_runtime.agent_tools
+
         self._agent = Agent(
             model=model,
             markdown=False,
-            instructions=solo_decision_instructions(current_system_platform()),
+            instructions=instructions,
+            tools=tools,
         )
         return self._agent
 
@@ -384,6 +400,116 @@ class SoloService:
         return str(result)
 
     @staticmethod
+    def _tool_name_from_event(event: Any) -> str:
+        tool = getattr(event, "tool", None)
+        if tool is None:
+            return "unknown"
+        return str(getattr(tool, "tool_name", "") or "unknown")
+
+    async def _run_agent(
+        self,
+        agent: Agent,
+        prompt: str,
+        image_url: str,
+    ) -> SoloAgentRunOutput:
+        if self._capability_runtime is None or not self._capability_runtime.has_agent_tools:
+            result = await agent.arun(
+                prompt,
+                images=[AgnoImage(url=image_url, detail="auto")],
+            )
+            return SoloAgentRunOutput(text=self._result_text(result))
+
+        chunks: list[str] = []
+        traces: list[dict[str, Any]] = []
+        stream = agent.arun(
+            prompt,
+            images=[AgnoImage(url=image_url, detail="auto")],
+            stream=True,
+            stream_events=True,
+        )
+        async for event in stream:
+            if isinstance(event, (RunContentEvent, IntermediateRunContentEvent)):
+                content = getattr(event, "content", None)
+                if isinstance(content, str) and content:
+                    chunks.append(content)
+                continue
+
+            if isinstance(event, ToolCallStartedEvent):
+                traces.append(
+                    {
+                        "kind": self._trace_kind_for_tool(self._tool_name_from_event(event)),
+                        "name": self._tool_name_from_event(event),
+                        "status": "started",
+                        "summary": "SOLO Agent 正在主动调用能力。",
+                        "params": {},
+                    }
+                )
+                continue
+
+            if isinstance(event, ToolCallCompletedEvent):
+                tool = getattr(event, "tool", None)
+                tool_name = self._tool_name_from_event(event)
+                result_text = stringify_tool_result(getattr(tool, "result", None) if tool else None)
+                traces.append(
+                    {
+                        "kind": self._trace_kind_for_tool(tool_name),
+                        "name": tool_name,
+                        "status": "completed",
+                        "summary": "SOLO Agent 能力调用完成。",
+                        "params": getattr(tool, "tool_args", {}) if tool else {},
+                        "result": result_text,
+                    }
+                )
+                confirmation = parse_confirmation_request(
+                    result_text,
+                    expected_token=self._capability_runtime.confirmation_token,
+                )
+                if confirmation is not None:
+                    return SoloAgentRunOutput(
+                        text="",
+                        confirmation=confirmation,
+                        tool_traces=traces,
+                    )
+                continue
+
+            if isinstance(event, ToolCallErrorEvent):
+                tool_name = self._tool_name_from_event(event)
+                traces.append(
+                    {
+                        "kind": self._trace_kind_for_tool(tool_name),
+                        "name": tool_name,
+                        "status": "error",
+                        "summary": "SOLO Agent 能力调用失败。",
+                        "params": {},
+                        "result": stringify_tool_result(getattr(event, "tool", None)),
+                    }
+                )
+
+        return SoloAgentRunOutput(text="".join(chunks).strip(), tool_traces=traces)
+
+    @staticmethod
+    def _trace_kind_for_tool(tool_name: str) -> str:
+        if tool_name.startswith("mcp_"):
+            return "mcp"
+        return "tool"
+
+    @staticmethod
+    def _decision_from_confirmation(
+        confirmation: SoloConfirmationRequest,
+        traces: list[dict[str, Any]],
+    ) -> SoloDecision:
+        return SoloDecision(
+            thought_summary=f"能力调用需要用户确认：{confirmation.name}。原因：{confirmation.reason}",
+            action=confirmation.action,
+            action_args=confirmation.action_args,
+            progress="等待用户确认后再继续执行该能力。",
+            is_task_done=False,
+            agent_message=f"需要确认后才能调用「{confirmation.name}」：{confirmation.reason}",
+            confidence=1.0,
+            tool_traces=traces,
+        )
+
+    @staticmethod
     def _fallback_decision_from_text(raw_text: str, error: Exception) -> SoloDecision:
         raw_preview = trim_model_output(raw_text, 500)
         if raw_preview.startswith("RunResponse("):
@@ -441,6 +567,9 @@ class SoloService:
             app_context,
             findings,
             kernel_state,
+            self._capability_runtime.capability_catalog()
+            if self._capability_runtime is not None
+            else None,
         )
         model_image = prepare_model_image(screenshot_path)
         model_image_path = Path(model_image["path"])
@@ -451,20 +580,25 @@ class SoloService:
             except OSError:
                 pass
         started_at = time.perf_counter()
-        result = await agent.arun(
-            prompt,
-            images=[AgnoImage(url=image_url, detail="auto")],
-        )
+        run_output = await self._run_agent(agent, prompt, image_url)
         model_elapsed_ms = int((time.perf_counter() - started_at) * 1000)
-        output_text = self._result_text(result)
+        if run_output.confirmation is not None:
+            decision = self._decision_from_confirmation(
+                run_output.confirmation,
+                run_output.tool_traces,
+            )
+            return self._attach_image_metrics(decision, model_image, model_elapsed_ms)
+        output_text = run_output.text
         if not isinstance(output_text, str) or not output_text.strip():
             raise ValueError("VL 返回为空，无法继续 SOLO。")
         try:
             decision = self._normalize_decision(output_text)
+            decision.tool_traces = run_output.tool_traces
             return self._attach_image_metrics(decision, model_image, model_elapsed_ms)
         except Exception as first_error:  # noqa: BLE001
             if not self._should_attempt_json_repair(output_text):
                 fallback = self._fallback_decision_from_text(output_text, first_error)
+                fallback.tool_traces = run_output.tool_traces
                 return self._attach_image_metrics(fallback, model_image, model_elapsed_ms)
 
             repair_prompt = build_solo_repair_prompt(
@@ -473,18 +607,34 @@ class SoloService:
                 raw_output=output_text,
                 error=str(first_error),
                 findings=findings,
+                capability_context=(
+                    self._capability_runtime.capability_catalog()
+                    if self._capability_runtime is not None
+                    else None
+                ),
             )
             repair_started_at = time.perf_counter()
-            repair_result = await agent.arun(
-                repair_prompt,
-                images=[AgnoImage(url=image_url, detail="auto")],
-            )
+            repair_output = await self._run_agent(agent, repair_prompt, image_url)
             repair_elapsed_ms = int((time.perf_counter() - repair_started_at) * 1000)
-            repair_text = self._result_text(repair_result)
+            combined_traces = [*run_output.tool_traces, *repair_output.tool_traces]
+            if repair_output.confirmation is not None:
+                decision = self._decision_from_confirmation(
+                    repair_output.confirmation,
+                    combined_traces,
+                )
+                decision.raw_model_output = trim_model_output(output_text)
+                return self._attach_image_metrics(
+                    decision,
+                    model_image,
+                    model_elapsed_ms,
+                    repair_elapsed_ms,
+                )
+            repair_text = repair_output.text
             try:
                 decision = self._normalize_decision(repair_text)
                 decision.raw_model_output = trim_model_output(output_text)
                 decision.repair_model_output = trim_model_output(repair_text)
+                decision.tool_traces = combined_traces
                 if not decision.agent_message and not output_text.lstrip().startswith("{"):
                     decision.agent_message = trim_model_output(output_text, 500)
                 return self._attach_image_metrics(
@@ -498,6 +648,7 @@ class SoloService:
                 fallback.repair_model_output = (
                     f"repair failed: {repair_error}\n\n{trim_model_output(repair_text)}"
                 )
+                fallback.tool_traces = combined_traces
                 return self._attach_image_metrics(
                     fallback,
                     model_image,

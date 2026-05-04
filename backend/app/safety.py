@@ -6,6 +6,8 @@ from pathlib import Path
 from typing import Any, Literal
 from urllib.parse import urlparse
 
+from .solo_actions import SAFE_DEFAULT_TOOL_SOLO_ACTIONS
+
 RiskLevel = Literal["safe", "confirm", "blocked"]
 
 SAFE_SOLO_ACTIONS = {
@@ -19,15 +21,7 @@ SAFE_SOLO_ACTIONS = {
     "scroll",
     "type_text",
     "open_url",
-    # Default tool actions (read-only, safe)
-    "web_search",
-    "get_current_time",
-    "get_file_info",
-    "list_directory",
-    "read_text_file",
-    "search_files",
-    "search_text",
-}
+} | SAFE_DEFAULT_TOOL_SOLO_ACTIONS
 DANGEROUS_KEYS = {"ctrl", "alt", "meta", "win", "f4", "delete", "backspace", "enter"}
 SAFE_COMMAND_PATTERNS = [
     r"^rg(\.exe)?(\s|$)",
