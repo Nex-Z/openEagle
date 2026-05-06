@@ -16,7 +16,11 @@ def safe_conversation_id(channel: str, chat_id: str) -> str:
 
 def build_conversation_binding(source: IMMessageSource) -> IMConversationBinding:
     chat_label = source.chat_id[-8:] if len(source.chat_id) > 8 else source.chat_id
-    provider_label = "飞书" if source.channel == "feishu" else "Telegram"
+    provider_label = {
+        "feishu": "飞书",
+        "telegram": "Telegram",
+        "wechat": "微信",
+    }.get(source.channel, "IM")
     if source.chat_type == "private":
         name = source.user_name.strip() or source.user_id[-8:] or "私聊"
         title = f"{provider_label} · {name}"

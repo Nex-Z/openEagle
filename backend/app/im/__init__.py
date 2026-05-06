@@ -10,6 +10,7 @@ from .models import (
 )
 from .routing import build_conversation_binding, is_source_allowed
 from .telegram import TelegramAdapter
+from .wechat import WechatAdapter
 
 __all__ = [
     "IMCommand",
@@ -19,6 +20,7 @@ __all__ = [
     "IMOutboundMessage",
     "IMStatus",
     "TelegramAdapter",
+    "WechatAdapter",
     "build_conversation_binding",
     "is_source_allowed",
     "parse_im_command",

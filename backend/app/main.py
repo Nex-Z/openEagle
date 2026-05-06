@@ -1543,6 +1543,28 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 )
                 continue
 
+            if envelope.type == "client:wechat_bind_start":
+                await im_bridge.start_wechat_bind(
+                    envelope.request_id,
+                    envelope.conversation_id,
+                    force=bool(envelope.payload.get("force")),
+                )
+                continue
+
+            if envelope.type == "client:wechat_bind_cancel":
+                await im_bridge.cancel_wechat_bind(
+                    envelope.request_id,
+                    envelope.conversation_id,
+                )
+                continue
+
+            if envelope.type == "client:wechat_unbind":
+                await im_bridge.unbind_wechat(
+                    envelope.request_id,
+                    envelope.conversation_id,
+                )
+                continue
+
             if envelope.type == "client:tool_confirmation":
                 control = ToolConfirmationPayload.model_validate(envelope.payload)
                 pending = tool_confirmations.pop(control.confirmation_id)

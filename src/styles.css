@@ -1695,6 +1695,26 @@ a {
   color: var(--warning);
 }
 
+.inline-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.wechat-qr-panel {
+  display: inline-flex;
+  padding: 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: #ffffff;
+}
+
+.wechat-qr-panel img {
+  width: 196px;
+  height: 196px;
+  display: block;
+}
+
 .display-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));

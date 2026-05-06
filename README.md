@@ -102,7 +102,7 @@ Frontend      →  connects via WebSocket to ws://127.0.0.1:<port>/ws
 | Automation | mss (screenshots), pyautogui (input) |
 | Agent framework | agno |
 | Search | baidusearch (free, no API key) |
-| Remote IM | Feishu long connection, Telegram Bot polling |
+| Remote IM | Feishu long connection, Telegram Bot polling, WeChat ClawBot QR binding |
 
 ### Main/Sub-Agent Runtime
 
@@ -134,10 +134,11 @@ SOLO now uses soft stability signals instead of rigid scripts: action signatures
 
 ### Remote IM Control
 
-openEagle can accept tasks from Feishu or Telegram after you enable the provider in **Settings -> IM**.
+openEagle can accept tasks from Feishu, Telegram, or WeChat after you enable the provider in **Settings -> IM**.
 
 - Feishu requires the app `App ID` and `App Secret`. The whitelist accepts either `open_id` for a single user or `chat_id` for a private chat/group chat. Send one message first, then copy the blocked `open_id` / `chat_id` from the IM status panel if you are not sure what to fill in.
 - Telegram requires a Bot Token. The whitelist accepts either `user_id` or `chat_id`.
+- WeChat uses `wechat-clawbot`. Click "Scan to bind" in the WeChat card, scan the QR code with WeChat, then enable the entry after the `accountId` is saved. "Unbind" stops polling and removes the local ClawBot account credentials used by openEagle.
 - Empty whitelists reject all remote messages by default.
 - Plain remote text starts a SOLO task by default. Use `/chat <message>` when you only want a text chat.
 
@@ -184,6 +185,10 @@ Key settings (accessible from the in-app Settings panel):
 | `telegram.enabled` | Enable the Telegram remote entry |
 | `telegram.botToken` | Telegram Bot API token |
 | `telegram.allowedUserIds` / `telegram.allowedChatIds` | Telegram user/chat whitelist |
+| `wechat.enabled` | Enable the WeChat ClawBot remote entry |
+| `wechat.accountId` | WeChat ClawBot account saved after QR binding |
+| `wechat.baseUrl` / `wechat.botType` | Optional ClawBot API base URL and bot type |
+| `wechat.allowedUserIds` / `wechat.allowedChatIds` | WeChat user/chat whitelist |
 | `tools` | Custom tool definitions |
 | `mcp` | MCP server connections |
 | `skills` | Custom skill prompts |

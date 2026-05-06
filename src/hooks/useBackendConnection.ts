@@ -22,6 +22,7 @@ import type {
   SoloStepPayload,
   StatusPayload,
   ToolConfirmationPayload,
+  WechatBindStatusPayload,
 } from "../types/protocol";
 
 const BACKEND_EVENT = "backend://status";
@@ -235,6 +236,8 @@ export function useBackendConnection(
   const [imStatuses, setImStatuses] = useState<
     Partial<Record<IMStatusPayload["provider"], IMStatusPayload>>
   >({});
+  const [wechatBindStatus, setWechatBindStatus] =
+    useState<WechatBindStatusPayload | null>(null);
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
@@ -325,6 +328,28 @@ export function useBackendConnection(
     socket.send(JSON.stringify(envelope));
     return true;
   }, [conversationId]);
+
+  const sendWechatControl = (
+    type: "client:wechat_bind_start" | "client:wechat_bind_cancel" | "client:wechat_unbind",
+    payload: Record<string, unknown> = {},
+  ) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      setStatusLine("后端服务未就绪");
+      setStatusDetail("当前连接尚未建立完成，微信绑定指令未发送。");
+      return false;
+    }
+    const now = new Date().toISOString();
+    const envelope: Envelope<Record<string, unknown>> = {
+      type,
+      requestId: createId("wechat"),
+      conversationId,
+      payload,
+      timestamp: now,
+    };
+    socket.send(JSON.stringify(envelope));
+    return true;
+  };
 
   useEffect(() => {
     if (!isTauriRuntime()) {
@@ -495,9 +520,13 @@ export function useBackendConnection(
           conversation?: ConversationSummary;
           source?: string;
           provider?: IMStatusPayload["provider"];
-          state?: IMStatusPayload["state"];
           lastBlockedOpenId?: string;
           lastBlockedChatId?: string;
+          state?: IMStatusPayload["state"] | WechatBindStatusPayload["state"];
+          message?: string;
+          qrcodeUrl?: string;
+          accountId?: string;
+          userId?: string;
         } & ErrorPayload &
           StatusPayload
       >;
@@ -528,7 +557,7 @@ export function useBackendConnection(
         if (envelope.payload.provider && envelope.payload.state) {
           const nextStatus: IMStatusPayload = {
             provider: envelope.payload.provider,
-            state: envelope.payload.state,
+            state: envelope.payload.state as IMStatusPayload["state"],
             detail: envelope.payload.detail,
             lastBlockedOpenId: envelope.payload.lastBlockedOpenId,
             lastBlockedChatId: envelope.payload.lastBlockedChatId,
@@ -537,6 +566,14 @@ export function useBackendConnection(
             ...current,
             [nextStatus.provider]: nextStatus,
           }));
+        }
+        return;
+      }
+
+      if (envelope.type === "server:wechat_bind_status") {
+        const payload = envelope.payload as unknown as WechatBindStatusPayload;
+        if (payload.state && payload.message) {
+          setWechatBindStatus(payload);
         }
         return;
       }
@@ -550,7 +587,9 @@ export function useBackendConnection(
               ? "飞书"
               : envelope.payload.source === "telegram"
                 ? "Telegram"
-                : "IM",
+                : envelope.payload.source === "wechat"
+                  ? "微信"
+                  : "IM",
           content: envelope.payload.content ?? "",
           attachments: envelope.payload.attachments,
           createdAt: envelope.timestamp,
@@ -1249,9 +1288,14 @@ export function useBackendConnection(
     soloLastError,
     soloPlan,
     imStatuses,
+    wechatBindStatus,
     canStartSolo,
     startSolo,
     requestSoloDisplays,
+    startWechatBind: (force = false) =>
+      sendWechatControl("client:wechat_bind_start", { force }),
+    cancelWechatBind: () => sendWechatControl("client:wechat_bind_cancel"),
+    unbindWechat: () => sendWechatControl("client:wechat_unbind"),
     pauseSolo,
     resumeSolo,
     stopSolo,

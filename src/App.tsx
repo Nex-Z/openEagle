@@ -182,9 +182,13 @@ export default function App() {
     soloLastError,
     soloPlan,
     imStatuses,
+    wechatBindStatus,
     canStartSolo,
     startSolo,
     requestSoloDisplays,
+    startWechatBind,
+    cancelWechatBind,
+    unbindWechat,
     pauseSolo,
     resumeSolo,
     stopSolo,
@@ -260,6 +264,39 @@ export default function App() {
   useEffect(() => {
     saveSettings(settings);
   }, [settings]);
+
+  useEffect(() => {
+    if (!wechatBindStatus) {
+      return;
+    }
+    if (wechatBindStatus.state === "bound" && wechatBindStatus.accountId) {
+      setSettings((current) =>
+        current.wechat.accountId === wechatBindStatus.accountId
+          ? current
+          : {
+              ...current,
+              wechat: {
+                ...current.wechat,
+                accountId: wechatBindStatus.accountId ?? "",
+              },
+            },
+      );
+    }
+    if (wechatBindStatus.state === "unbound") {
+      setSettings((current) =>
+        current.wechat.accountId
+          ? {
+              ...current,
+              wechat: {
+                ...current.wechat,
+                accountId: "",
+                enabled: false,
+              },
+            }
+          : current,
+      );
+    }
+  }, [wechatBindStatus]);
 
   useEffect(() => {
     return () => {
@@ -475,13 +512,17 @@ export default function App() {
       <SettingsDrawer
         activeSection={settingsSection}
         imStatuses={imStatuses}
+        onCancelWechatBind={cancelWechatBind}
         onChange={setSettings}
         onClose={() => setSettingsDrawerOpen(false)}
         onRefreshSoloDisplays={requestSoloDisplays}
         onSectionChange={setSettingsSection}
+        onStartWechatBind={startWechatBind}
+        onUnbindWechat={unbindWechat}
         open={settingsDrawerOpen}
         settings={settings}
         soloDisplays={soloDisplays}
+        wechatBindStatus={wechatBindStatus}
       />
     </>
   );

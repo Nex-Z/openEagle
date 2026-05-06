@@ -98,6 +98,19 @@ class TelegramConfig(BaseModel):
     }
 
 
+class WechatConfig(BaseModel):
+    enabled: bool = False
+    account_id: str | None = Field(default=None, alias="accountId")
+    base_url: str | None = Field(default=None, alias="baseUrl")
+    bot_type: str = Field(default="3", alias="botType")
+    allowed_user_ids: list[str] = Field(default_factory=list, alias="allowedUserIds")
+    allowed_chat_ids: list[str] = Field(default_factory=list, alias="allowedChatIds")
+
+    model_config = {
+        "populate_by_name": True,
+    }
+
+
 class ImProviderConfig(BaseModel):
     id: str = "feishu"
     type: str = "feishu"
@@ -106,6 +119,9 @@ class ImProviderConfig(BaseModel):
     app_id: str | None = Field(default=None, alias="appId")
     app_secret: str | None = Field(default=None, alias="appSecret")
     bot_token: str | None = Field(default=None, alias="botToken")
+    account_id: str | None = Field(default=None, alias="accountId")
+    base_url: str | None = Field(default=None, alias="baseUrl")
+    bot_type: str = Field(default="3", alias="botType")
     allowed_open_ids: list[str] = Field(default_factory=list, alias="allowedOpenIds")
     allowed_user_ids: list[str] = Field(default_factory=list, alias="allowedUserIds")
     allowed_chat_ids: list[str] = Field(default_factory=list, alias="allowedChatIds")
@@ -123,6 +139,7 @@ class AppConfig(BaseModel):
     agent: AgentConfig = AgentConfig()
     feishu: FeishuConfig = FeishuConfig()
     telegram: TelegramConfig = TelegramConfig()
+    wechat: WechatConfig = WechatConfig()
     im: ImConfig = ImConfig()
     permissions: PermissionConfig = PermissionConfig()
     solo: SoloConfig = SoloConfig()

@@ -1,16 +1,27 @@
 from __future__ import annotations
 
+import asyncio
 import re
 import unittest
+from unittest.mock import patch
 
-from app.config import AppConfig, FeishuConfig, TelegramConfig
+from app.config import AppConfig, FeishuConfig, TelegramConfig, WechatConfig
 from app.im.bridge import IMBridge, bind_config_getter
 from app.im.commands import parse_im_command
 from app.im.feishu import parse_message_receive_event
 from app.im.models import IMEvent, IMMessageSource
 from app.im.routing import build_conversation_binding, is_source_allowed
 from app.im.telegram import parse_update, split_telegram_text
+from app.im.wechat import WechatAdapter, parse_weixin_message
 from app.models import AttachmentRef
+from wechat_clawbot.api.types import (
+    MessageItem,
+    MessageItemType,
+    MessageState,
+    MessageType,
+    TextItem,
+    WeixinMessage,
+)
 
 
 class IMRoutingTest(unittest.TestCase):
@@ -75,6 +86,27 @@ class IMRoutingTest(unittest.TestCase):
         self.assertTrue(
             is_source_allowed(
                 TelegramConfig(enabled=True, allowedChatIds=["-100123"]),
+                source,
+            )
+        )
+
+    def test_wechat_user_id_or_chat_id_allow_source(self) -> None:
+        source = IMMessageSource(
+            channel="wechat",
+            chat_id="wx_group",
+            chat_type="group",
+            user_id="wx_user",
+        )
+
+        self.assertTrue(
+            is_source_allowed(
+                WechatConfig(enabled=True, allowedUserIds=["wx_user"]),
+                source,
+            )
+        )
+        self.assertTrue(
+            is_source_allowed(
+                WechatConfig(enabled=True, allowedChatIds=["wx_group"]),
                 source,
             )
         )
@@ -416,6 +448,179 @@ class TelegramEventParseTest(unittest.TestCase):
         self.assertEqual(event.text, "")
         self.assertEqual(event.attachments[0].name, "report.pdf")
         self.assertEqual(event.attachments[0].remote_meta["fileId"], "file-1")
+
+
+class WechatEventParseTest(unittest.TestCase):
+    def test_private_text_message_parses(self) -> None:
+        event = parse_weixin_message(
+            WeixinMessage(
+                seq=1,
+                message_id=99,
+                from_user_id="wx_user",
+                message_type=MessageType.USER,
+                message_state=MessageState.FINISH,
+                item_list=[
+                    MessageItem(
+                        type=MessageItemType.TEXT,
+                        text_item=TextItem(text="hello"),
+                    )
+                ],
+                context_token="ctx-1",
+            ),
+            "account-1",
+        )
+
+        self.assertIsNotNone(event)
+        assert event is not None
+        self.assertEqual(event.source.channel, "wechat")
+        self.assertEqual(event.source.chat_type, "private")
+        self.assertEqual(event.source.chat_id, "wx_user")
+        self.assertEqual(event.text, "hello")
+
+    def test_group_text_message_uses_group_chat_id(self) -> None:
+        event = parse_weixin_message(
+            WeixinMessage(
+                seq=1,
+                from_user_id="wx_user",
+                group_id="wx_group",
+                message_type=MessageType.USER,
+                item_list=[
+                    MessageItem(
+                        type=MessageItemType.TEXT,
+                        text_item=TextItem(text="/help"),
+                    )
+                ],
+            ),
+            "account-1",
+        )
+
+        self.assertIsNotNone(event)
+        assert event is not None
+        self.assertEqual(event.source.chat_type, "group")
+        self.assertEqual(event.source.chat_id, "wx_group")
+
+
+class WechatBindTest(unittest.IsolatedAsyncioTestCase):
+    async def test_qr_bind_success_saves_account_and_emits_bound(self) -> None:
+        statuses = []
+        saved = []
+        registered = []
+
+        class StartResult:
+            qrcode_url = "weixin://qr/abc"
+            message = "scan"
+            session_key = "session-1"
+
+        class WaitResult:
+            connected = True
+            message = "ok"
+            account_id = "wx@im.bot"
+            bot_token = "token-1"
+            base_url = "https://example.test"
+            user_id = "wx_user"
+
+        async def fake_start(**kwargs):
+            return StartResult()
+
+        async def fake_wait(**kwargs):
+            return WaitResult()
+
+        async def emit(payload):
+            statuses.append(payload)
+
+        adapter = WechatAdapter(
+            WechatConfig(enabled=False, botType="3"),
+            on_event=lambda event: _record_async([], (event,)),
+            on_status=lambda status: _record_async([], (status,)),
+        )
+
+        with (
+            patch("wechat_clawbot.auth.login_qr.start_weixin_login_with_qr", fake_start),
+            patch("wechat_clawbot.auth.login_qr.wait_for_weixin_login", fake_wait),
+            patch("wechat_clawbot.auth.accounts.save_weixin_account", lambda *args, **kwargs: saved.append((args, kwargs))),
+            patch("wechat_clawbot.auth.accounts.register_weixin_account_id", lambda account_id: registered.append(account_id)),
+            patch("wechat_clawbot.auth.accounts.clear_stale_accounts_for_user_id", lambda *args, **kwargs: None),
+        ):
+            await adapter.start_bind(emit, force=True)
+            assert adapter._bind_task is not None
+            await adapter._bind_task
+
+        self.assertEqual(statuses[0]["state"], "qrcode")
+        self.assertEqual(statuses[-1]["state"], "bound")
+        self.assertEqual(statuses[-1]["accountId"], "wx-im-bot")
+        self.assertEqual(saved[0][0][0], "wx-im-bot")
+        self.assertEqual(registered, ["wx-im-bot"])
+
+    async def test_unbind_clears_account_files(self) -> None:
+        cleared = []
+        unregistered = []
+        context_cleared = []
+        statuses = []
+
+        async def emit(payload):
+            statuses.append(payload)
+
+        adapter = WechatAdapter(
+            WechatConfig(enabled=False, accountId="wx-im-bot"),
+            on_event=lambda event: _record_async([], (event,)),
+            on_status=lambda status: _record_async([], (status,)),
+        )
+
+        with (
+            patch("wechat_clawbot.auth.accounts.clear_weixin_account", lambda account_id: cleared.append(account_id)),
+            patch("wechat_clawbot.auth.accounts.unregister_weixin_account_id", lambda account_id: unregistered.append(account_id)),
+            patch("wechat_clawbot.messaging.inbound.clear_context_tokens_for_account", lambda account_id: context_cleared.append(account_id)),
+        ):
+            await adapter.unbind(emit)
+
+        self.assertEqual(cleared, ["wx-im-bot"])
+        self.assertEqual(unregistered, ["wx-im-bot"])
+        self.assertEqual(context_cleared, ["wx-im-bot"])
+        self.assertEqual(statuses[-1]["state"], "unbound")
+
+    async def test_stop_cancels_pending_qr_bind(self) -> None:
+        bind_statuses = []
+        adapter_statuses = []
+        wait_cancelled = asyncio.Event()
+
+        class StartResult:
+            qrcode_url = "weixin://qr/abc"
+            message = "scan"
+            session_key = "session-1"
+
+        async def fake_start(**kwargs):
+            return StartResult()
+
+        async def fake_wait(**kwargs):
+            try:
+                await asyncio.Future()
+            except asyncio.CancelledError:
+                wait_cancelled.set()
+                raise
+
+        async def emit(payload):
+            bind_statuses.append(payload)
+
+        adapter = WechatAdapter(
+            WechatConfig(enabled=False, botType="3"),
+            on_event=lambda event: _record_async([], (event,)),
+            on_status=lambda status: _record_async(adapter_statuses, (status,)),
+        )
+
+        with (
+            patch("wechat_clawbot.auth.login_qr.start_weixin_login_with_qr", fake_start),
+            patch("wechat_clawbot.auth.login_qr.wait_for_weixin_login", fake_wait),
+        ):
+            await adapter.start_bind(emit, force=True)
+            assert adapter._bind_task is not None
+            await asyncio.sleep(0)
+            await adapter.stop()
+
+        self.assertTrue(wait_cancelled.is_set())
+        self.assertIsNone(adapter._bind_task)
+        self.assertEqual(bind_statuses[0]["state"], "qrcode")
+        self.assertNotIn("bound", [item["state"] for item in bind_statuses])
+        self.assertEqual(adapter_statuses[-1][0].state, "disabled")
 
 
 if __name__ == "__main__":

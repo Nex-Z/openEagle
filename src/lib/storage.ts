@@ -143,6 +143,14 @@ export const defaultSettings: AppSettings = {
     allowedUserIds: [],
     allowedChatIds: [],
   },
+  wechat: {
+    enabled: false,
+    accountId: "",
+    baseUrl: "",
+    botType: "3",
+    allowedUserIds: [],
+    allowedChatIds: [],
+  },
   im: {
     providers: [],
   },
@@ -237,6 +245,16 @@ export function loadSettings(): AppSettings {
         allowedChatIds: Array.isArray(parsed.telegram?.allowedChatIds)
           ? parsed.telegram.allowedChatIds
           : defaultSettings.telegram.allowedChatIds,
+      },
+      wechat: {
+        ...defaultSettings.wechat,
+        ...parsed.wechat,
+        allowedUserIds: Array.isArray(parsed.wechat?.allowedUserIds)
+          ? parsed.wechat.allowedUserIds
+          : defaultSettings.wechat.allowedUserIds,
+        allowedChatIds: Array.isArray(parsed.wechat?.allowedChatIds)
+          ? parsed.wechat.allowedChatIds
+          : defaultSettings.wechat.allowedChatIds,
       },
       im: {
         ...defaultSettings.im,

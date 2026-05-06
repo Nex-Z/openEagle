@@ -6,7 +6,7 @@ from typing import Any, Literal
 from ..models import AttachmentRef
 
 
-IMChannel = Literal["feishu", "telegram"]
+IMChannel = Literal["feishu", "telegram", "wechat"]
 IMChatType = Literal["private", "group"]
 
 

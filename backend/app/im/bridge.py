@@ -5,13 +5,14 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from ..attachments import AttachmentStore, append_attachment_context
-from ..config import AppConfig, FeishuConfig, TelegramConfig
+from ..config import AppConfig, FeishuConfig, TelegramConfig, WechatConfig
 from ..models import AttachmentRef
 from .commands import parse_im_command
 from .feishu import FeishuAdapter
 from .models import IMConversationBinding, IMEvent, IMOutboundMessage, IMStatus
 from .routing import build_conversation_binding, is_source_allowed
 from .telegram import TelegramAdapter
+from .wechat import WechatAdapter
 
 SendClient = Callable[[str, str, str, dict[str, Any]], Awaitable[None]]
 HandleChat = Callable[
@@ -59,11 +60,14 @@ class IMBridge:
         self._feishu_signature: tuple[Any, ...] | None = None
         self._telegram_adapter: TelegramAdapter | None = None
         self._telegram_signature: tuple[Any, ...] | None = None
+        self._wechat_adapter: WechatAdapter | None = None
+        self._wechat_signature: tuple[Any, ...] | None = None
         self._bindings: dict[str, IMConversationBinding] = {}
 
     async def update_config(self, config: AppConfig) -> None:
         await self._update_feishu(config)
         await self._update_telegram(config)
+        await self._update_wechat(config)
 
     async def _update_feishu(self, config: AppConfig) -> None:
         feishu_config = resolve_feishu_config(config)
@@ -109,6 +113,28 @@ class IMBridge:
         )
         await self._telegram_adapter.start()
 
+    async def _update_wechat(self, config: AppConfig) -> None:
+        wechat_config = resolve_wechat_config(config)
+        signature = _wechat_signature(wechat_config)
+        if signature == self._wechat_signature:
+            return
+
+        if self._wechat_adapter is not None:
+            await self._wechat_adapter.stop()
+            self._wechat_adapter = None
+
+        self._wechat_signature = signature
+        if not wechat_config.enabled:
+            await self._emit_status(IMStatus(provider="wechat", state="disabled", detail="微信 ClawBot 入口未启用。"))
+            return
+
+        self._wechat_adapter = WechatAdapter(
+            wechat_config,
+            on_event=self._handle_event,
+            on_status=self._emit_status,
+        )
+        await self._wechat_adapter.start()
+
     async def stop(self) -> None:
         if self._feishu_adapter is not None:
             await self._feishu_adapter.stop()
@@ -116,6 +142,41 @@ class IMBridge:
         if self._telegram_adapter is not None:
             await self._telegram_adapter.stop()
             self._telegram_adapter = None
+        if self._wechat_adapter is not None:
+            await self._wechat_adapter.stop()
+            self._wechat_adapter = None
+
+    async def start_wechat_bind(
+        self,
+        request_id: str,
+        conversation_id: str,
+        force: bool = False,
+    ) -> None:
+        adapter = await self._ensure_wechat_adapter()
+        await adapter.start_bind(
+            lambda payload: self._emit_wechat_bind_status(request_id, conversation_id, payload),
+            force=force,
+        )
+
+    async def cancel_wechat_bind(
+        self,
+        request_id: str,
+        conversation_id: str,
+    ) -> None:
+        adapter = await self._ensure_wechat_adapter()
+        await adapter.cancel_bind(
+            lambda payload: self._emit_wechat_bind_status(request_id, conversation_id, payload)
+        )
+
+    async def unbind_wechat(
+        self,
+        request_id: str,
+        conversation_id: str,
+    ) -> None:
+        adapter = await self._ensure_wechat_adapter()
+        await adapter.unbind(
+            lambda payload: self._emit_wechat_bind_status(request_id, conversation_id, payload)
+        )
 
     async def send_text(
         self,
@@ -147,9 +208,9 @@ class IMBridge:
         if not is_source_allowed(config, event.source):
             await self._emit_status(
                 IMStatus(
-                    provider="feishu",
+                    provider=event.source.channel,
                     state="connected",
-                    detail="已拦截未授权飞书来源。",
+                    detail=f"已拦截未授权{_provider_label(event.source.channel)}来源。",
                     last_blocked_open_id=event.source.user_id,
                     last_blocked_chat_id=event.source.chat_id,
                 )
@@ -277,7 +338,7 @@ class IMBridge:
     def _adapter_for_conversation(
         self,
         conversation_id: str,
-    ) -> FeishuAdapter | TelegramAdapter | None:
+    ) -> FeishuAdapter | TelegramAdapter | WechatAdapter | None:
         binding = self._bindings.get(conversation_id)
         if binding is None:
             return None
@@ -285,7 +346,33 @@ class IMBridge:
             return self._feishu_adapter
         if binding.source.channel == "telegram":
             return self._telegram_adapter
+        if binding.source.channel == "wechat":
+            return self._wechat_adapter
         return None
+
+    async def _ensure_wechat_adapter(self) -> WechatAdapter:
+        if self._wechat_adapter is not None:
+            return self._wechat_adapter
+        config = resolve_wechat_config(await self._current_config())
+        self._wechat_adapter = WechatAdapter(
+            config,
+            on_event=self._handle_event,
+            on_status=self._emit_status,
+        )
+        return self._wechat_adapter
+
+    async def _emit_wechat_bind_status(
+        self,
+        request_id: str,
+        conversation_id: str,
+        payload: dict[str, Any],
+    ) -> None:
+        await self._send_client(
+            "server:wechat_bind_status",
+            request_id,
+            conversation_id,
+            payload,
+        )
 
 
 def bind_config_getter(
@@ -323,12 +410,28 @@ def resolve_telegram_config(config: AppConfig) -> TelegramConfig:
     return config.telegram
 
 
+def resolve_wechat_config(config: AppConfig) -> WechatConfig:
+    for provider in config.im.providers:
+        if provider.type == "wechat":
+            return WechatConfig(
+                enabled=provider.enabled,
+                accountId=provider.account_id,
+                baseUrl=provider.base_url,
+                botType=provider.bot_type,
+                allowedUserIds=provider.allowed_user_ids,
+                allowedChatIds=provider.allowed_chat_ids,
+            )
+    return config.wechat
+
+
 def resolve_channel_config(
     config: AppConfig,
     channel: str,
-) -> FeishuConfig | TelegramConfig:
+) -> FeishuConfig | TelegramConfig | WechatConfig:
     if channel == "telegram":
         return resolve_telegram_config(config)
+    if channel == "wechat":
+        return resolve_wechat_config(config)
     return resolve_feishu_config(config)
 
 
@@ -351,6 +454,17 @@ def _telegram_signature(config: TelegramConfig) -> tuple[Any, ...]:
     )
 
 
+def _wechat_signature(config: WechatConfig) -> tuple[Any, ...]:
+    return (
+        config.enabled,
+        config.account_id or "",
+        config.base_url or "",
+        config.bot_type or "",
+        tuple(sorted(config.allowed_user_ids)),
+        tuple(sorted(config.allowed_chat_ids)),
+    )
+
+
 def _conversation_payload(binding: IMConversationBinding) -> dict[str, str]:
     return {
         "id": binding.conversation_id,
@@ -364,3 +478,11 @@ def _attachment_error_reply(attachments: list[AttachmentRef]) -> str:
         for item in attachments
     ]
     return "附件处理失败，未调用模型。\n" + "\n".join(rows)
+
+
+def _provider_label(channel: str) -> str:
+    return {
+        "feishu": "飞书",
+        "telegram": "Telegram",
+        "wechat": "微信",
+    }.get(channel, "IM")

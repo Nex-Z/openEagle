@@ -84,6 +84,16 @@ export interface TelegramSettings {
   status?: string;
 }
 
+export interface WechatSettings {
+  enabled: boolean;
+  accountId: string;
+  baseUrl: string;
+  botType: string;
+  allowedUserIds: string[];
+  allowedChatIds: string[];
+  status?: string;
+}
+
 export interface AttachmentRef {
   id: string;
   name: string;
@@ -101,12 +111,15 @@ export interface AttachmentRef {
 
 export interface ImProviderSettings {
   id: string;
-  type: "feishu" | "telegram";
+  type: "feishu" | "telegram" | "wechat";
   name: string;
   enabled: boolean;
   appId?: string;
   appSecret?: string;
   botToken?: string;
+  accountId?: string;
+  baseUrl?: string;
+  botType?: string;
   allowedOpenIds?: string[];
   allowedUserIds?: string[];
   allowedChatIds: string[];
@@ -177,6 +190,7 @@ export interface BuiltinToolConfig {
 export interface AppSettings {
   feishu: FeishuSettings;
   telegram: TelegramSettings;
+  wechat: WechatSettings;
   im: ImSettings;
   agent: AgentSettings;
   appearance: AppearanceSettings;
@@ -324,11 +338,25 @@ export interface ConversationSummary {
 }
 
 export interface IMStatusPayload {
-  provider: "feishu" | "telegram";
+  provider: "feishu" | "telegram" | "wechat";
   state: "disabled" | "starting" | "connected" | "error";
   detail?: string;
   lastBlockedOpenId?: string;
   lastBlockedChatId?: string;
+}
+
+export interface WechatBindStatusPayload {
+  state:
+    | "qrcode"
+    | "waiting"
+    | "bound"
+    | "cancelled"
+    | "unbound"
+    | "error";
+  message: string;
+  qrcodeUrl?: string;
+  accountId?: string;
+  userId?: string;
 }
 
 export interface BackendState {

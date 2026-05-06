@@ -101,7 +101,7 @@ Frontend      →  通过 WebSocket 连接 ws://127.0.0.1:<端口>/ws
 | 自动化     | mss（截图）, pyautogui（输入）    |
 | Agent 框架 | agno                              |
 | 搜索       | baidusearch（免费，无需 API Key） |
-| 远程 IM    | 飞书长连接、Telegram Bot 长轮询   |
+| 远程 IM    | 飞书长连接、Telegram Bot 长轮询、微信 ClawBot 扫码绑定 |
 
 ### Main/Sub-Agent Runtime
 
@@ -133,10 +133,11 @@ SOLO 的稳定性策略保持温和：用 action signature 判断真正重复的
 
 ### 远程 IM 控制
 
-在 **Settings -> IM** 中启用飞书或 Telegram 后，openEagle 可以从远程会话接收任务。
+在 **Settings -> IM** 中启用飞书、Telegram 或微信后，openEagle 可以从远程会话接收任务。
 
 - 飞书需要填写应用的 `App ID` 和 `App Secret`。白名单支持单个用户的 `open_id`，也支持私聊或群聊的 `chat_id`。如果不知道该填什么，可以先给机器人发一条消息，再从 IM 状态面板里的“最近拦截 open_id / chat_id”复制。
 - Telegram 需要填写 Bot Token。白名单支持 `user_id` 或 `chat_id`。
+- 微信使用 `wechat-clawbot`。在微信卡片中点击“扫码绑定”，用微信扫码后会自动保存 `accountId`，再启用微信入口即可开始长轮询。点击“解绑”会停止轮询，并清理 openEagle 专用的本地 ClawBot 账号凭据。
 - 白名单为空时默认拦截所有远程消息。
 - 远程普通文本默认启动 SOLO 任务；只想文字聊天时使用 `/chat <内容>`。
 
@@ -183,6 +184,10 @@ openEagle 支持灵活的模型路由——Chat（文本）和 Vision-Language�
 | `telegram.enabled` | 启用 Telegram 远程入口                            |
 | `telegram.botToken` | Telegram Bot API Token                          |
 | `telegram.allowedUserIds` / `telegram.allowedChatIds` | Telegram 用户/会话白名单 |
+| `wechat.enabled` | 启用微信 ClawBot 远程入口 |
+| `wechat.accountId` | 微信扫码绑定后保存的 ClawBot 账号 |
+| `wechat.baseUrl` / `wechat.botType` | 可选 ClawBot API 地址与 Bot Type |
+| `wechat.allowedUserIds` / `wechat.allowedChatIds` | 微信用户/会话白名单 |
 | `tools`           | 自定义工具定义                                    |
 | `mcp`             | MCP 服务器连接                                    |
 | `skills`          | 自定义 Skill Prompt                               |

@@ -1,6 +1,7 @@
 import { useEffect, useState, type CSSProperties } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { Monitor, SlidersHorizontal, Sparkles, Wrench, X } from "lucide-react";
+import QRCode from "qrcode";
 import { ThemeToggle } from "../ThemeToggle";
 import type {
   AppSettings,
@@ -9,6 +10,7 @@ import type {
   SkillConfig,
   SoloDisplayOption,
   ToolConfig,
+  WechatBindStatusPayload,
 } from "../../types/protocol";
 import { SecretInput } from "./SecretInput";
 
@@ -27,7 +29,11 @@ interface SettingsDrawerProps {
   activeSection: SettingsSection;
   soloDisplays: SoloDisplayOption[];
   imStatuses: Partial<Record<IMStatusPayload["provider"], IMStatusPayload>>;
+  wechatBindStatus: WechatBindStatusPayload | null;
   onRefreshSoloDisplays: () => boolean;
+  onStartWechatBind: (force?: boolean) => boolean;
+  onCancelWechatBind: () => boolean;
+  onUnbindWechat: () => boolean;
   onChange: (settings: AppSettings) => void;
   onClose: () => void;
   onSectionChange: (section: SettingsSection) => void;
@@ -40,7 +46,7 @@ const sectionMeta: Array<{
 }> = [
   { id: "general", title: "General", summary: "外观与基础体验。" },
   { id: "models", title: "Models", summary: "文本模型和视觉模型接入。" },
-  { id: "im", title: "IM", summary: "飞书与 Telegram 远程接入。" },
+  { id: "im", title: "IM", summary: "飞书、Telegram 与微信远程接入。" },
   { id: "solo", title: "SOLO", summary: "显示器预览与截图目标。" },
   { id: "tools", title: "Tools", summary: "本地工具入口。" },
   { id: "mcp", title: "MCP", summary: "MCP Server 配置。" },
@@ -205,7 +211,11 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
     activeSection,
     soloDisplays,
     imStatuses,
+    wechatBindStatus,
     onRefreshSoloDisplays,
+    onStartWechatBind,
+    onCancelWechatBind,
+    onUnbindWechat,
     onChange,
     onClose,
     onSectionChange,
@@ -214,6 +224,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
   const [expandedMcpId, setExpandedMcpId] = useState<string | null>(null);
   const [expandedSkillId, setExpandedSkillId] = useState<string | null>(null);
   const [previewDataUrls, setPreviewDataUrls] = useState<Record<string, string>>({});
+  const [wechatQrDataUrl, setWechatQrDataUrl] = useState<string | null>(null);
 
   useEffect(() => {
     if (open && activeSection === "solo") {
@@ -259,9 +270,38 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
     };
   }, [previewDataUrls, soloDisplays]);
 
+  useEffect(() => {
+    if (wechatBindStatus?.state !== "qrcode" || !wechatBindStatus.qrcodeUrl) {
+      setWechatQrDataUrl(null);
+      return;
+    }
+
+    let cancelled = false;
+    QRCode.toDataURL(wechatBindStatus.qrcodeUrl, {
+      margin: 1,
+      width: 196,
+    })
+      .then((dataUrl) => {
+        if (!cancelled) {
+          setWechatQrDataUrl(dataUrl);
+        }
+      })
+      .catch(() => {
+        if (!cancelled) {
+          setWechatQrDataUrl(null);
+        }
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [wechatBindStatus]);
+
   const activeMeta = sectionMeta.find((section) => section.id === activeSection) ?? sectionMeta[0];
   const feishuStatus = imStatuses.feishu;
   const telegramStatus = imStatuses.telegram;
+  const wechatStatus = imStatuses.wechat;
+  const wechatIsBinding =
+    wechatBindStatus?.state === "qrcode" || wechatBindStatus?.state === "waiting";
 
   return (
     <>
@@ -349,6 +389,13 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                     ) : null}
                     {telegramStatus?.lastBlockedChatId ? (
                       <span>Telegram 最近拦截 chat_id: {telegramStatus.lastBlockedChatId}</span>
+                    ) : null}
+                    <span>微信: {wechatStatus?.state ?? "disabled"} · {wechatStatus?.detail || "未启动"}</span>
+                    {wechatStatus?.lastBlockedOpenId ? (
+                      <span>微信最近拦截 user_id: {wechatStatus.lastBlockedOpenId}</span>
+                    ) : null}
+                    {wechatStatus?.lastBlockedChatId ? (
+                      <span>微信最近拦截 chat_id: {wechatStatus.lastBlockedChatId}</span>
                     ) : null}
                   </div>
                 </section>
@@ -519,6 +566,145 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                       }
                       placeholder="每行一个 Telegram chat_id"
                       value={joinLines(settings.telegram.allowedChatIds)}
+                    />
+                  </label>
+                </section>
+
+                <section className="settings-panel">
+                  <div className="settings-panel-head">
+                    <div>
+                      <span className="card-kicker">微信</span>
+                      <strong>ClawBot 扫码接入</strong>
+                    </div>
+                    <Sparkles size={16} />
+                  </div>
+                  <label className="form-switch">
+                    <span>启用微信入口</span>
+                    <input
+                      checked={settings.wechat.enabled}
+                      onChange={(event) =>
+                        onChange({
+                          ...settings,
+                          wechat: {
+                            ...settings.wechat,
+                            enabled: event.target.checked,
+                          },
+                        })
+                      }
+                      type="checkbox"
+                    />
+                  </label>
+                  <div className="form-hint">
+                    <span>绑定状态: {wechatBindStatus?.message || settings.wechat.accountId || "未绑定"}</span>
+                    <span>user_id 用于授权单个微信用户，chat_id 用于授权一个私聊或群聊。</span>
+                    <span>两者任意一个命中即可放行；都为空时会拦截所有微信消息。</span>
+                  </div>
+                  <div className="inline-actions">
+                    <button
+                      className="ghost-button"
+                      onClick={() => onStartWechatBind(Boolean(settings.wechat.accountId))}
+                      type="button"
+                    >
+                      {settings.wechat.accountId ? "重新扫码" : "扫码绑定"}
+                    </button>
+                    {wechatIsBinding ? (
+                      <button className="ghost-button" onClick={onCancelWechatBind} type="button">
+                        取消绑定
+                      </button>
+                    ) : null}
+                    <button
+                      className="ghost-button danger"
+                      disabled={!settings.wechat.accountId && !wechatIsBinding}
+                      onClick={onUnbindWechat}
+                      type="button"
+                    >
+                      解绑
+                    </button>
+                  </div>
+                  {wechatQrDataUrl ? (
+                    <div className="wechat-qr-panel">
+                      <img alt="微信扫码绑定二维码" src={wechatQrDataUrl} />
+                    </div>
+                  ) : null}
+                  <label className="form-field">
+                    <span>Account ID</span>
+                    <input
+                      onChange={(event) =>
+                        onChange({
+                          ...settings,
+                          wechat: {
+                            ...settings.wechat,
+                            accountId: event.target.value,
+                          },
+                        })
+                      }
+                      placeholder="扫码成功后自动填入"
+                      value={settings.wechat.accountId}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Base URL</span>
+                    <input
+                      onChange={(event) =>
+                        onChange({
+                          ...settings,
+                          wechat: {
+                            ...settings.wechat,
+                            baseUrl: event.target.value,
+                          },
+                        })
+                      }
+                      placeholder="留空使用 ClawBot 默认地址"
+                      value={settings.wechat.baseUrl}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Bot Type</span>
+                    <input
+                      onChange={(event) =>
+                        onChange({
+                          ...settings,
+                          wechat: {
+                            ...settings.wechat,
+                            botType: event.target.value,
+                          },
+                        })
+                      }
+                      value={settings.wechat.botType}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>允许的 user_id</span>
+                    <textarea
+                      className="form-textarea"
+                      onChange={(event) =>
+                        onChange({
+                          ...settings,
+                          wechat: {
+                            ...settings.wechat,
+                            allowedUserIds: splitLines(event.target.value),
+                          },
+                        })
+                      }
+                      placeholder="每行一个微信 user_id"
+                      value={joinLines(settings.wechat.allowedUserIds)}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>允许的 chat_id</span>
+                    <textarea
+                      className="form-textarea"
+                      onChange={(event) =>
+                        onChange({
+                          ...settings,
+                          wechat: {
+                            ...settings.wechat,
+                            allowedChatIds: splitLines(event.target.value),
+                          },
+                        })
+                      }
+                      placeholder="每行一个微信 chat_id"
+                      value={joinLines(settings.wechat.allowedChatIds)}
                     />
                   </label>
                 </section>
