@@ -4,7 +4,9 @@ import uuid
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from ..attachments import AttachmentStore, append_attachment_context
 from ..config import AppConfig, FeishuConfig, TelegramConfig
+from ..models import AttachmentRef
 from .commands import parse_im_command
 from .feishu import FeishuAdapter
 from .models import IMConversationBinding, IMEvent, IMOutboundMessage, IMStatus
@@ -12,10 +14,14 @@ from .routing import build_conversation_binding, is_source_allowed
 from .telegram import TelegramAdapter
 
 SendClient = Callable[[str, str, str, dict[str, Any]], Awaitable[None]]
-HandleChat = Callable[[IMConversationBinding, str, str], Awaitable[str]]
+HandleChat = Callable[
+    [IMConversationBinding, str, str, list[AttachmentRef] | None],
+    Awaitable[str],
+]
 StartSolo = Callable[[IMConversationBinding, str, str], Awaitable[str]]
 SoloControl = Callable[[str, str, str], Awaitable[str]]
 ToolDecision = Callable[[str, str, str], Awaitable[str]]
+ReplyAttachments = Callable[[str, str], list[AttachmentRef]]
 
 
 HELP_TEXT = """openEagle IM 命令：
@@ -39,12 +45,16 @@ class IMBridge:
         start_solo: StartSolo,
         solo_control: SoloControl,
         tool_decision: ToolDecision,
+        attachment_store: AttachmentStore | None = None,
+        reply_attachments: ReplyAttachments | None = None,
     ) -> None:
         self._send_client = send_client
         self._handle_chat = handle_chat
         self._start_solo = start_solo
         self._solo_control = solo_control
         self._tool_decision = tool_decision
+        self._attachment_store = attachment_store
+        self._reply_attachments = reply_attachments
         self._feishu_adapter: FeishuAdapter | None = None
         self._feishu_signature: tuple[Any, ...] | None = None
         self._telegram_adapter: TelegramAdapter | None = None
@@ -107,12 +117,27 @@ class IMBridge:
             await self._telegram_adapter.stop()
             self._telegram_adapter = None
 
-    async def send_text(self, conversation_id: str, text: str) -> None:
+    async def send_text(
+        self,
+        conversation_id: str,
+        text: str,
+        attachments: list[AttachmentRef] | None = None,
+    ) -> None:
         adapter = self._adapter_for_conversation(conversation_id)
         binding = self._bindings.get(conversation_id)
-        if adapter is None or binding is None or not text.strip():
+        if adapter is None or binding is None:
             return
-        await adapter.send_text(IMOutboundMessage(source=binding.source, text=text.strip()))
+        clean_text = text.strip()
+        clean_attachments = attachments or []
+        if not clean_text and not clean_attachments:
+            return
+        await adapter.send_text(
+            IMOutboundMessage(
+                source=binding.source,
+                text=clean_text,
+                attachments=clean_attachments,
+            )
+        )
 
     async def _handle_event(self, event: IMEvent) -> None:
         config = resolve_channel_config(await self._current_config(), event.source.channel)
@@ -136,22 +161,44 @@ class IMBridge:
             return
 
         request_id = f"im-{uuid.uuid4()}"
+        attachments = await self._prepare_event_attachments(event, binding)
         await self._send_client(
             "server:external_user_message",
             request_id,
             binding.conversation_id,
             {
                 "content": event.text,
+                "attachments": self._attachment_store.public_dicts(attachments)
+                if self._attachment_store is not None
+                else [item.model_dump(by_alias=True, exclude_none=True) for item in attachments],
                 "source": event.source.channel,
                 "conversation": _conversation_payload(binding),
             },
         )
 
-        command = parse_im_command(event.text)
-        if command.name == "chat":
-            reply = await self._handle_chat(binding, command.argument, request_id)
+        command = parse_im_command(event.text, allow_empty_task=bool(attachments))
+        explicit_command = event.text.strip().startswith("/")
+        attachment_errors = [item for item in attachments if item.status == "error"]
+        if attachment_errors:
+            reply = _attachment_error_reply(attachment_errors)
+        elif attachments and not explicit_command:
+            reply = await self._handle_chat(
+                binding,
+                event.text.strip() or "请处理这些附件。",
+                request_id,
+                attachments,
+            )
+        elif command.name == "chat":
+            reply = await self._handle_chat(
+                binding,
+                command.argument or "请处理这些附件。",
+                request_id,
+                attachments,
+            )
         elif command.name == "solo":
-            reply = await self._start_solo(binding, command.argument, request_id)
+            task_text = command.argument or "请结合附件执行任务。"
+            task = append_attachment_context(task_text, attachments) if attachments else task_text
+            reply = await self._start_solo(binding, task, request_id)
         elif command.name in {"pause", "resume", "stop"}:
             action = {"pause": "pause", "resume": "resume", "stop": "stop"}[command.name]
             reply = await self._solo_control(binding.conversation_id, request_id, action)
@@ -161,19 +208,57 @@ class IMBridge:
         else:
             reply = HELP_TEXT
 
-        if reply.strip():
-            await self.send_text(binding.conversation_id, reply)
-            if command.name not in {"chat", "solo"}:
+        emit_client_reply = command.name not in {"chat", "solo"} or bool(attachment_errors)
+        if reply.strip() or (self._reply_attachments is not None):
+            reply_attachments = (
+                self._reply_attachments(binding.conversation_id, request_id)
+                if self._reply_attachments is not None
+                else []
+            )
+            await self.send_text(binding.conversation_id, reply, reply_attachments)
+            if emit_client_reply:
                 await self._send_client(
                     "server:message",
                     request_id,
                     binding.conversation_id,
-                    {"content": reply},
+                    {
+                        "content": reply,
+                        "attachments": self._attachment_store.public_dicts(reply_attachments)
+                        if self._attachment_store is not None
+                        else [item.model_dump(by_alias=True, exclude_none=True) for item in reply_attachments],
+                    },
                 )
 
     async def _current_config(self) -> AppConfig:
         # Patched by main.py after construction to avoid a circular import.
         raise RuntimeError("IMBridge current config callback is not configured")
+
+    async def _prepare_event_attachments(
+        self,
+        event: IMEvent,
+        binding: IMConversationBinding,
+    ) -> list[AttachmentRef]:
+        if not event.attachments:
+            return []
+        if self._attachment_store is None:
+            return [
+                item.model_copy(update={"status": "error", "error": "附件仓库未初始化。"})
+                for item in event.attachments
+            ]
+        adapter = self._adapter_for_conversation(binding.conversation_id)
+        downloader = getattr(adapter, "download_event_attachments", None)
+        if downloader is None:
+            return [
+                item.model_copy(update={"status": "error", "error": "当前 IM 入口不支持下载附件。"})
+                for item in event.attachments
+            ]
+        try:
+            return await downloader(event, self._attachment_store, binding.conversation_id)
+        except Exception as exc:  # noqa: BLE001
+            return [
+                item.model_copy(update={"status": "error", "error": f"附件下载失败: {exc}"})
+                for item in event.attachments
+            ]
 
     async def _emit_status(self, status: IMStatus) -> None:
         await self._send_client(
@@ -271,3 +356,11 @@ def _conversation_payload(binding: IMConversationBinding) -> dict[str, str]:
         "id": binding.conversation_id,
         "title": binding.title,
     }
+
+
+def _attachment_error_reply(attachments: list[AttachmentRef]) -> str:
+    rows = [
+        f"- {item.name or item.id}: {item.error or '附件处理失败。'}"
+        for item in attachments
+    ]
+    return "附件处理失败，未调用模型。\n" + "\n".join(rows)

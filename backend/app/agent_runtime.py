@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
+from pathlib import Path
 from typing import Any
 
 from .agent_router import AgentRouter
+from .attachments import AttachmentError, AttachmentStore, append_attachment_context
 from .config import AppConfig
 from .confirmations import ToolConfirmationStore
-from .models import StatusPayload, utc_now
+from .models import AttachmentRef, StatusPayload, utc_now
 from .providers.base import ReplyToolConfirmation, ReplyTrace
 from .solo_worker_adapter import SoloWorkerAdapter
 from .subagent_manager import SubAgentManager
@@ -25,6 +27,7 @@ class AgentRuntime:
         *,
         config_getter: ConfigGetter,
         confirmation_store: ToolConfirmationStore,
+        attachment_store: AttachmentStore | None = None,
         confirmed_tool_results: dict[str, str],
         send_event: SendEvent,
         start_solo: StartSolo,
@@ -32,6 +35,7 @@ class AgentRuntime:
     ) -> None:
         self._config_getter = config_getter
         self._confirmation_store = confirmation_store
+        self._attachment_store = attachment_store or AttachmentStore(Path(__file__).resolve().parents[2])
         self._confirmed_tool_results = confirmed_tool_results
         self._send_event = send_event
         self._solo_adapter = SoloWorkerAdapter(start_solo, solo_control)
@@ -42,12 +46,36 @@ class AgentRuntime:
         conversation_id: str,
         request_id: str,
         content: str,
+        attachments: list[AttachmentRef] | None = None,
         preferred_mode: str | None = None,
     ) -> str:
-        enhanced_content = content
+        try:
+            prepared_attachments = self._attachment_store.prepare_user_attachments(
+                conversation_id,
+                attachments or [],
+            )
+        except AttachmentError as exc:
+            reply = f"附件处理失败: {exc}"
+            await self._send_event(
+                "server:message",
+                request_id,
+                conversation_id,
+                {"content": reply},
+            )
+            return reply
+
+        if prepared_attachments:
+            await self._send_event(
+                "server:attachments_ready",
+                request_id,
+                conversation_id,
+                {"attachments": self._attachment_store.public_dicts(prepared_attachments)},
+            )
+
+        enhanced_content = append_attachment_context(content, prepared_attachments)
         prev_result = self._confirmed_tool_results.pop(conversation_id, None)
         if prev_result:
-            enhanced_content = f"{prev_result}\n\n用户新消息：{content}"
+            enhanced_content = f"{prev_result}\n\n用户新消息：{enhanced_content}"
 
         await self._send_status(request_id, conversation_id, "thinking", "main agent 正在调度任务")
         config = self._config_getter()
@@ -72,6 +100,12 @@ class AgentRuntime:
             preferred_mode=preferred_mode,
             recent_tasks=self._subagents.recent_tasks(conversation_id),
         )
+        if prepared_attachments and decision.route == "answer_directly":
+            decision.route = "delegate_new"
+            decision.worker_kind = "general"
+            decision.task_brief = enhanced_content
+            decision.task_title = decision.task_title or "处理附件"
+            decision.user_visible_summary = "已转交 general worker 处理本轮附件。"
         await self._send_trace(
             request_id,
             conversation_id,
@@ -94,6 +128,11 @@ class AgentRuntime:
             elif decision.route == "clarify":
                 reply = decision.user_visible_summary or "我需要先确认一下你的具体目标。"
             elif decision.route == "start_solo":
+                if prepared_attachments:
+                    decision.task_brief = append_attachment_context(
+                        decision.task_brief or decision.task_title,
+                        prepared_attachments,
+                    )
                 reply = await self._handle_start_solo(conversation_id, request_id, decision)
             elif decision.route == "control_solo":
                 action = self._solo_action_from_decision(decision)
@@ -104,11 +143,21 @@ class AgentRuntime:
                     request_id=request_id,
                     decision=decision,
                     config=config,
+                    attachments=prepared_attachments,
                 )
         finally:
             await self._send_status(request_id, conversation_id, "idle", "回复完成")
 
-        await self._send_event("server:message", request_id, conversation_id, {"content": reply})
+        reply_attachments = self._attachment_store.peek_reply_attachments(
+            conversation_id,
+            request_id,
+        )
+        payload: dict[str, Any] = {"content": reply}
+        if reply_attachments:
+            payload["attachments"] = self._attachment_store.public_dicts(reply_attachments)
+        await self._send_event("server:message", request_id, conversation_id, payload)
+        if not conversation_id.startswith("im_"):
+            self._attachment_store.pop_reply_attachments(conversation_id, request_id)
         return reply
 
     async def control_solo(
@@ -189,6 +238,7 @@ class AgentRuntime:
         request_id: str,
         decision: AgentRouteDecision,
         config: AppConfig,
+        attachments: list[AttachmentRef],
     ) -> str:
         task = self._subagents.create_or_reuse(conversation_id, decision)
         started_at = utc_now()
@@ -212,6 +262,8 @@ class AgentRuntime:
             config=config,
             confirmation_store=self._confirmation_store,
             request_id=request_id,
+            attachment_store=self._attachment_store,
+            attachments=attachments,
         ):
             if isinstance(event, ReplyTrace):
                 await self._send_reply_trace(request_id, conversation_id, event)

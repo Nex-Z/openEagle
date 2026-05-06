@@ -6,6 +6,7 @@ from datetime import UTC, datetime
 from typing import AsyncIterator
 
 from ..config import AppConfig, McpConfig, SkillConfig, ToolConfig
+from ..models import AttachmentRef
 from .base import ProviderStreamEvent, ReplyChunk, ReplyTrace
 
 
@@ -107,15 +108,26 @@ class MockAgentProvider:
         cleaned = f"{prompt[:match.start()]}{prompt[match.end():]}".strip()
         return cleaned, True
 
-    async def reply(self, conversation_id: str, prompt: str) -> str:
+    async def reply(
+        self,
+        conversation_id: str,
+        prompt: str,
+        attachments: list[AttachmentRef] | None = None,
+    ) -> str:
         normalized, traces = self._extract_selected_capabilities(prompt)
         trace_names = ", ".join(trace.name for trace in traces) or "无"
         content = normalized or "请结合已选能力处理当前请求。"
+        attachment_lines = [
+            f"- {item.name or item.id} ({item.kind}, {item.mime_type}, {item.size} bytes)"
+            for item in (attachments or [])
+        ]
+        attachment_text = "\n".join(attachment_lines) or "无"
         return (
             "openEagle 已收到你的请求。\n\n"
             f"conversationId: {conversation_id}\n"
             f"echo: {content}\n"
             f"本轮显式选择: {trace_names}\n\n"
+            f"附件:\n{attachment_text}\n\n"
             "当前回复来自 mock provider。你可以在设置中切换到 openai 或 openai-like，并通过 Agno 驱动真实模型。"
         )
 
@@ -123,12 +135,13 @@ class MockAgentProvider:
         self,
         conversation_id: str,
         prompt: str,
+        attachments: list[AttachmentRef] | None = None,
     ) -> AsyncIterator[ProviderStreamEvent]:
         _, traces = self._extract_selected_capabilities(prompt)
         for trace in traces:
             yield trace
 
-        reply = await self.reply(conversation_id, prompt)
+        reply = await self.reply(conversation_id, prompt, attachments=attachments)
         chunks = [reply[index : index + 24] for index in range(0, len(reply), 24)]
 
         for chunk in chunks:

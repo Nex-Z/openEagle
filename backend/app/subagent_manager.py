@@ -6,8 +6,10 @@ from collections.abc import AsyncIterator
 from typing import Any
 
 from .agent_service import build_agent_service
+from .attachments import AttachmentStore
 from .config import AppConfig
 from .confirmations import ToolConfirmationStore
+from .models import AttachmentRef
 from .providers.base import ProviderStreamEvent, ReplyChunk, ReplyTrace
 from .subagent_models import AgentRouteDecision, AgentTaskRecord, WorkerReport
 
@@ -85,6 +87,8 @@ class SubAgentManager:
         config: AppConfig,
         confirmation_store: ToolConfirmationStore,
         request_id: str,
+        attachment_store: AttachmentStore | None = None,
+        attachments: list[AttachmentRef] | None = None,
     ) -> AsyncIterator[ProviderStreamEvent | WorkerReport]:
         if task.requires_write or task.worker_kind == "coding":
             async with self._write_lock:
@@ -92,7 +96,9 @@ class SubAgentManager:
                     task=task,
                     config=config,
                     confirmation_store=confirmation_store,
+                    attachment_store=attachment_store,
                     request_id=request_id,
+                    attachments=attachments,
                 ):
                     yield event
             return
@@ -102,7 +108,9 @@ class SubAgentManager:
                 task=task,
                 config=config,
                 confirmation_store=confirmation_store,
+                attachment_store=attachment_store,
                 request_id=request_id,
+                attachments=attachments,
             ):
                 yield event
 
@@ -113,12 +121,15 @@ class SubAgentManager:
         config: AppConfig,
         confirmation_store: ToolConfirmationStore,
         request_id: str,
+        attachment_store: AttachmentStore | None = None,
+        attachments: list[AttachmentRef] | None = None,
     ) -> AsyncIterator[ProviderStreamEvent | WorkerReport]:
         task.mark("running")
         final_error: str | None = None
         agent_service = build_agent_service(
             config,
             confirmation_store=confirmation_store,
+            attachment_store=attachment_store,
             request_id=request_id,
             conversation_id=task.conversation_id,
         )
@@ -131,6 +142,7 @@ class SubAgentManager:
                     async for event in agent_service.stream_reply(
                         task.scoped_conversation_id,
                         prompt,
+                        attachments=attachments,
                     ):
                         if isinstance(event, ReplyChunk):
                             chunks.append(event.content)

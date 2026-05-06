@@ -4,6 +4,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
   AgentExecutionTrace,
   AssistantMessageBlock,
+  AttachmentRef,
   AppSettings,
   BackendState,
   ChatMessage,
@@ -111,6 +112,7 @@ function createChatMessage(params: {
   mode?: ChatMessage["mode"];
   status?: ChatMessage["status"];
   imagePath?: string;
+  attachments?: AttachmentRef[];
   label?: string;
 }) {
   return {
@@ -122,6 +124,7 @@ function createChatMessage(params: {
     mode: params.mode,
     status: params.status,
     imagePath: params.imagePath,
+    attachments: params.attachments,
     label: params.label,
   } satisfies ChatMessage;
 }
@@ -185,6 +188,7 @@ function upsertAssistantTrace(
       mode: message?.mode,
       label: message?.label,
       imagePath: message?.imagePath,
+      attachments: message?.attachments,
       traces: nextTraces,
       blocks,
     };
@@ -478,6 +482,7 @@ export function useBackendConnection(
       const envelope = JSON.parse(event.data) as Envelope<
         {
           content?: string;
+          attachments?: AttachmentRef[];
           detail?: string;
           trace?: AgentExecutionTrace;
           status?: SoloStatusPayload;
@@ -547,10 +552,23 @@ export function useBackendConnection(
                 ? "Telegram"
                 : "IM",
           content: envelope.payload.content ?? "",
+          attachments: envelope.payload.attachments,
           createdAt: envelope.timestamp,
           status: "done",
           mode: "chat",
         });
+        return;
+      }
+
+      if (envelope.type === "server:attachments_ready") {
+        const attachments = envelope.payload.attachments ?? [];
+        patchMessages((current) =>
+          current.map((message) =>
+            message.requestId === envelope.requestId && message.role === "user"
+              ? { ...message, attachments }
+              : message,
+          ),
+        );
         return;
       }
 
@@ -581,6 +599,7 @@ export function useBackendConnection(
               content,
               createdAt: message?.createdAt ?? envelope.timestamp,
               status: "done",
+              attachments: envelope.payload.attachments ?? message?.attachments,
               traces: message?.traces ?? [],
               blocks,
             };
@@ -1058,7 +1077,7 @@ export function useBackendConnection(
     };
   }, []);
 
-  const sendMessage = (content: string) => {
+  const sendMessage = (content: string, attachments: AttachmentRef[] = []) => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       setStatusLine("后端服务未就绪");
@@ -1076,6 +1095,7 @@ export function useBackendConnection(
         requestId,
         role: "user",
         content,
+        attachments,
         createdAt: now,
         status: "done",
         mode: "chat",
@@ -1091,11 +1111,11 @@ export function useBackendConnection(
       },
     ]);
 
-    const envelope: Envelope<{ content: string }> = {
+    const envelope: Envelope<{ content: string; attachments?: AttachmentRef[] }> = {
       type: "client:send_message",
       requestId,
       conversationId,
-      payload: { content },
+      payload: { content, attachments },
       timestamp: now,
     };
 
@@ -1110,7 +1130,7 @@ export function useBackendConnection(
     Boolean(settings.agent.vlModelId.trim()) &&
     Boolean(settings.agent.vlApiKey.trim());
 
-  const startSolo = async (content: string) => {
+  const startSolo = async (content: string, attachments: AttachmentRef[] = []) => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       setStatusLine("后端服务未就绪");
@@ -1147,6 +1167,7 @@ export function useBackendConnection(
         requestId,
         role: "user",
         content,
+        attachments,
         createdAt: now,
         status: "done",
         mode: "solo",
@@ -1155,12 +1176,14 @@ export function useBackendConnection(
 
     const envelope: Envelope<{
       content: string;
+      attachments?: AttachmentRef[];
     }> = {
       type: "client:start_solo",
       requestId,
       conversationId,
       payload: {
         content,
+        attachments,
       },
       timestamp: now,
     };

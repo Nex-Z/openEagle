@@ -25,6 +25,7 @@ export interface ChatMessage {
   createdAt: string;
   mode?: "chat" | "solo";
   imagePath?: string;
+  attachments?: AttachmentRef[];
   label?: string;
   requestId?: string;
   status?: "pending" | "done" | "error";
@@ -81,6 +82,21 @@ export interface TelegramSettings {
   allowedUserIds: string[];
   allowedChatIds: string[];
   status?: string;
+}
+
+export interface AttachmentRef {
+  id: string;
+  name: string;
+  mimeType: string;
+  size: number;
+  kind: "image" | "file" | "audio" | "video" | "unknown";
+  source: "local" | "remote" | "generated";
+  localPath?: string;
+  remoteMeta?: Record<string, unknown>;
+  status?: "pending" | "ready" | "error";
+  error?: string;
+  contentBase64?: string;
+  previewUrl?: string;
 }
 
 export interface ImProviderSettings {

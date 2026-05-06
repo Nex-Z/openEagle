@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any, AsyncIterator, Protocol
 
+from ..models import AttachmentRef
+
 
 @dataclass
 class ReplyChunk:
@@ -31,12 +33,18 @@ ProviderStreamEvent = ReplyChunk | ReplyTrace | ReplyToolConfirmation
 
 
 class AgentProvider(Protocol):
-    async def reply(self, conversation_id: str, prompt: str) -> str:
+    async def reply(
+        self,
+        conversation_id: str,
+        prompt: str,
+        attachments: list[AttachmentRef] | None = None,
+    ) -> str:
         ...
 
     async def stream_reply(
         self,
         conversation_id: str,
         prompt: str,
+        attachments: list[AttachmentRef] | None = None,
     ) -> AsyncIterator[ProviderStreamEvent]:
         ...

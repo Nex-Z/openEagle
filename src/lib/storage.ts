@@ -5,6 +5,7 @@ import type {
   AgentExecutionTrace,
   AppSettings,
   AssistantMessageBlock,
+  AttachmentRef,
   BuiltinToolConfig,
   ChatMessage,
   ConversationSummary,
@@ -345,6 +346,11 @@ function compactTraceForStorage(trace: AgentExecutionTrace): AgentExecutionTrace
   };
 }
 
+function compactAttachmentForStorage(attachment: AttachmentRef): AttachmentRef {
+  const { contentBase64, previewUrl, ...rest } = attachment;
+  return rest;
+}
+
 function compactBlocksForStorage(blocks: AssistantMessageBlock[]) {
   return blocks.map((block) =>
     block.kind === "trace"
@@ -357,11 +363,12 @@ function compactBlocksForStorage(blocks: AssistantMessageBlock[]) {
 }
 
 function compactMessageForStorage(msg: ChatMessage): ChatMessage {
-  if (!msg.traces && !msg.blocks && !msg.trace) {
+  if (!msg.traces && !msg.blocks && !msg.trace && !msg.attachments) {
     return msg;
   }
   return {
     ...msg,
+    attachments: msg.attachments?.map(compactAttachmentForStorage),
     traces: msg.traces?.map(compactTraceForStorage),
     blocks: msg.blocks ? compactBlocksForStorage(msg.blocks) : undefined,
     trace: msg.trace ? compactTraceForStorage(msg.trace) : undefined,
@@ -1079,7 +1086,7 @@ function toConversationFilePayload(
   return {
     version: CONVERSATION_STORE_VERSION,
     summary: conversation.summary,
-    messages: conversation.messages,
+    messages: conversation.messages.map(compactMessageForStorage),
     savedAt: new Date().toISOString(),
   };
 }

@@ -34,7 +34,7 @@ _CONTROL_COMMANDS: dict[str, IMCommandName] = {
 }
 
 
-def parse_im_command(text: str) -> IMCommand:
+def parse_im_command(text: str, *, allow_empty_task: bool = False) -> IMCommand:
     stripped = text.strip()
     if not stripped:
         return IMCommand(name="help")
@@ -46,7 +46,7 @@ def parse_im_command(text: str) -> IMCommand:
     if command is None:
         return IMCommand(name="help")
 
-    if command in {"chat", "solo"} and not tail.strip():
+    if command in {"chat", "solo"} and not tail.strip() and not allow_empty_task:
         return IMCommand(name="help")
 
     return IMCommand(name=command, argument=tail.strip())

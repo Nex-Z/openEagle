@@ -1,19 +1,25 @@
 import { useEffect, useMemo, useRef, useState } from "react";
+import { convertFileSrc } from "@tauri-apps/api/core";
 import {
   ChevronDown,
   CircleAlert,
+  FileText,
+  Image as ImageIcon,
   MonitorSmartphone,
   PanelLeftOpen,
+  Paperclip,
   Play,
   SendHorizonal,
   ShieldAlert,
   ShieldCheck,
+  X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type {
   AgentExecutionTrace,
   AssistantMessageBlock,
+  AttachmentRef,
   AppSettings,
   ChatMessage,
   PermissionMode,
@@ -26,8 +32,8 @@ interface ChatWorkspaceProps {
   messages: ChatMessage[];
   canSend: boolean;
   canStartSolo: boolean;
-  onSend: (content: string) => void;
-  onSoloStart: (content: string) => Promise<boolean>;
+  onSend: (content: string, attachments?: AttachmentRef[]) => void;
+  onSoloStart: (content: string, attachments?: AttachmentRef[]) => Promise<boolean>;
   onSoloPause: () => boolean;
   onSoloResume: () => boolean;
   onSoloStop: () => boolean;
@@ -111,6 +117,72 @@ function isNearBottom(element: HTMLDivElement, threshold = 40) {
   return remaining <= threshold;
 }
 
+const MAX_ATTACHMENTS_PER_MESSAGE = 5;
+const MAX_ATTACHMENT_BYTES = 25 * 1024 * 1024;
+
+function attachmentKind(file: File): AttachmentRef["kind"] {
+  if (file.type.startsWith("image/")) {
+    return "image";
+  }
+  if (file.type.startsWith("audio/")) {
+    return "audio";
+  }
+  if (file.type.startsWith("video/")) {
+    return "video";
+  }
+  return "file";
+}
+
+function fileToBase64(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(reader.error ?? new Error("failed to read file"));
+    reader.onload = () => {
+      const result = reader.result;
+      if (typeof result !== "string") {
+        reject(new Error("file reader did not return data URL"));
+        return;
+      }
+      resolve(result);
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+function formatBytes(size: number) {
+  if (!Number.isFinite(size) || size <= 0) {
+    return "未知大小";
+  }
+  if (size < 1024) {
+    return `${size} B`;
+  }
+  if (size < 1024 * 1024) {
+    return `${(size / 1024).toFixed(1)} KB`;
+  }
+  return `${(size / (1024 * 1024)).toFixed(1)} MB`;
+}
+
+function attachmentImageSrc(attachment: AttachmentRef) {
+  if (attachment.previewUrl) {
+    return attachment.previewUrl;
+  }
+  if (attachment.contentBase64?.startsWith("data:")) {
+    return attachment.contentBase64;
+  }
+  if (!attachment.localPath) {
+    return undefined;
+  }
+  return convertFileSrc(attachment.localPath.replace(/\//g, "\\"));
+}
+
+function publicAttachments(attachments: AttachmentRef[]) {
+  return attachments.map(({ previewUrl, ...attachment }) => attachment);
+}
+
+function createAttachmentId() {
+  return `att-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function formatTraceValue(value: unknown) {
   if (typeof value === "string") {
     return value;
@@ -151,6 +223,66 @@ function renderMessageMarkdown(content: string) {
       >
         {content}
       </ReactMarkdown>
+    </div>
+  );
+}
+
+function AttachmentList({
+  attachments,
+  removable = false,
+  onRemove,
+}: {
+  attachments?: AttachmentRef[];
+  removable?: boolean;
+  onRemove?: (id: string) => void;
+}) {
+  if (!attachments?.length) {
+    return null;
+  }
+
+  return (
+    <div className="attachment-list">
+      {attachments.map((attachment) => {
+        const imgSrc = attachment.kind === "image" ? attachmentImageSrc(attachment) : undefined;
+        return (
+          <div key={attachment.id} className={`attachment-chip status-${attachment.status ?? "ready"}`}>
+            {imgSrc ? (
+              <img alt={attachment.name || "attachment"} src={imgSrc} />
+            ) : attachment.kind === "image" ? (
+              <ImageIcon size={16} />
+            ) : (
+              <FileText size={16} />
+            )}
+            <div className="attachment-copy">
+              <strong>{attachment.name || "attachment"}</strong>
+              <span>
+                {attachment.error
+                  ? attachment.error
+                  : `${attachment.kind} · ${formatBytes(attachment.size)}`}
+              </span>
+            </div>
+            {attachment.localPath ? (
+              <button
+                className="attachment-open"
+                onClick={() => window.open(convertFileSrc(attachment.localPath!.replace(/\//g, "\\")))}
+                type="button"
+              >
+                打开
+              </button>
+            ) : null}
+            {removable ? (
+              <button
+                aria-label="移除附件"
+                className="attachment-remove"
+                onClick={() => onRemove?.(attachment.id)}
+                type="button"
+              >
+                <X size={14} />
+              </button>
+            ) : null}
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -332,10 +464,13 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     soloLastError,
   } = props;
   const [draft, setDraft] = useState("");
+  const [draftAttachments, setDraftAttachments] = useState<AttachmentRef[]>([]);
+  const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const [expandedTraceIds, setExpandedTraceIds] = useState<Set<string>>(new Set());
   const [composerMode, setComposerMode] = useState<"chat" | "solo">("chat");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const streamRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
 
@@ -431,22 +566,98 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     });
   };
 
+  const handleFilesSelected = async (fileList: FileList | null) => {
+    const files = Array.from(fileList ?? []);
+    if (files.length === 0) {
+      return;
+    }
+    setAttachmentError(null);
+    const availableSlots = MAX_ATTACHMENTS_PER_MESSAGE - draftAttachments.length;
+    if (availableSlots <= 0) {
+      setAttachmentError(`单条消息最多 ${MAX_ATTACHMENTS_PER_MESSAGE} 个附件。`);
+      return;
+    }
+
+    const selected = files.slice(0, availableSlots);
+    if (files.length > availableSlots) {
+      setAttachmentError(`已达到 ${MAX_ATTACHMENTS_PER_MESSAGE} 个附件上限，超出的文件未加入。`);
+    }
+
+    const next: AttachmentRef[] = [];
+    for (const file of selected) {
+      if (file.size > MAX_ATTACHMENT_BYTES) {
+        next.push({
+          id: createAttachmentId(),
+          name: file.name,
+          mimeType: file.type || "application/octet-stream",
+          size: file.size,
+          kind: attachmentKind(file),
+          source: "local",
+          status: "error",
+          error: "超过 25MB 限制",
+        });
+        continue;
+      }
+      const contentBase64 = await fileToBase64(file);
+      next.push({
+        id: createAttachmentId(),
+        name: file.name,
+        mimeType: file.type || "application/octet-stream",
+        size: file.size,
+        kind: attachmentKind(file),
+        source: "local",
+        status: "pending",
+        contentBase64,
+        previewUrl: file.type.startsWith("image/") ? URL.createObjectURL(file) : undefined,
+      });
+    }
+    setDraftAttachments((current) => [...current, ...next]);
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+  };
+
+  const removeDraftAttachment = (id: string) => {
+    setDraftAttachments((current) => {
+      const target = current.find((attachment) => attachment.id === id);
+      if (target?.previewUrl) {
+        URL.revokeObjectURL(target.previewUrl);
+      }
+      return current.filter((attachment) => attachment.id !== id);
+    });
+  };
+
   const submit = async () => {
     const normalized = draft.trim();
-    if (!normalized) {
+    const validAttachments = draftAttachments.filter((attachment) => attachment.status !== "error");
+    if (!normalized && validAttachments.length === 0) {
       return;
     }
 
     if (composerMode === "solo") {
-      const ok = await onSoloStart(normalized);
+      const ok = await onSoloStart(normalized || "请结合附件执行任务。", publicAttachments(validAttachments));
       if (ok) {
         setDraft("");
+        for (const attachment of draftAttachments) {
+          if (attachment.previewUrl) {
+            URL.revokeObjectURL(attachment.previewUrl);
+          }
+        }
+        setDraftAttachments([]);
+        setAttachmentError(null);
       }
       return;
     }
 
-    onSend(normalized);
+    onSend(normalized || "请处理这些附件。", publicAttachments(validAttachments));
     setDraft("");
+    for (const attachment of draftAttachments) {
+      if (attachment.previewUrl) {
+        URL.revokeObjectURL(attachment.previewUrl);
+      }
+    }
+    setDraftAttachments([]);
+    setAttachmentError(null);
   };
 
   const applySlashItem = (item: SlashItem) => {
@@ -596,6 +807,8 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
                 renderMessageMarkdown(message.content)
               ) : null}
 
+              <AttachmentList attachments={message.attachments} />
+
               {(!message.blocks || message.blocks.length === 0) &&
               message.traces &&
               message.traces.length > 0 ? (
@@ -742,6 +955,25 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
             )}
           </div>
 
+          <input
+            ref={fileInputRef}
+            multiple
+            onChange={(event) => {
+              void handleFilesSelected(event.target.files);
+            }}
+            style={{ display: "none" }}
+            type="file"
+          />
+
+          {draftAttachments.length > 0 ? (
+            <AttachmentList
+              attachments={draftAttachments}
+              onRemove={removeDraftAttachment}
+              removable
+            />
+          ) : null}
+          {attachmentError ? <div className="attachment-error">{attachmentError}</div> : null}
+
           <div className="composer-input-wrap">
             <textarea
               ref={textareaRef}
@@ -810,9 +1042,23 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
               <span>{composerMode === "solo" ? "SOLO" : "聊天"} 已就绪</span>
             </div>
             <button
+              aria-label="添加附件"
+              className="attach-button"
+              disabled={!canSend || draftAttachments.length >= MAX_ATTACHMENTS_PER_MESSAGE}
+              onClick={() => fileInputRef.current?.click()}
+              title="添加附件"
+              type="button"
+            >
+              <Paperclip size={16} />
+            </button>
+            <button
               aria-label="发送消息"
               className="send-button"
-              disabled={!canSend || !draft.trim() || (composerMode === "solo" && !canStartSolo)}
+              disabled={
+                !canSend ||
+                (!draft.trim() && draftAttachments.every((attachment) => attachment.status === "error")) ||
+                (composerMode === "solo" && !canStartSolo)
+              }
               onClick={() => {
                 void submit();
               }}

@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import json
+import mimetypes
 import threading
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from ..attachments import AttachmentStore, infer_attachment_kind
 from ..config import FeishuConfig
+from ..models import AttachmentRef
 from .models import IMEvent, IMMessageSource, IMOutboundMessage, IMStatus
 
 
@@ -122,6 +125,14 @@ class FeishuAdapter:
     async def send_text(self, message: IMOutboundMessage) -> None:
         if self._api_client is None:
             return
+        if message.text.strip():
+            await self._send_text_message(message)
+        for attachment in message.attachments:
+            await self._send_attachment(message, attachment)
+
+    async def _send_text_message(self, message: IMOutboundMessage) -> None:
+        if self._api_client is None:
+            return
         try:
             import lark_oapi as lark
             from lark_oapi.api.im.v1 import (
@@ -151,6 +162,85 @@ class FeishuAdapter:
             )
             await self._emit_status("error", detail)
 
+    async def _send_attachment(
+        self,
+        message: IMOutboundMessage,
+        attachment: AttachmentRef,
+    ) -> None:
+        if self._api_client is None or not attachment.local_path:
+            return
+        try:
+            import lark_oapi as lark
+            from lark_oapi.api.im.v1 import (
+                CreateFileRequest,
+                CreateFileRequestBody,
+                CreateImageRequest,
+                CreateImageRequestBody,
+                CreateMessageRequest,
+                CreateMessageRequestBody,
+            )
+        except ImportError:
+            return
+
+        try:
+            with open(attachment.local_path, "rb") as file_obj:
+                if attachment.kind == "image":
+                    upload_request = (
+                        CreateImageRequest.builder()
+                        .request_body(
+                            CreateImageRequestBody.builder()
+                            .image_type("message")
+                            .image(file_obj)
+                            .build()
+                        )
+                        .build()
+                    )
+                    upload_response = self._api_client.im.v1.image.create(upload_request)
+                    if not upload_response.success():
+                        await self._emit_status("error", f"飞书图片上传失败: {upload_response.msg}")
+                        return
+                    key = upload_response.data.image_key if upload_response.data else ""
+                    msg_type = "image"
+                    content = {"image_key": key}
+                else:
+                    upload_request = (
+                        CreateFileRequest.builder()
+                        .request_body(
+                            CreateFileRequestBody.builder()
+                            .file_type("stream")
+                            .file_name(attachment.name or "attachment")
+                            .file(file_obj)
+                            .build()
+                        )
+                        .build()
+                    )
+                    upload_response = self._api_client.im.v1.file.create(upload_request)
+                    if not upload_response.success():
+                        await self._emit_status("error", f"飞书文件上传失败: {upload_response.msg}")
+                        return
+                    key = upload_response.data.file_key if upload_response.data else ""
+                    msg_type = "file"
+                    content = {"file_key": key}
+        except OSError as exc:
+            await self._emit_status("error", f"飞书附件读取失败: {exc}")
+            return
+
+        request = (
+            CreateMessageRequest.builder()
+            .receive_id_type("chat_id")
+            .request_body(
+                CreateMessageRequestBody.builder()
+                .receive_id(message.source.chat_id)
+                .msg_type(msg_type)
+                .content(json.dumps(content, ensure_ascii=False))
+                .build()
+            )
+            .build()
+        )
+        response = self._api_client.im.v1.message.create(request)
+        if not response.success():
+            await self._emit_status("error", f"飞书附件消息发送失败: {response.msg}")
+
     def _run_ws_client(self) -> None:
         loop = self._ws_loop
         if loop is not None:
@@ -173,6 +263,85 @@ class FeishuAdapter:
         if event is None:
             return
         asyncio.run_coroutine_threadsafe(self._on_event(event), self._loop)
+
+    async def download_event_attachments(
+        self,
+        event: IMEvent,
+        attachment_store: AttachmentStore,
+        conversation_id: str,
+    ) -> list[AttachmentRef]:
+        if self._api_client is None:
+            return [
+                item.model_copy(update={"status": "error", "error": "飞书 API client 未初始化。"})
+                for item in event.attachments
+            ]
+        return await asyncio.to_thread(
+            self._download_event_attachments_sync,
+            event,
+            attachment_store,
+            conversation_id,
+        )
+
+    def _download_event_attachments_sync(
+        self,
+        event: IMEvent,
+        attachment_store: AttachmentStore,
+        conversation_id: str,
+    ) -> list[AttachmentRef]:
+        try:
+            from lark_oapi.api.im.v1 import GetMessageResourceRequest
+        except ImportError:
+            return [
+                item.model_copy(update={"status": "error", "error": "缺少 lark-oapi 依赖。"})
+                for item in event.attachments
+            ]
+
+        prepared: list[AttachmentRef] = []
+        for item in event.attachments:
+            meta = item.remote_meta
+            file_key = str(meta.get("fileKey") or "")
+            message_id = str(meta.get("messageId") or event.source.message_id)
+            resource_type = str(meta.get("resourceType") or item.kind or "file")
+            if not file_key or not message_id:
+                prepared.append(
+                    item.model_copy(update={"status": "error", "error": "飞书附件缺少 fileKey 或 messageId。"})
+                )
+                continue
+            request = (
+                GetMessageResourceRequest.builder()
+                .message_id(message_id)
+                .file_key(file_key)
+                .type(resource_type)
+                .build()
+            )
+            response = self._api_client.im.v1.message_resource.get(request)
+            if not response.success():
+                prepared.append(
+                    item.model_copy(update={"status": "error", "error": f"飞书附件下载失败: {response.msg}"})
+                )
+                continue
+            file_obj = getattr(response, "file", None)
+            if file_obj is None:
+                prepared.append(
+                    item.model_copy(update={"status": "error", "error": "飞书附件响应缺少文件内容。"})
+                )
+                continue
+            data = file_obj.read()
+            name = getattr(response, "file_name", None) or item.name or file_key
+            mime_type = item.mime_type or mimetypes.guess_type(name)[0] or "application/octet-stream"
+            prepared.append(
+                attachment_store.store_bytes(
+                    conversation_id,
+                    data=data,
+                    name=name,
+                    mime_type=mime_type,
+                    kind=item.kind,
+                    source="remote",
+                    remote_meta={**meta, "provider": "feishu"},
+                    attachment_id=item.id,
+                )
+            )
+        return prepared
 
     async def _emit_status(
         self,
@@ -206,12 +375,12 @@ def parse_message_receive_event(data: Any) -> IMEvent | None:
     sender = event.get("sender") if isinstance(event.get("sender"), dict) else {}
     sender_id = sender.get("sender_id") if isinstance(sender.get("sender_id"), dict) else {}
     message_type = str(message.get("message_type") or "")
-    if message_type != "text":
-        return None
 
     chat_type_raw = str(message.get("chat_type") or "p2p").lower()
     chat_type = "group" if chat_type_raw == "group" else "private"
-    text = _parse_text_content(message.get("content"))
+    content = _parse_content_object(message.get("content"))
+    text = _parse_text_content(content) if message_type == "text" else str(content.get("text") or "")
+    attachments = _parse_message_attachments(message_type, content, message)
     mentions = message.get("mentions") if isinstance(message.get("mentions"), list) else []
     if chat_type == "group":
         if not mentions:
@@ -219,7 +388,7 @@ def parse_message_receive_event(data: Any) -> IMEvent | None:
         text = _strip_mention_tokens(text, mentions)
 
     text = text.strip()
-    if not text:
+    if not text and not attachments:
         return None
 
     source = IMMessageSource(
@@ -232,7 +401,7 @@ def parse_message_receive_event(data: Any) -> IMEvent | None:
     )
     if not source.chat_id or not source.user_id:
         return None
-    return IMEvent(source=source, text=text, raw=payload)
+    return IMEvent(source=source, text=text, attachments=attachments, raw=payload)
 
 
 def _event_to_dict(data: Any) -> dict[str, Any]:
@@ -263,6 +432,73 @@ def _parse_text_content(content: Any) -> str:
     if isinstance(parsed, dict):
         return str(parsed.get("text") or "")
     return content
+
+
+def _parse_content_object(content: Any) -> dict[str, Any]:
+    if isinstance(content, dict):
+        return content
+    if not isinstance(content, str):
+        return {}
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        return {"text": content}
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _parse_message_attachments(
+    message_type: str,
+    content: dict[str, Any],
+    message: dict[str, Any],
+) -> list[AttachmentRef]:
+    if message_type == "text":
+        return []
+    if message_type == "image":
+        key = str(content.get("image_key") or "")
+        if not key:
+            return []
+        return [
+            AttachmentRef(
+                name=f"{key}.png",
+                mimeType="image/png",
+                kind="image",
+                source="remote",
+                remoteMeta={
+                    "provider": "feishu",
+                    "messageId": str(message.get("message_id") or ""),
+                    "fileKey": key,
+                    "resourceType": "image",
+                    "messageType": message_type,
+                },
+                status="pending",
+            )
+        ]
+    if message_type in {"file", "audio", "media", "video"}:
+        key = str(content.get("file_key") or content.get("fileKey") or "")
+        name = str(content.get("file_name") or content.get("fileName") or key or "attachment")
+        mime_type = mimetypes.guess_type(name)[0] or "application/octet-stream"
+        kind = infer_attachment_kind(name, mime_type)
+        if message_type in {"audio", "video"}:
+            kind = "audio" if message_type == "audio" else "video"
+        if not key:
+            return []
+        return [
+            AttachmentRef(
+                name=name,
+                mimeType=mime_type,
+                kind=kind,
+                source="remote",
+                remoteMeta={
+                    "provider": "feishu",
+                    "messageId": str(message.get("message_id") or ""),
+                    "fileKey": key,
+                    "resourceType": message_type,
+                    "messageType": message_type,
+                },
+                status="pending",
+            )
+        ]
+    return []
 
 
 def _strip_mention_tokens(text: str, mentions: list[Any]) -> str:

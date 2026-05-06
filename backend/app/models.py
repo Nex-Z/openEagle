@@ -1,7 +1,8 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, Literal
+from uuid import uuid4
 
 from pydantic import BaseModel, Field
 
@@ -23,8 +24,27 @@ class StatusPayload(BaseModel):
     detail: str | None = None
 
 
+class AttachmentRef(BaseModel):
+    id: str = Field(default_factory=lambda: f"att-{uuid4().hex}")
+    name: str = ""
+    mime_type: str = Field(default="application/octet-stream", alias="mimeType")
+    size: int = 0
+    kind: Literal["image", "file", "audio", "video", "unknown"] = "file"
+    source: Literal["local", "remote", "generated"] = "local"
+    local_path: str | None = Field(default=None, alias="localPath")
+    remote_meta: dict[str, Any] = Field(default_factory=dict, alias="remoteMeta")
+    status: Literal["pending", "ready", "error"] = "ready"
+    error: str | None = None
+    content_base64: str | None = Field(default=None, alias="contentBase64", exclude=True)
+
+    model_config = {
+        "populate_by_name": True,
+    }
+
+
 class MessagePayload(BaseModel):
     content: str
+    attachments: list[AttachmentRef] = Field(default_factory=list)
 
 
 class ErrorPayload(BaseModel):
@@ -50,6 +70,7 @@ class SoloScreenshotPayload(BaseModel):
 class SoloStartPayload(BaseModel):
     content: str
     screenshot: SoloScreenshotPayload | None = None
+    attachments: list[AttachmentRef] = Field(default_factory=list)
 
 
 class SoloControlPayload(BaseModel):

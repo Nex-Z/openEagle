@@ -3,6 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+from ..models import AttachmentRef
+
 
 IMChannel = Literal["feishu", "telegram"]
 IMChatType = Literal["private", "group"]
@@ -22,6 +24,7 @@ class IMMessageSource:
 class IMEvent:
     source: IMMessageSource
     text: str
+    attachments: list[AttachmentRef] = field(default_factory=list)
     raw: dict[str, Any] = field(default_factory=dict)
 
 
@@ -29,6 +32,7 @@ class IMEvent:
 class IMOutboundMessage:
     source: IMMessageSource
     text: str
+    attachments: list[AttachmentRef] = field(default_factory=list)
 
 
 @dataclass(frozen=True)

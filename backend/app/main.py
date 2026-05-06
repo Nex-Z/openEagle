@@ -11,12 +11,14 @@ import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from .agent_runtime import AgentRuntime
+from .attachments import AttachmentError, AttachmentStore, append_attachment_context
 from .config import AppConfig, load_config
 from .confirmations import ToolConfirmationStore
 from .default_tools import build_default_tools, execute_confirmed_tool
 from .im.bridge import IMBridge, bind_config_getter
 from .im.models import IMConversationBinding
 from .models import (
+    AttachmentRef,
     Envelope,
     ErrorPayload,
     MessagePayload,
@@ -43,7 +45,9 @@ config = load_config()
 runtime_state = RuntimeState()
 runtime_state.update_config(config)
 workspace_root = Path(__file__).resolve().parents[2]
+attachment_store = AttachmentStore(workspace_root)
 confirmed_tool_results: dict[str, str] = {}
+ATTACHMENT_WS_MAX_SIZE = 192 * 1024 * 1024
 
 POST_ACTION_CAPTURE_DELAYS_MS: dict[str, list[int]] = {
     "click": [180, 420, 800],
@@ -1132,12 +1136,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         conversation_id: str,
         request_id: str,
         content: str,
+        attachments: list[AttachmentRef] | None = None,
         preferred_mode: str | None = None,
     ) -> str:
         return await agent_runtime.handle_user_message(
             conversation_id,
             request_id,
             content,
+            attachments=attachments,
             preferred_mode=preferred_mode,
         )
 
@@ -1145,11 +1151,13 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         binding: IMConversationBinding,
         content: str,
         request_id: str,
+        attachments: list[AttachmentRef] | None = None,
     ) -> str:
         return await stream_chat_reply(
             binding.conversation_id,
             request_id,
             content,
+            attachments=attachments,
             preferred_mode="chat",
         )
 
@@ -1397,6 +1405,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     agent_runtime = AgentRuntime(
         config_getter=runtime_state.get_config,
         confirmation_store=tool_confirmations,
+        attachment_store=attachment_store,
         confirmed_tool_results=confirmed_tool_results,
         send_event=safe_send,
         start_solo=start_solo_for_conversation,
@@ -1443,9 +1452,19 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             },
         )
         try:
-            result = await asyncio.to_thread(execute_confirmed_tool, workspace_root, pending)
+            result = await asyncio.to_thread(
+                execute_confirmed_tool,
+                workspace_root,
+                pending,
+                attachment_store=attachment_store,
+                attachment_request_id=request_id,
+            )
             confirmed_tool_results[pending.conversation_id] = (
                 f"上一轮确认执行的工具 `{pending.name}` 结果：\n{result}"
+            )
+            reply_attachments = attachment_store.peek_reply_attachments(
+                pending.conversation_id,
+                request_id,
             )
             completed_at = utc_now()
             await safe_send(
@@ -1467,7 +1486,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 },
             )
             content = f"已执行确认动作 `{pending.name}`。\n\n```text\n{result}\n```"
-            await safe_send("server:message", pending.request_id, pending.conversation_id, {"content": content})
+            payload: dict[str, object] = {"content": content}
+            if reply_attachments:
+                payload["attachments"] = attachment_store.public_dicts(reply_attachments)
+            await safe_send("server:message", pending.request_id, pending.conversation_id, payload)
             return content
         except Exception as exc:  # noqa: BLE001
             completed_at = utc_now()
@@ -1499,6 +1521,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         start_solo=start_solo_from_im,
         solo_control=apply_solo_control,
         tool_decision=handle_tool_decision_from_im,
+        attachment_store=attachment_store,
+        reply_attachments=attachment_store.pop_reply_attachments,
     )
     bind_config_getter(im_bridge, runtime_state.get_config)
     await im_bridge.update_config(runtime_state.get_config())
@@ -1565,9 +1589,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         execute_confirmed_tool,
                         workspace_root,
                         pending,
+                        attachment_store=attachment_store,
                     )
                     confirmed_tool_results[pending.conversation_id] = (
                         f"上一轮确认执行的工具 `{pending.name}` 结果：\n{result}"
+                    )
+                    reply_attachments = attachment_store.peek_reply_attachments(
+                        pending.conversation_id,
+                        pending.request_id,
                     )
                     completed_at = utc_now()
                     await safe_send(
@@ -1588,12 +1617,22 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                             }
                         },
                     )
+                    payload: dict[str, object] = {
+                        "content": f"已执行确认动作 `{pending.name}`。\n\n```text\n{result}\n```"
+                    }
+                    if reply_attachments:
+                        payload["attachments"] = attachment_store.public_dicts(reply_attachments)
                     await safe_send(
                         "server:message",
                         pending.request_id,
                         pending.conversation_id,
-                        {"content": f"已执行确认动作 `{pending.name}`。\n\n```text\n{result}\n```"},
+                        payload,
                     )
+                    if not pending.conversation_id.startswith("im_"):
+                        attachment_store.pop_reply_attachments(
+                            pending.conversation_id,
+                            pending.request_id,
+                        )
                 except Exception as exc:  # noqa: BLE001
                     completed_at = utc_now()
                     await safe_send(
@@ -1641,9 +1680,31 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             if envelope.type == "client:start_solo":
                 payload = SoloStartPayload.model_validate(envelope.payload)
+                solo_content = payload.content
+                if payload.attachments:
+                    try:
+                        prepared_attachments = attachment_store.prepare_user_attachments(
+                            envelope.conversation_id,
+                            payload.attachments,
+                        )
+                    except AttachmentError as exc:
+                        await safe_send(
+                            "server:message",
+                            envelope.request_id,
+                            envelope.conversation_id,
+                            {"content": f"附件处理失败: {exc}"},
+                        )
+                        continue
+                    await safe_send(
+                        "server:attachments_ready",
+                        envelope.request_id,
+                        envelope.conversation_id,
+                        {"attachments": attachment_store.public_dicts(prepared_attachments)},
+                    )
+                    solo_content = append_attachment_context(solo_content, prepared_attachments)
                 solo_reply = await start_solo_for_conversation(
                     envelope.conversation_id,
-                    payload.content,
+                    solo_content,
                     envelope.request_id,
                 )
                 if solo_reply != "收到，开始处理。":
@@ -1849,6 +1910,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 envelope.conversation_id,
                 envelope.request_id,
                 payload.content,
+                attachments=payload.attachments,
             )
     except WebSocketDisconnect:
         return
@@ -1884,6 +1946,7 @@ async def serve(host: str, port: int) -> None:
             port=actual_port,
             log_level="info",
             ws="websockets",
+            ws_max_size=ATTACHMENT_WS_MAX_SIZE,
         )
     )
     await server.serve()

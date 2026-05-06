@@ -1149,6 +1149,94 @@ a {
   opacity: 0.65;
 }
 
+.attachment-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 10px;
+}
+
+.attachment-chip {
+  min-width: 0;
+  max-width: min(100%, 360px);
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  background: var(--bg-panel-muted);
+  color: var(--text-primary);
+}
+
+.attachment-chip.status-error {
+  border-color: color-mix(in srgb, var(--danger) 38%, transparent);
+}
+
+.attachment-chip img {
+  width: 34px;
+  height: 34px;
+  border-radius: 6px;
+  object-fit: cover;
+}
+
+.attachment-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.attachment-copy strong,
+.attachment-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.attachment-copy strong {
+  font-size: 13px;
+}
+
+.attachment-copy span,
+.attachment-error {
+  color: var(--text-secondary);
+  font-size: 12px;
+}
+
+.attachment-error {
+  margin-top: 6px;
+  color: var(--warning);
+}
+
+.attachment-open,
+.attachment-remove,
+.attach-button {
+  display: inline-grid;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border-subtle);
+  background: var(--bg-surface);
+  color: var(--text-secondary);
+}
+
+.attachment-open {
+  min-height: 28px;
+  padding: 0 8px;
+  font-size: 12px;
+}
+
+.attachment-remove,
+.attach-button {
+  width: 34px;
+  height: 34px;
+}
+
+.attach-button:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
 .send-button {
   width: 42px;
   height: 42px;

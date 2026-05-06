@@ -12,11 +12,12 @@ from typing import Optional
 from agno.tools import Toolkit
 from agno.tools.function import Function
 
+from .attachments import AttachmentError, AttachmentStore
 from .command_runner import DEFAULT_COMMAND_TAIL, DEFAULT_COMMAND_TIMEOUT_MS
 from .command_runner import execute_workspace_command
 from .config import ToolConfig
 from .confirmations import PendingToolConfirmation, ToolConfirmationStore
-from .safety import assess_tool_action, resolve_workspace_path
+from .safety import BlockedActionError, assess_tool_action, resolve_workspace_path
 
 DEFAULT_MAX_CHARS = 12_000
 DEFAULT_MAX_SEARCH_RESULTS = 50
@@ -231,8 +232,27 @@ def _apply_text_edits(
     return f"Successfully applied {len(normalized)} text edit(s) in: {path}"
 
 
-def execute_confirmed_tool(workspace_root: Path, pending: PendingToolConfirmation) -> str:
+def execute_confirmed_tool(
+    workspace_root: Path,
+    pending: PendingToolConfirmation,
+    *,
+    attachment_store: AttachmentStore | None = None,
+    attachment_request_id: str | None = None,
+) -> str:
     root = workspace_root.resolve()
+    if pending.name == "attach_file_to_reply":
+        if attachment_store is None:
+            return "Error: 附件仓库未初始化。"
+        path = str(pending.params.get("path", ""))
+        display_name = str(pending.params.get("display_name", "") or "")
+        attachment = attachment_store.register_generated_file(
+            pending.conversation_id,
+            attachment_request_id or pending.request_id,
+            path,
+            display_name or None,
+        )
+        return f"已登记回复附件: {attachment.name} ({attachment.size} bytes)"
+
     if pending.name == "write_text_file":
         path = str(pending.params.get("path", ""))
         content = str(pending.params.get("content", ""))
@@ -366,12 +386,14 @@ class OpenEagleDefaultTools(Toolkit):
         conversation_id: str | None = None,
         permission_mode: str = "default",
         builtin_tools: list[dict[str, object]] | None = None,
+        attachment_store: AttachmentStore | None = None,
     ):
         self.workspace_root = workspace_root.resolve()
         self.confirmation_store = confirmation_store
         self.request_id = request_id
         self.conversation_id = conversation_id
         self.permission_mode = permission_mode
+        self.attachment_store = attachment_store
         self._read_cache = _ReadCache()
 
         enabled_builtins = {bt["id"]: bt.get("enabled", True) for bt in (builtin_tools or [])}
@@ -391,11 +413,13 @@ class OpenEagleDefaultTools(Toolkit):
             self.replace_text_in_file,
             self.apply_text_edits,
             self.run_command,
+            self.attach_file_to_reply,
         ]
         instructions_parts = [
             "你可以使用内置默认工具执行工作区内的常用操作：查看文件信息、浏览目录、"
             "读取文本文件、搜索文件名与文本、执行命令，以及在确认后创建目录、写入、"
-            "复制、移动、删除或精确编辑文件。"
+            "复制、移动、删除或精确编辑文件。如需把生成的文件发回给用户，"
+            "必须显式调用 attach_file_to_reply。"
         ]
 
         if enabled_builtins.get("web_search", True):
@@ -935,6 +959,37 @@ class OpenEagleDefaultTools(Toolkit):
             params["env"] = env
         return self._run_guarded_tool("run_command", params)
 
+    def attach_file_to_reply(self, path: str, display_name: str = "") -> str:
+        """将工作区内文件登记为本轮回复附件。
+
+        Args:
+            path: 要回传的文件路径，必须位于工作区内。
+            display_name: 可选的附件展示名。
+
+        Returns:
+            str: 登记结果。
+        """
+        if self.attachment_store is None:
+            return "Error: 附件仓库未初始化。"
+        if not self.conversation_id or not self.request_id:
+            return "Error: 当前请求缺少 conversation_id 或 request_id。"
+        if self.conversation_id.startswith("im_") and self._should_confirm():
+            return self._create_confirmation(
+                "attach_file_to_reply",
+                "将把工作区文件作为附件发送到远程 IM，需要确认。",
+                {"path": path, "display_name": display_name},
+            )
+        try:
+            attachment = self.attachment_store.register_generated_file(
+                self.conversation_id,
+                self.request_id,
+                path,
+                display_name or None,
+            )
+        except (AttachmentError, BlockedActionError) as exc:
+            return f"Error: {exc}"
+        return f"已登记回复附件: {attachment.name} ({attachment.size} bytes)"
+
 
 def build_default_tools(
     workspace_root: Optional[Path] = None,
@@ -943,6 +998,7 @@ def build_default_tools(
     conversation_id: str | None = None,
     permission_mode: str = "default",
     builtin_tools: list[dict[str, object]] | None = None,
+    attachment_store: AttachmentStore | None = None,
 ) -> OpenEagleDefaultTools:
     root = workspace_root or Path(__file__).resolve().parents[2]
     return OpenEagleDefaultTools(
@@ -952,6 +1008,7 @@ def build_default_tools(
         conversation_id=conversation_id,
         permission_mode=permission_mode,
         builtin_tools=builtin_tools,
+        attachment_store=attachment_store,
     )
 
 

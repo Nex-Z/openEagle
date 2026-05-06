@@ -8,6 +8,8 @@ from typing import Any
 from typing import AsyncIterator
 
 from agno.agent import Agent
+from agno.media import File as AgnoFile
+from agno.media import Image as AgnoImage
 from agno.models.openai import OpenAIResponses
 from agno.models.openai.like import OpenAILike
 from agno.run.agent import (
@@ -21,6 +23,8 @@ from .. import default_tools
 
 from ..config import AgentConfig, AppConfig, McpConfig, SkillConfig, ToolConfig
 from ..confirmations import ToolConfirmationStore
+from ..attachments import AttachmentStore
+from ..models import AttachmentRef
 from ..prompts import build_chat_instructions
 from .base import ProviderStreamEvent, ReplyChunk, ReplyToolConfirmation, ReplyTrace
 
@@ -31,6 +35,48 @@ def utc_now() -> str:
 
 def workspace_root() -> Path:
     return Path(__file__).resolve().parents[3]
+
+
+def _attachment_prompt(prompt: str, attachments: list[AttachmentRef]) -> str:
+    if not attachments:
+        return prompt
+    rows = [
+        f"{index}. {item.name or item.id} ({item.kind}, {item.mime_type}, {item.size} bytes)"
+        for index, item in enumerate(attachments, start=1)
+    ]
+    base = prompt.strip() or "请结合附件处理当前请求。"
+    return f"{base}\n\n用户本轮附加了以下文件:\n" + "\n".join(rows)
+
+
+def _attachment_media(
+    attachments: list[AttachmentRef] | None,
+) -> tuple[list[AgnoImage], list[AgnoFile]]:
+    images: list[AgnoImage] = []
+    files: list[AgnoFile] = []
+    for attachment in attachments or []:
+        if not attachment.local_path or attachment.status == "error":
+            continue
+        path = Path(attachment.local_path)
+        if not path.exists() or not path.is_file():
+            continue
+        if attachment.kind == "image":
+            images.append(
+                AgnoImage(
+                    filepath=path,
+                    mime_type=attachment.mime_type,
+                    detail="auto",
+                )
+            )
+        else:
+            files.append(
+                AgnoFile(
+                    filepath=path,
+                    mime_type=attachment.mime_type,
+                    filename=attachment.name or path.name,
+                    size=attachment.size or None,
+                )
+            )
+    return images, files
 
 
 def to_jsonable(value: Any) -> Any:
@@ -60,11 +106,13 @@ class AgnoAgentProvider:
         self,
         config: AppConfig,
         confirmation_store: ToolConfirmationStore | None = None,
+        attachment_store: AttachmentStore | None = None,
         request_id: str | None = None,
         conversation_id: str | None = None,
     ) -> None:
         self._config = config
         self._confirmation_store = confirmation_store
+        self._attachment_store = attachment_store
         self._request_id = request_id
         self._conversation_id = conversation_id
         self._agent_cache: dict[str, tuple[Agent, dict[str, str]]] = {}
@@ -114,6 +162,7 @@ class AgnoAgentProvider:
             conversation_id=self._conversation_id or conversation_id,
             permission_mode=self._config.permissions.mode,
             builtin_tools=[bt.model_dump() for bt in self._config.builtin_tools],
+            attachment_store=self._attachment_store,
         )
         configured_functions, configured_name_map = default_tools.build_configured_tool_functions(
             self._config.tools,
@@ -230,20 +279,30 @@ class AgnoAgentProvider:
 
         return cleaned.strip(), selected_tools, selected_mcp, selected_skills, traces
 
-    async def reply(self, conversation_id: str, prompt: str) -> str:
+    async def reply(
+        self,
+        conversation_id: str,
+        prompt: str,
+        attachments: list[AttachmentRef] | None = None,
+    ) -> str:
         if not self._agent_config.api_key:
             raise ValueError("当前 provider 需要配置 API Key。")
 
         cleaned_prompt, selected_tools, selected_mcp, selected_skills, _ = (
             self._extract_selected_capabilities(prompt)
         )
+        images, files = _attachment_media(attachments)
         agent, _ = self._build_agent(
             conversation_id,
             selected_tools=selected_tools,
             selected_mcp=selected_mcp,
             selected_skills=selected_skills,
         )
-        result = await agent.arun(cleaned_prompt or "请结合已选能力处理当前请求。")
+        result = await agent.arun(
+            _attachment_prompt(cleaned_prompt or "请结合已选能力处理当前请求。", attachments or []),
+            images=images or None,
+            files=files or None,
+        )
         content = getattr(result, "content", None)
         if isinstance(content, str) and content.strip():
             return content
@@ -253,6 +312,7 @@ class AgnoAgentProvider:
         self,
         conversation_id: str,
         prompt: str,
+        attachments: list[AttachmentRef] | None = None,
     ) -> AsyncIterator[ProviderStreamEvent]:
         if not self._agent_config.api_key:
             raise ValueError("当前 provider 需要配置 API Key。")
@@ -269,8 +329,11 @@ class AgnoAgentProvider:
             selected_mcp=selected_mcp,
             selected_skills=selected_skills,
         )
+        images, files = _attachment_media(attachments)
         stream = agent.arun(
-            cleaned_prompt or "请结合已选能力处理当前请求。",
+            _attachment_prompt(cleaned_prompt or "请结合已选能力处理当前请求。", attachments or []),
+            images=images or None,
+            files=files or None,
             stream=True,
             stream_events=True,
         )
