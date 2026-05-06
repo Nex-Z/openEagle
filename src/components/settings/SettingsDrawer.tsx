@@ -270,14 +270,23 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
     };
   }, [previewDataUrls, soloDisplays]);
 
+  const wechatIsBinding =
+    wechatBindStatus?.state === "qrcode" || wechatBindStatus?.state === "waiting";
+  const wechatQrContent = wechatIsBinding ? wechatBindStatus?.qrcodeUrl ?? "" : "";
+
   useEffect(() => {
-    if (wechatBindStatus?.state !== "qrcode" || !wechatBindStatus.qrcodeUrl) {
+    if (!wechatQrContent) {
       setWechatQrDataUrl(null);
       return;
     }
 
     let cancelled = false;
-    QRCode.toDataURL(wechatBindStatus.qrcodeUrl, {
+    if (wechatQrContent.startsWith("data:image/")) {
+      setWechatQrDataUrl(wechatQrContent);
+      return;
+    }
+
+    QRCode.toDataURL(wechatQrContent, {
       margin: 1,
       width: 196,
     })
@@ -294,14 +303,12 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
     return () => {
       cancelled = true;
     };
-  }, [wechatBindStatus]);
+  }, [wechatQrContent]);
 
   const activeMeta = sectionMeta.find((section) => section.id === activeSection) ?? sectionMeta[0];
   const feishuStatus = imStatuses.feishu;
   const telegramStatus = imStatuses.telegram;
   const wechatStatus = imStatuses.wechat;
-  const wechatIsBinding =
-    wechatBindStatus?.state === "qrcode" || wechatBindStatus?.state === "waiting";
 
   return (
     <>
@@ -596,8 +603,9 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                   </label>
                   <div className="form-hint">
                     <span>绑定状态: {wechatBindStatus?.message || settings.wechat.accountId || "未绑定"}</span>
-                    <span>user_id 用于授权单个微信用户，chat_id 用于授权一个私聊或群聊。</span>
-                    <span>两者任意一个命中即可放行；都为空时会拦截所有微信消息。</span>
+                    {settings.wechat.accountId ? (
+                      <span>Account ID: {settings.wechat.accountId}</span>
+                    ) : null}
                   </div>
                   <div className="inline-actions">
                     <button
@@ -626,87 +634,6 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                       <img alt="微信扫码绑定二维码" src={wechatQrDataUrl} />
                     </div>
                   ) : null}
-                  <label className="form-field">
-                    <span>Account ID</span>
-                    <input
-                      onChange={(event) =>
-                        onChange({
-                          ...settings,
-                          wechat: {
-                            ...settings.wechat,
-                            accountId: event.target.value,
-                          },
-                        })
-                      }
-                      placeholder="扫码成功后自动填入"
-                      value={settings.wechat.accountId}
-                    />
-                  </label>
-                  <label className="form-field">
-                    <span>Base URL</span>
-                    <input
-                      onChange={(event) =>
-                        onChange({
-                          ...settings,
-                          wechat: {
-                            ...settings.wechat,
-                            baseUrl: event.target.value,
-                          },
-                        })
-                      }
-                      placeholder="留空使用 ClawBot 默认地址"
-                      value={settings.wechat.baseUrl}
-                    />
-                  </label>
-                  <label className="form-field">
-                    <span>Bot Type</span>
-                    <input
-                      onChange={(event) =>
-                        onChange({
-                          ...settings,
-                          wechat: {
-                            ...settings.wechat,
-                            botType: event.target.value,
-                          },
-                        })
-                      }
-                      value={settings.wechat.botType}
-                    />
-                  </label>
-                  <label className="form-field">
-                    <span>允许的 user_id</span>
-                    <textarea
-                      className="form-textarea"
-                      onChange={(event) =>
-                        onChange({
-                          ...settings,
-                          wechat: {
-                            ...settings.wechat,
-                            allowedUserIds: splitLines(event.target.value),
-                          },
-                        })
-                      }
-                      placeholder="每行一个微信 user_id"
-                      value={joinLines(settings.wechat.allowedUserIds)}
-                    />
-                  </label>
-                  <label className="form-field">
-                    <span>允许的 chat_id</span>
-                    <textarea
-                      className="form-textarea"
-                      onChange={(event) =>
-                        onChange({
-                          ...settings,
-                          wechat: {
-                            ...settings.wechat,
-                            allowedChatIds: splitLines(event.target.value),
-                          },
-                        })
-                      }
-                      placeholder="每行一个微信 chat_id"
-                      value={joinLines(settings.wechat.allowedChatIds)}
-                    />
-                  </label>
                 </section>
 
               </div>

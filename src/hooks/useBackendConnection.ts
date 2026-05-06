@@ -573,7 +573,12 @@ export function useBackendConnection(
       if (envelope.type === "server:wechat_bind_status") {
         const payload = envelope.payload as unknown as WechatBindStatusPayload;
         if (payload.state && payload.message) {
-          setWechatBindStatus(payload);
+          setWechatBindStatus((current) => ({
+            ...payload,
+            qrcodeUrl:
+              payload.qrcodeUrl ??
+              (payload.state === "waiting" ? current?.qrcodeUrl : undefined),
+          }));
         }
         return;
       }

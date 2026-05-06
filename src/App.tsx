@@ -270,27 +270,45 @@ export default function App() {
       return;
     }
     if (wechatBindStatus.state === "bound" && wechatBindStatus.accountId) {
-      setSettings((current) =>
-        current.wechat.accountId === wechatBindStatus.accountId
-          ? current
-          : {
-              ...current,
-              wechat: {
-                ...current.wechat,
-                accountId: wechatBindStatus.accountId ?? "",
-              },
-            },
-      );
+      const accountId = wechatBindStatus.accountId ?? "";
+      const boundUserId = wechatBindStatus.userId?.trim();
+      setSettings((current) => {
+        const alreadyAllowed = boundUserId
+          ? current.wechat.allowedUserIds.some((item) => item.trim() === boundUserId)
+          : true;
+        const allowedUserIds =
+          boundUserId && !alreadyAllowed
+            ? [...current.wechat.allowedUserIds, boundUserId]
+            : current.wechat.allowedUserIds;
+        if (
+          current.wechat.accountId === accountId &&
+          allowedUserIds === current.wechat.allowedUserIds
+        ) {
+          return current;
+        }
+        return {
+          ...current,
+          wechat: {
+            ...current.wechat,
+            accountId,
+            allowedUserIds,
+          },
+        };
+      });
     }
     if (wechatBindStatus.state === "unbound") {
       setSettings((current) =>
-        current.wechat.accountId
+        current.wechat.accountId ||
+        current.wechat.allowedUserIds.length > 0 ||
+        current.wechat.allowedChatIds.length > 0
           ? {
               ...current,
               wechat: {
                 ...current.wechat,
                 accountId: "",
                 enabled: false,
+                allowedUserIds: [],
+                allowedChatIds: [],
               },
             }
           : current,
