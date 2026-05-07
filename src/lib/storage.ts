@@ -14,6 +14,7 @@ import type {
 
 const SETTINGS_KEY = "open-eagle/settings";
 const CONVERSATIONS_KEY = "open-eagle/conversations";
+const ACTIVE_CONVERSATION_KEY = "open-eagle/active-conversation-id";
 const TRACE_TEXT_LIMIT = 12_000;
 const CONVERSATION_STORE_VERSION = 1;
 const LEGACY_DEFAULT_TOOL = {
@@ -295,6 +296,22 @@ export function loadSettings(): AppSettings {
 
 export function saveSettings(settings: AppSettings) {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+}
+
+export function loadActiveConversationId() {
+  try {
+    return localStorage.getItem(ACTIVE_CONVERSATION_KEY);
+  } catch {
+    return null;
+  }
+}
+
+export function saveActiveConversationId(conversationId: string) {
+  try {
+    localStorage.setItem(ACTIVE_CONVERSATION_KEY, conversationId);
+  } catch {
+    // Non-critical: conversation files are still saved even if this preference fails.
+  }
 }
 
 function isTauriRuntime() {

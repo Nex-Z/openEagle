@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import type {
@@ -399,7 +399,7 @@ export function useBackendConnection(
     onMessagesChangeRef.current = onMessagesChange;
   }, [onMessagesChange]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     const conversationChanged = syncedConversationIdRef.current !== conversationId;
     const externalMessagesChanged = initialMessages !== messagesRef.current;
     if (!conversationChanged && !externalMessagesChanged) {
@@ -414,7 +414,7 @@ export function useBackendConnection(
     onConversationPatchRef.current = onConversationPatch;
   }, [onConversationPatch]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (skipNextMessageSyncRef.current) {
       skipNextMessageSyncRef.current = false;
       return;

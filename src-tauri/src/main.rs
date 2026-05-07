@@ -34,6 +34,7 @@ const SOLO_OVERLAY_HEIGHT: f64 = 240.0;
 const SOLO_OVERLAY_MARGIN: i32 = 18;
 const CONVERSATION_INDEX_FILE: &str = "conversation-index.json";
 const CONVERSATION_DIR: &str = "conversations";
+const DELETED_CONVERSATION_DIR: &str = "deleted-conversations";
 
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -155,6 +156,10 @@ fn conversation_index_path(app: &AppHandle) -> Result<PathBuf, String> {
 
 fn conversations_dir(app: &AppHandle) -> Result<PathBuf, String> {
     Ok(conversation_store_root(app)?.join(CONVERSATION_DIR))
+}
+
+fn deleted_conversations_dir(app: &AppHandle) -> Result<PathBuf, String> {
+    Ok(conversation_store_root(app)?.join(DELETED_CONVERSATION_DIR))
 }
 
 fn solo_run_log_candidates(app: &AppHandle, request_id: &str) -> Result<Vec<PathBuf>, String> {
@@ -365,8 +370,21 @@ fn load_solo_run_log(app: AppHandle, request_id: String) -> Result<Value, String
 fn delete_conversation_file(app: AppHandle, conversation_id: String) -> Result<Value, String> {
     let path = conversation_file_path(&app, &conversation_id)?;
     if path.exists() {
-        fs::remove_file(&path)
-            .map_err(|err| format!("failed to delete {}: {err}", path.display()))?;
+        let deleted_dir = deleted_conversations_dir(&app)?;
+        fs::create_dir_all(&deleted_dir)
+            .map_err(|err| format!("failed to create {}: {err}", deleted_dir.display()))?;
+        let deleted_path = deleted_dir.join(format!(
+            "{}-{}.json",
+            conversation_id,
+            Utc::now().timestamp_millis()
+        ));
+        fs::rename(&path, &deleted_path).map_err(|err| {
+            format!(
+                "failed to archive deleted conversation {} to {}: {err}",
+                path.display(),
+                deleted_path.display()
+            )
+        })?;
     }
     Ok(json!({"ok": true}))
 }

@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { getCurrentWindow } from "@tauri-apps/api/window";
 import { ChatWorkspace } from "./components/chat/ChatWorkspace";
 import { ActivityInspector } from "./components/inspector/ActivityInspector";
 import { AppShell } from "./components/layout/AppShell";
@@ -9,10 +10,13 @@ import { useBackendConnection } from "./hooks/useBackendConnection";
 import { useTheme } from "./hooks/useTheme";
 import {
   deletePersistedConversation,
+  loadActiveConversationId,
   loadPersistedConversations,
   loadSettings,
+  saveActiveConversationId,
   savePersistedConversation,
   savePersistedConversationIndex,
+  savePersistedConversations,
   type PersistedConversation,
   saveSettings,
 } from "./lib/storage";
@@ -51,6 +55,10 @@ function createFallbackConversationStore(): PersistedConversation[] {
       messages: [],
     },
   ];
+}
+
+function isTauriRuntime() {
+  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
 }
 
 function collectMessageTraces(message: ChatMessage) {
@@ -107,13 +115,14 @@ export default function App() {
   const externalConversationSaveTimerRef = useRef<number | null>(null);
   const pendingConversationSaveIdsRef = useRef<Set<string>>(new Set());
   const pendingDeletedConversationIdsRef = useRef<Set<string>>(new Set());
-  const previousConversationIdsRef = useRef<Set<string>>(
-    new Set(conversationStore.map((item) => item.summary.id)),
-  );
+  const conversationStoreRef = useRef(conversationStore);
+  const conversationsHydratedRef = useRef(conversationsHydrated);
   const conversations = conversationStore.map((item) => item.summary);
   const activeConversation =
     conversationStore.find((item) => item.summary.id === activeConversationId) ??
     conversationStore[0];
+  conversationStoreRef.current = conversationStore;
+  conversationsHydratedRef.current = conversationsHydrated;
 
   const enqueueSave = (operation: () => Promise<void>) => {
     saveQueueRef.current = saveQueueRef.current
@@ -123,6 +132,39 @@ export default function App() {
         console.warn("[storage] save failed:", err);
       });
   };
+
+  const clearSaveTimers = useCallback(() => {
+    if (indexSaveTimerRef.current) {
+      window.clearTimeout(indexSaveTimerRef.current);
+      indexSaveTimerRef.current = null;
+    }
+    if (conversationSaveTimerRef.current) {
+      window.clearTimeout(conversationSaveTimerRef.current);
+      conversationSaveTimerRef.current = null;
+    }
+    if (externalConversationSaveTimerRef.current) {
+      window.clearTimeout(externalConversationSaveTimerRef.current);
+      externalConversationSaveTimerRef.current = null;
+    }
+  }, []);
+
+  const flushPersistedConversations = useCallback(async () => {
+    if (!conversationsHydratedRef.current) {
+      return;
+    }
+    clearSaveTimers();
+    const deletedIds = Array.from(pendingDeletedConversationIdsRef.current);
+    const deletedIdSet = new Set(deletedIds);
+    const store = conversationStoreRef.current.filter(
+      (conversation) => !deletedIdSet.has(conversation.summary.id),
+    );
+    pendingDeletedConversationIdsRef.current.clear();
+    await saveQueueRef.current.catch(() => undefined);
+    for (const id of deletedIds) {
+      await deletePersistedConversation(id);
+    }
+    await savePersistedConversations(store);
+  }, [clearSaveTimers]);
 
   useTheme(settings.appearance.themeMode);
 
@@ -137,15 +179,19 @@ export default function App() {
           persistedConversations.length > 0
             ? persistedConversations
             : createFallbackConversationStore();
+        const savedActiveConversationId = loadActiveConversationId();
         setConversationStore(nextStore);
-        setActiveConversationId((current) =>
-          nextStore.some((item) => item.summary.id === current)
+        setActiveConversationId((current) => {
+          if (
+            savedActiveConversationId &&
+            nextStore.some((item) => item.summary.id === savedActiveConversationId)
+          ) {
+            return savedActiveConversationId;
+          }
+          return nextStore.some((item) => item.summary.id === current)
             ? current
-            : nextStore[0].summary.id,
-        );
-        previousConversationIdsRef.current = new Set(
-          nextStore.map((item) => item.summary.id),
-        );
+            : nextStore[0].summary.id;
+        });
         setConversationsHydrated(true);
       })
       .catch((err) => {
@@ -156,9 +202,6 @@ export default function App() {
         const fallback = createFallbackConversationStore();
         setConversationStore(fallback);
         setActiveConversationId(fallback[0].summary.id);
-        previousConversationIdsRef.current = new Set(
-          fallback.map((item) => item.summary.id),
-        );
         setConversationsHydrated(true);
       });
     return () => {
@@ -266,6 +309,59 @@ export default function App() {
   }, [settings]);
 
   useEffect(() => {
+    if (
+      conversationsHydrated &&
+      conversationStore.some((item) => item.summary.id === activeConversationId)
+    ) {
+      saveActiveConversationId(activeConversationId);
+    }
+  }, [activeConversationId, conversationStore, conversationsHydrated]);
+
+  useEffect(() => {
+    const flush = () => {
+      void flushPersistedConversations();
+    };
+    const flushWhenHidden = () => {
+      if (document.visibilityState === "hidden") {
+        flush();
+      }
+    };
+
+    window.addEventListener("pagehide", flush);
+    window.addEventListener("beforeunload", flush);
+    document.addEventListener("visibilitychange", flushWhenHidden);
+
+    let unlistenClose: (() => void) | undefined;
+    let closeRequested = false;
+    if (isTauriRuntime()) {
+      const currentWindow = getCurrentWindow();
+      void currentWindow
+        .onCloseRequested(async (event) => {
+          if (closeRequested) {
+            return;
+          }
+          event.preventDefault();
+          closeRequested = true;
+          try {
+            await flushPersistedConversations();
+          } finally {
+            await currentWindow.destroy();
+          }
+        })
+        .then((unlisten) => {
+          unlistenClose = unlisten;
+        });
+    }
+
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      window.removeEventListener("beforeunload", flush);
+      document.removeEventListener("visibilitychange", flushWhenHidden);
+      unlistenClose?.();
+    };
+  }, [flushPersistedConversations]);
+
+  useEffect(() => {
     if (!wechatBindStatus) {
       return;
     }
@@ -317,18 +413,8 @@ export default function App() {
   }, [wechatBindStatus]);
 
   useEffect(() => {
-    return () => {
-      if (indexSaveTimerRef.current) {
-        window.clearTimeout(indexSaveTimerRef.current);
-      }
-      if (conversationSaveTimerRef.current) {
-        window.clearTimeout(conversationSaveTimerRef.current);
-      }
-      if (externalConversationSaveTimerRef.current) {
-        window.clearTimeout(externalConversationSaveTimerRef.current);
-      }
-    };
-  }, []);
+    return clearSaveTimers;
+  }, [clearSaveTimers]);
 
   useEffect(() => {
     if (!conversationsHydrated) {
@@ -336,17 +422,6 @@ export default function App() {
     }
 
     const summaries = conversationStore.map((item) => item.summary);
-    const currentIds = new Set(summaries.map((summary) => summary.id));
-    const previousIds = previousConversationIdsRef.current;
-    for (const id of previousIds) {
-      if (!currentIds.has(id)) {
-        pendingDeletedConversationIdsRef.current.add(id);
-      }
-    }
-    for (const id of currentIds) {
-      pendingDeletedConversationIdsRef.current.delete(id);
-    }
-    previousConversationIdsRef.current = currentIds;
 
     if (indexSaveTimerRef.current) {
       window.clearTimeout(indexSaveTimerRef.current);
@@ -433,6 +508,7 @@ export default function App() {
   };
 
   const deleteConversation = (conversationId: string) => {
+    pendingDeletedConversationIdsRef.current.add(conversationId);
     setConversationStore((current) => {
       const remaining = current.filter((item) => item.summary.id !== conversationId);
       if (remaining.length > 0) {
