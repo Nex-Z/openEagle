@@ -4,6 +4,7 @@ use std::{
     fs,
     io::Write,
     path::PathBuf,
+    process::Command,
     sync::{Arc, Mutex},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -28,6 +29,7 @@ use tauri_plugin_shell::{
 const BACKEND_EVENT: &str = "backend://status";
 const READY_PATTERN: &str = r"\[AGENT_READY\]\s+WS_PORT:\s+(\d+)";
 const SIDECAR_NAME: &str = "binaries/open-eagle-agent";
+const BACKEND_PARENT_PID_ENV: &str = "OPEN_EAGLE_PARENT_PID";
 const SOLO_OVERLAY_LABEL: &str = "solo_overlay";
 const SOLO_OVERLAY_WIDTH: f64 = 400.0;
 const SOLO_OVERLAY_HEIGHT: f64 = 240.0;
@@ -761,6 +763,31 @@ fn backend_python() -> PathBuf {
         .join("python.exe")
 }
 
+fn powershell_single_quote(value: &str) -> String {
+    format!("'{}'", value.replace('\'', "''"))
+}
+
+#[cfg(all(debug_assertions, target_os = "windows"))]
+fn cleanup_stale_debug_backends() {
+    let python = backend_python().to_string_lossy().to_string();
+    let backend = backend_root().to_string_lossy().to_string();
+    let script = format!(
+        "$python = {python}; $backend = {backend}; \
+         Get-CimInstance Win32_Process -Filter \"Name = 'python.exe'\" | \
+         Where-Object {{ $_.CommandLine -like \"*$python*\" -and $_.CommandLine -like '*-m app.main*' -and $_.CommandLine -like \"*$backend*\" }} | \
+         ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}",
+        python = powershell_single_quote(&python),
+        backend = powershell_single_quote(&backend),
+    );
+
+    let _ = Command::new("powershell")
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
+        .status();
+}
+
+#[cfg(not(all(debug_assertions, target_os = "windows")))]
+fn cleanup_stale_debug_backends() {}
+
 fn spawn_backend(app: AppHandle) {
     let runtime = app.state::<Arc<BackendRuntime>>().inner().clone();
     set_state(
@@ -770,6 +797,8 @@ fn spawn_backend(app: AppHandle) {
     );
 
     tauri::async_runtime::spawn(async move {
+        cleanup_stale_debug_backends();
+        let parent_pid = std::process::id().to_string();
         let command = if cfg!(debug_assertions) {
             let python = backend_python();
             if python.exists() {
@@ -810,7 +839,8 @@ fn spawn_backend(app: AppHandle) {
                     return;
                 }
             }
-        };
+        }
+        .env(BACKEND_PARENT_PID_ENV, parent_pid);
 
         let (mut receiver, child) = match command.spawn() {
             Ok(result) => result,

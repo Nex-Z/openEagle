@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import ctypes
 import json
+import os
 import socket
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -48,6 +51,9 @@ workspace_root = Path(__file__).resolve().parents[2]
 attachment_store = AttachmentStore(workspace_root)
 confirmed_tool_results: dict[str, str] = {}
 ATTACHMENT_WS_MAX_SIZE = 192 * 1024 * 1024
+PARENT_PID_ENV = "OPEN_EAGLE_PARENT_PID"
+WINDOWS_SYNCHRONIZE = 0x00100000
+WINDOWS_WAIT_TIMEOUT = 0x00000102
 
 POST_ACTION_CAPTURE_DELAYS_MS: dict[str, list[int]] = {
     "click": [180, 420, 800],
@@ -1958,6 +1964,48 @@ def find_free_port(host: str) -> int:
         return int(sock.getsockname()[1])
 
 
+def _windows_process_is_alive(pid: int) -> bool:
+    kernel32 = ctypes.windll.kernel32
+    handle = kernel32.OpenProcess(WINDOWS_SYNCHRONIZE, False, pid)
+    if not handle:
+        return False
+    try:
+        return kernel32.WaitForSingleObject(handle, 0) == WINDOWS_WAIT_TIMEOUT
+    finally:
+        kernel32.CloseHandle(handle)
+
+
+def parent_process_is_alive(pid: int) -> bool:
+    if sys.platform == "win32":
+        return _windows_process_is_alive(pid)
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
+async def monitor_parent_process(server: uvicorn.Server) -> None:
+    raw_pid = os.environ.get(PARENT_PID_ENV)
+    if not raw_pid:
+        return
+    try:
+        parent_pid = int(raw_pid)
+    except ValueError:
+        return
+    while not server.should_exit:
+        await asyncio.sleep(2)
+        if not parent_process_is_alive(parent_pid):
+            print(
+                f"[AGENT_EXIT] Parent process {parent_pid} is gone; shutting down backend",
+                flush=True,
+            )
+            server.should_exit = True
+            return
+
+
 async def serve(host: str, port: int) -> None:
     actual_port = port if port != 0 else find_free_port(host)
     app.state.ws_port = actual_port
@@ -1971,7 +2019,11 @@ async def serve(host: str, port: int) -> None:
             ws_max_size=ATTACHMENT_WS_MAX_SIZE,
         )
     )
-    await server.serve()
+    monitor_task = asyncio.create_task(monitor_parent_process(server))
+    try:
+        await server.serve()
+    finally:
+        monitor_task.cancel()
 
 
 def parse_args() -> argparse.Namespace:
