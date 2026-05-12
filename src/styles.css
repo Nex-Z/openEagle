@@ -664,6 +664,10 @@ a {
   color: var(--accent);
 }
 
+.empty-message-icon.is-loading svg {
+  animation: spin 1s linear infinite;
+}
+
 .message-shell {
   width: min(100%, 880px);
   padding: 0;

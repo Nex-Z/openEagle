@@ -5,6 +5,7 @@ import {
   CircleAlert,
   FileText,
   Image as ImageIcon,
+  LoaderCircle,
   MonitorSmartphone,
   PanelLeftOpen,
   Paperclip,
@@ -513,7 +514,10 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
       ? "缺少 VL API Key"
       : null;
   const visibleMessages = useMemo(
-    () => messages.filter((message) => !(message.mode === "solo" && message.imagePath)),
+    () =>
+      messages.filter(
+        (message) => !(message.mode === "solo" && (message.imagePath || message.role === "tool")),
+      ),
     [messages],
   );
 
@@ -750,11 +754,23 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
       <div ref={streamRef} className="message-stream">
         {visibleMessages.length === 0 ? (
           <div className="empty-message-state">
-            <div className="empty-message-icon">
-              <MonitorSmartphone size={24} />
-            </div>
-            <h2>这里会显示对话、工具调用和 SOLO 执行摘要</h2>
-            <p>输入 `/` 可快速插入 Tool、MCP 和 Skill 指令，右侧 Inspector 会展示更完整的执行细节。</p>
+            {!canSend ? (
+              <>
+                <div className="empty-message-icon is-loading">
+                  <LoaderCircle size={24} />
+                </div>
+                <h2>正在连接本地后端</h2>
+                <p>openEagle 正在启动或连接本地服务，连接完成后就可以发送任务。</p>
+              </>
+            ) : (
+              <>
+                <div className="empty-message-icon">
+                  <MonitorSmartphone size={24} />
+                </div>
+                <h2>这里会显示对话和 SOLO 执行摘要</h2>
+                <p>输入 `/` 可快速插入 Tool、MCP 和 Skill 指令，右侧 Inspector 会展示更完整的执行细节。</p>
+              </>
+            )}
           </div>
         ) : (
           visibleMessages.map((message) => (

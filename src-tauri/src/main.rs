@@ -975,8 +975,17 @@ fn main() {
         ])
         .on_window_event(|window, event| {
             if window.label() == "main" {
-                if let tauri::WindowEvent::Focused(focused) = event {
-                    let _ = window.emit("main://focus_changed", focused);
+                match event {
+                    tauri::WindowEvent::Focused(focused) => {
+                        let _ = window.emit("main://focus_changed", focused);
+                    }
+                    tauri::WindowEvent::CloseRequested { .. } => {
+                        let app = window.app_handle();
+                        let _ = hide_solo_overlay(app.clone());
+                        kill_backend(app);
+                        app.exit(0);
+                    }
+                    _ => {}
                 }
             }
         })

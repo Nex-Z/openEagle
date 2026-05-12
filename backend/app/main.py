@@ -361,14 +361,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             {"step": payload},
         )
         if im_bridge is not None and session.conversation_id.startswith("im_"):
-            visible_text = agent_message or expected_outcome or thought_summary
-            if action == "finish":
+            visible_text = (agent_message or expected_outcome or thought_summary).strip()
+            if visible_text:
                 await im_bridge.send_text(session.conversation_id, visible_text)
-            elif visible_text:
-                await im_bridge.send_text(
-                    session.conversation_id,
-                    f"SOLO 第 {step_index} 步: {action}\n{visible_text}",
-                )
 
     async def emit_confirmation(
         session: SoloSessionState,
@@ -1055,7 +1050,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     await emit_solo_screenshot(
                         session,
                         new_screenshot,
-                        f"第 {session.step_count} 步后截图",
+                        "屏幕状态更新",
                     )
 
                 result_summary = summarize_solo_step_result(result)

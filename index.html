@@ -4,9 +4,423 @@
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>openEagle</title>
+    <script>
+      (() => {
+        const defaultTheme = "light";
+        let themeMode = defaultTheme;
+        try {
+          const raw = window.localStorage.getItem("open-eagle/settings");
+          const settings = raw ? JSON.parse(raw) : null;
+          themeMode = settings?.appearance?.themeMode || defaultTheme;
+        } catch {
+          themeMode = defaultTheme;
+        }
+        const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
+        document.documentElement.dataset.theme =
+          themeMode === "system" ? (prefersDark ? "dark" : "light") : themeMode;
+      })();
+    </script>
+    <style>
+      :root {
+        color-scheme: dark;
+        --boot-bg-app: #121313;
+        --boot-bg-panel: #171919;
+        --boot-bg-panel-muted: #141616;
+        --boot-bg-surface: #1d2020;
+        --boot-bg-elevated: #232727;
+        --boot-border-subtle: rgba(255, 248, 238, 0.08);
+        --boot-text-primary: #f5efe7;
+        --boot-text-secondary: #d7d0c7;
+        --boot-text-muted: #938d85;
+        --boot-accent: #2ba58d;
+        --boot-accent-soft: rgba(43, 165, 141, 0.16);
+        background:
+          radial-gradient(circle at top left, rgba(43, 165, 141, 0.16), transparent 22%),
+          radial-gradient(circle at top right, rgba(241, 182, 92, 0.08), transparent 16%),
+          linear-gradient(180deg, #121313 0%, #0f1010 100%);
+        color: #f5efe7;
+        font-family:
+          "Segoe UI", "PingFang SC", "Microsoft YaHei", ui-sans-serif,
+          system-ui, sans-serif;
+      }
+
+      :root[data-theme="light"] {
+        color-scheme: light;
+        --boot-bg-app: #edf0ed;
+        --boot-bg-panel: #f7faf8;
+        --boot-bg-panel-muted: #eef3f1;
+        --boot-bg-surface: #ffffff;
+        --boot-bg-elevated: #fbfcfb;
+        --boot-border-subtle: rgba(23, 36, 33, 0.08);
+        --boot-text-primary: #13221e;
+        --boot-text-secondary: #314743;
+        --boot-text-muted: #6d7c78;
+        --boot-accent: #0d7c69;
+        --boot-accent-soft: rgba(13, 124, 105, 0.12);
+        background:
+          radial-gradient(circle at top left, rgba(13, 124, 105, 0.12), transparent 24%),
+          radial-gradient(circle at top right, rgba(202, 152, 59, 0.08), transparent 16%),
+          linear-gradient(180deg, #eef1ee 0%, #e5ebe7 100%);
+        color: var(--boot-text-primary);
+      }
+
+      html,
+      body {
+        margin: 0;
+        min-width: 320px;
+        min-height: 100vh;
+      }
+
+      body {
+        overflow: hidden;
+      }
+
+      .boot-splash {
+        box-sizing: border-box;
+        width: 100vw;
+        height: 100vh;
+        padding: 12px;
+        display: grid;
+        grid-template-columns: 272px minmax(0, 1fr) 344px;
+        gap: 12px;
+      }
+
+      .boot-panel {
+        min-width: 0;
+        min-height: 0;
+        border: 1px solid var(--boot-border-subtle);
+        border-radius: 8px;
+        background: var(--boot-bg-panel);
+        box-shadow: 0 18px 48px rgba(0, 0, 0, 0.26);
+      }
+
+      .boot-sidebar {
+        padding: 18px;
+        display: flex;
+        flex-direction: column;
+        gap: 18px;
+      }
+
+      .boot-brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .boot-brand-mark {
+        width: 40px;
+        height: 40px;
+        border-radius: 12px;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(180deg, var(--boot-accent), #65bfae);
+        color: #ffffff;
+        font-size: 13px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+      }
+
+      .boot-brand-copy {
+        display: flex;
+        flex-direction: column;
+        line-height: 1.2;
+      }
+
+      .boot-brand-copy span,
+      .boot-kicker,
+      .boot-panel-title span {
+        color: var(--boot-text-muted);
+        font-size: 12px;
+      }
+
+      .boot-brand-copy strong {
+        color: var(--boot-text-primary);
+        font-size: 16px;
+      }
+
+      .boot-sidebar-fill {
+        flex: 1;
+        display: grid;
+        align-content: start;
+        gap: 8px;
+      }
+
+      .boot-line {
+        height: 38px;
+        border-radius: 8px;
+        border: 1px solid var(--boot-border-subtle);
+        background: var(--boot-bg-surface);
+        opacity: 0.68;
+      }
+
+      .boot-line.short {
+        width: 72%;
+      }
+
+      .boot-status-card {
+        padding: 12px;
+        border-radius: 8px;
+        border: 1px solid var(--boot-border-subtle);
+        background: var(--boot-bg-surface);
+        display: grid;
+        gap: 6px;
+      }
+
+      .boot-status-head {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--boot-text-secondary);
+        font-size: 13px;
+        font-weight: 600;
+      }
+
+      .boot-status-dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: #c7923b;
+      }
+
+      .boot-status-card small {
+        color: var(--boot-text-muted);
+        line-height: 1.4;
+      }
+
+      .boot-main {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr);
+      }
+
+      .boot-main-header,
+      .boot-inspector-header {
+        min-height: 82px;
+        padding: 18px;
+        display: flex;
+        align-items: center;
+        border-bottom: 1px solid var(--boot-border-subtle);
+      }
+
+      .boot-panel-title {
+        display: grid;
+        gap: 4px;
+      }
+
+      .boot-panel-title strong {
+        color: var(--boot-text-primary);
+        font-size: 20px;
+        line-height: 1.15;
+      }
+
+      .boot-main-center {
+        display: grid;
+        place-content: center;
+        gap: 12px;
+        padding: 24px;
+        text-align: center;
+      }
+
+      .boot-loading-icon {
+        width: 52px;
+        height: 52px;
+        margin: 0 auto;
+        border-radius: 16px;
+        display: grid;
+        place-items: center;
+        background: var(--boot-accent-soft);
+      }
+
+      .boot-splash-spinner {
+        width: 24px;
+        height: 24px;
+        border-radius: 999px;
+        border: 2px solid rgba(43, 165, 141, 0.22);
+        border-top-color: var(--boot-accent);
+        animation: boot-spin 1s linear infinite;
+      }
+
+      .boot-splash strong {
+        color: var(--boot-text-primary);
+        font-size: 20px;
+        line-height: 1.2;
+      }
+
+      .boot-splash span {
+        color: var(--boot-text-muted);
+        font-size: 13px;
+      }
+
+      .boot-inspector {
+        padding-bottom: 18px;
+        display: grid;
+        grid-template-rows: auto auto minmax(0, 1fr);
+        gap: 14px;
+      }
+
+      .boot-tabs {
+        margin: 0 18px;
+        padding: 4px;
+        border-radius: 999px;
+        background: var(--boot-bg-panel-muted);
+        display: grid;
+        grid-template-columns: repeat(3, 1fr);
+        gap: 4px;
+      }
+
+      .boot-tab {
+        min-height: 32px;
+        border-radius: 999px;
+        display: grid;
+        place-items: center;
+        color: var(--boot-text-muted);
+        font-size: 12px;
+      }
+
+      .boot-tab.active {
+        background: var(--boot-bg-surface);
+        color: var(--boot-text-primary);
+      }
+
+      .boot-inspector-body {
+        margin: 0 18px;
+        padding: 14px;
+        border-radius: 8px;
+        border: 1px solid var(--boot-border-subtle);
+        background: var(--boot-bg-surface);
+        display: grid;
+        gap: 10px;
+        align-self: start;
+      }
+
+      .boot-skeleton {
+        height: 12px;
+        border-radius: 999px;
+        background: linear-gradient(
+          90deg,
+          var(--boot-bg-panel-muted),
+          var(--boot-bg-elevated),
+          var(--boot-bg-panel-muted)
+        );
+        background-size: 180% 100%;
+        animation: boot-sheen 1.8s ease-in-out infinite;
+      }
+
+      .boot-skeleton.wide {
+        width: 92%;
+      }
+
+      .boot-skeleton.mid {
+        width: 68%;
+      }
+
+      .boot-skeleton.short {
+        width: 42%;
+      }
+
+      @keyframes boot-spin {
+        to {
+          transform: rotate(360deg);
+        }
+      }
+
+      @keyframes boot-sheen {
+        0% {
+          background-position: 100% 0;
+        }
+
+        100% {
+          background-position: -100% 0;
+        }
+      }
+
+      @media (max-width: 1180px) {
+        .boot-splash {
+          grid-template-columns: 248px minmax(0, 1fr) 72px;
+        }
+
+        .boot-inspector {
+          overflow: hidden;
+        }
+
+        .boot-inspector > :not(.boot-inspector-header) {
+          display: none;
+        }
+      }
+
+      @media (max-width: 760px) {
+        .boot-splash {
+          display: block;
+        }
+
+        .boot-sidebar,
+        .boot-inspector {
+          display: none;
+        }
+
+        .boot-main {
+          height: calc(100vh - 24px);
+        }
+      }
+    </style>
   </head>
   <body>
-    <div id="root"></div>
+    <div id="root">
+      <div class="boot-splash">
+        <aside class="boot-panel boot-sidebar" aria-hidden="true">
+          <div class="boot-brand">
+            <div class="boot-brand-mark">OE</div>
+            <div class="boot-brand-copy">
+              <span>桌面 Agent 工作台</span>
+              <strong>openEagle</strong>
+            </div>
+          </div>
+          <div class="boot-sidebar-fill">
+            <div class="boot-line"></div>
+            <div class="boot-line short"></div>
+          </div>
+          <div class="boot-status-card">
+            <div class="boot-status-head">
+              <span class="boot-status-dot"></span>
+              <span>后端服务启动中</span>
+            </div>
+            <small>正在准备本地运行环境。</small>
+          </div>
+        </aside>
+        <main class="boot-panel boot-main">
+          <header class="boot-main-header">
+            <div class="boot-panel-title">
+              <span>主工作区</span>
+              <strong>对话与执行</strong>
+            </div>
+          </header>
+          <section class="boot-main-center">
+            <div class="boot-loading-icon">
+              <div class="boot-splash-spinner" aria-hidden="true"></div>
+            </div>
+            <strong>openEagle 正在启动</strong>
+            <span>正在连接本地后端，连接完成后即可发送任务。</span>
+          </section>
+        </main>
+        <aside class="boot-panel boot-inspector" aria-hidden="true">
+          <header class="boot-inspector-header">
+            <div class="boot-panel-title">
+              <span>Inspector</span>
+              <strong>执行侧栏</strong>
+            </div>
+          </header>
+          <div class="boot-tabs">
+            <span class="boot-tab active">Activity</span>
+            <span class="boot-tab">Traces</span>
+            <span class="boot-tab">Assets</span>
+          </div>
+          <div class="boot-inspector-body">
+            <span class="boot-skeleton wide"></span>
+            <span class="boot-skeleton mid"></span>
+            <span class="boot-skeleton short"></span>
+          </div>
+        </aside>
+      </div>
+    </div>
     <script type="module" src="/src/main.tsx"></script>
   </body>
 </html>

@@ -332,21 +332,11 @@ export default function App() {
     document.addEventListener("visibilitychange", flushWhenHidden);
 
     let unlistenClose: (() => void) | undefined;
-    let closeRequested = false;
     if (isTauriRuntime()) {
       const currentWindow = getCurrentWindow();
       void currentWindow
-        .onCloseRequested(async (event) => {
-          if (closeRequested) {
-            return;
-          }
-          event.preventDefault();
-          closeRequested = true;
-          try {
-            await flushPersistedConversations();
-          } finally {
-            await currentWindow.destroy();
-          }
+        .onCloseRequested(() => {
+          void flushPersistedConversations();
         })
         .then((unlisten) => {
           unlistenClose = unlisten;

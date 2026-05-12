@@ -50,6 +50,15 @@ function isSoloFinishAction(action: string) {
   return action.trim().toLowerCase() === "finish";
 }
 
+function soloStepVisibleText(step: SoloStepPayload) {
+  return (
+    step.agentMessage?.trim() ||
+    step.thoughtSummary ||
+    step.expectedOutcome ||
+    "步骤已更新。"
+  );
+}
+
 function collectAssistantContent(blocks?: AssistantMessageBlock[]) {
   if (!blocks || blocks.length === 0) {
     return "";
@@ -854,20 +863,15 @@ export function useBackendConnection(
 
       if (envelope.type === "server:solo_step" && envelope.payload.step) {
         const step = envelope.payload.step;
-        const visibleText =
-          step.agentMessage?.trim() ||
-          step.thoughtSummary ||
-          step.expectedOutcome ||
-          "步骤已更新。";
+        const visibleText = soloStepVisibleText(step);
         activeSoloRequestIdRef.current = envelope.requestId;
         setSoloStep(step);
         appendSoloTimeline(
-          `第 ${step.stepIndex} 步: ${step.action} · ${visibleText}`,
+          `正在处理: ${visibleText}`,
         );
         patchMessages((current) =>
           appendChatMessage(current, createChatMessage({
             role: "assistant",
-            label: `第 ${step.stepIndex} 步`,
             content: visibleText,
             createdAt: step.timestamp,
             requestId: envelope.requestId,
@@ -915,7 +919,7 @@ export function useBackendConnection(
             appendChatMessage(current, createChatMessage({
               role: "tool",
               label: "截图预览",
-              content: `当前截图已获取，等待执行动作 \`${step.action}\`。`,
+              content: "当前屏幕状态已更新，正在继续处理。",
               createdAt: step.timestamp,
               requestId: envelope.requestId,
               mode: "solo",
@@ -1015,7 +1019,7 @@ export function useBackendConnection(
     title: undefined as string | undefined,
     detail: soloStatusRef.current.detail ?? undefined,
     stepText: soloStepRef.current
-      ? `第 ${soloStepRef.current.stepIndex} 步: ${soloStepRef.current.action}`
+      ? soloStepVisibleText(soloStepRef.current)
       : undefined,
     historyText: soloTimelineRef.current.slice(-3).join("\n") || undefined,
     state: soloStatusRef.current.state,

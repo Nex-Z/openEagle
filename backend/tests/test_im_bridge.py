@@ -6,7 +6,7 @@ import unittest
 from unittest.mock import patch
 
 from app.config import AppConfig, FeishuConfig, TelegramConfig, WechatConfig
-from app.im.bridge import IMBridge, bind_config_getter
+from app.im.bridge import IMBridge, IM_RECEIVED_ACK_TEXT, bind_config_getter
 from app.im.commands import parse_im_command
 from app.im.feishu import parse_message_receive_event
 from app.im.models import IMEvent, IMMessageSource
@@ -208,7 +208,8 @@ class IMBridgeAttachmentTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual(chat_calls, [])
-        self.assertIn("附件处理失败", fake.sent[0].text)
+        self.assertEqual(fake.sent[0].text, IM_RECEIVED_ACK_TEXT)
+        self.assertIn("附件处理失败", fake.sent[1].text)
         self.assertTrue(any(event[0] == "server:message" for event in client_events))
 
     async def test_solo_command_with_only_attachment_uses_default_task(self) -> None:
@@ -259,6 +260,39 @@ class IMBridgeAttachmentTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(len(solo_calls), 1)
         self.assertIn("请结合附件执行任务", solo_calls[0][1])
         self.assertIn("附件列表", solo_calls[0][1])
+
+    async def test_solo_ack_is_sent_once_when_start_returns_ack(self) -> None:
+        fake = FakeIMAdapter()
+        bridge = IMBridge(
+            send_client=lambda *args: _record_async([], args),
+            handle_chat=lambda *args: _record_async([], args, result="chat"),
+            start_solo=lambda *args: _record_async([], args, result=IM_RECEIVED_ACK_TEXT),
+            solo_control=lambda *args: _record_async([], args, result="control"),
+            tool_decision=lambda *args: _record_async([], args, result="tool"),
+            attachment_store=FakeAttachmentStore(),
+        )
+        bridge._telegram_adapter = fake
+        bind_config_getter(
+            bridge,
+            lambda: AppConfig(
+                telegram=TelegramConfig(enabled=True, allowedUserIds=["42"])
+            ),
+        )
+
+        await bridge._handle_event(
+            IMEvent(
+                source=IMMessageSource(
+                    channel="telegram",
+                    chat_id="42",
+                    chat_type="private",
+                    user_id="42",
+                    message_id="11",
+                ),
+                text="/solo 打开记事本",
+            )
+        )
+
+        self.assertEqual([message.text for message in fake.sent], [IM_RECEIVED_ACK_TEXT])
 
 
 async def _record_async(target, args, result=None):

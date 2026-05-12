@@ -166,7 +166,7 @@ export const defaultSettings: AppSettings = {
     vlBaseUrl: "",
   },
   appearance: {
-    themeMode: "system",
+    themeMode: "light",
   },
   permissions: {
     mode: "default",
@@ -542,7 +542,7 @@ function createRestoredTraceMessage(params: {
 function createRestoredAssistantMessage(params: {
   requestId: string;
   id: string;
-  label: string;
+  label?: string;
   content: string;
   timestamp: string;
   status?: ChatMessage["status"];
@@ -730,7 +730,6 @@ function buildMessagesFromSoloRun(
   existingSteps: Set<number>,
 ) {
   const messages: ChatMessage[] = [];
-  const emittedAssistantSteps = new Set<number>();
 
   for (const record of records) {
     const event = asString(record.event);
@@ -787,12 +786,10 @@ function buildMessagesFromSoloRun(
         createRestoredAssistantMessage({
           requestId,
           id: `restored-solo-step-${safeIdPart(requestId)}-${step}`,
-          label: `第 ${step} 步`,
           content: decisionVisibleText(decision, action),
           timestamp,
         }),
       );
-      emittedAssistantSteps.add(step);
       messages.push(
         createRestoredTraceMessage({
           requestId,
@@ -843,18 +840,6 @@ function buildMessagesFromSoloRun(
         continue;
       }
       const action = asString(record.action) ?? "unknown";
-      if (step !== undefined && !emittedAssistantSteps.has(step)) {
-        messages.push(
-          createRestoredAssistantMessage({
-            requestId,
-            id: `restored-solo-action-${safeIdPart(requestId)}-${step}`,
-            label: `第 ${step} 步`,
-            content: `执行动作: ${action}`,
-            timestamp,
-          }),
-        );
-        emittedAssistantSteps.add(step);
-      }
       messages.push(
         createRestoredTraceMessage({
           requestId,

@@ -24,6 +24,7 @@ SoloControl = Callable[[str, str, str], Awaitable[str]]
 ToolDecision = Callable[[str, str, str], Awaitable[str]]
 ReplyAttachments = Callable[[str, str], list[AttachmentRef]]
 
+IM_RECEIVED_ACK_TEXT = "收到，开始处理。"
 
 HELP_TEXT = """openEagle IM 命令：
 /chat <内容> - 只进入 Chat 对话，不启动 SOLO
@@ -222,6 +223,16 @@ class IMBridge:
             return
 
         request_id = f"im-{uuid.uuid4()}"
+        command = parse_im_command(event.text, allow_empty_task=bool(event.attachments))
+        explicit_command = event.text.strip().startswith("/")
+        sent_ack = _should_send_processing_ack(
+            command.name,
+            explicit_command=explicit_command,
+            has_attachments=bool(event.attachments),
+        )
+        if sent_ack:
+            await self.send_text(binding.conversation_id, IM_RECEIVED_ACK_TEXT)
+
         attachments = await self._prepare_event_attachments(event, binding)
         await self._send_client(
             "server:external_user_message",
@@ -237,8 +248,6 @@ class IMBridge:
             },
         )
 
-        command = parse_im_command(event.text, allow_empty_task=bool(attachments))
-        explicit_command = event.text.strip().startswith("/")
         attachment_errors = [item for item in attachments if item.status == "error"]
         if attachment_errors:
             reply = _attachment_error_reply(attachment_errors)
@@ -270,13 +279,15 @@ class IMBridge:
             reply = HELP_TEXT
 
         emit_client_reply = command.name not in {"chat", "solo"} or bool(attachment_errors)
-        if reply.strip() or (self._reply_attachments is not None):
-            reply_attachments = (
-                self._reply_attachments(binding.conversation_id, request_id)
-                if self._reply_attachments is not None
-                else []
-            )
-            await self.send_text(binding.conversation_id, reply, reply_attachments)
+        reply_attachments = (
+            self._reply_attachments(binding.conversation_id, request_id)
+            if self._reply_attachments is not None
+            else []
+        )
+        duplicate_ack = sent_ack and reply.strip() == IM_RECEIVED_ACK_TEXT
+        outbound_text = "" if duplicate_ack else reply
+        if outbound_text.strip() or reply_attachments:
+            await self.send_text(binding.conversation_id, outbound_text, reply_attachments)
             if emit_client_reply:
                 await self._send_client(
                     "server:message",
@@ -478,6 +489,17 @@ def _attachment_error_reply(attachments: list[AttachmentRef]) -> str:
         for item in attachments
     ]
     return "附件处理失败，未调用模型。\n" + "\n".join(rows)
+
+
+def _should_send_processing_ack(
+    command_name: str,
+    *,
+    explicit_command: bool,
+    has_attachments: bool,
+) -> bool:
+    if command_name in {"chat", "solo"}:
+        return True
+    return has_attachments and not explicit_command
 
 
 def _provider_label(channel: str) -> str:
