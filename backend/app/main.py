@@ -35,6 +35,15 @@ from .models import (
 )
 from .runtime_state import RuntimeState
 from .safety import assess_solo_action, is_repairable_solo_block
+from .scheduler import SchedulerService, init_db, set_scheduler_service
+from .scheduler.store import (
+    create_task as scheduler_create_task,
+    delete_task as scheduler_delete_task,
+    get_history as scheduler_get_history,
+    get_task as scheduler_get_task,
+    list_tasks as scheduler_list_tasks,
+    update_task as scheduler_update_task,
+)
 from .solo_capabilities import SoloCapabilityRuntime
 from .solo_executor import SoloExecutor
 from .solo_kernel import SoloAgentKernel, action_signature
@@ -49,6 +58,7 @@ runtime_state.update_config(config)
 workspace_root = Path(__file__).resolve().parents[2]
 attachment_store = AttachmentStore(workspace_root)
 confirmed_tool_results: dict[str, str] = {}
+scheduler_service: SchedulerService | None = None
 ATTACHMENT_WS_MAX_SIZE = 192 * 1024 * 1024
 PARENT_PID_ENV = "OPEN_EAGLE_PARENT_PID"
 WINDOWS_SYNCHRONIZE = 0x00100000
@@ -133,6 +143,12 @@ def solo_stability_summary(session: SoloSessionState, final_reason: str) -> dict
 
 @app.on_event("startup")
 async def announce_ready() -> None:
+    global scheduler_service
+    db_path = workspace_root / ".open-eagle" / "scheduler.db"
+    init_db(db_path)
+    scheduler_service = SchedulerService(config_getter=runtime_state.get_config)
+    set_scheduler_service(scheduler_service)
+    scheduler_service.start()
     port = getattr(app.state, "ws_port", None)
     if port is not None:
         print(f"[AGENT_READY] WS_PORT: {port}", flush=True)
@@ -1401,6 +1417,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         schedule_solo_task(_execute_confirmed_and_continue())
         return "已允许危险动作，桌面执行会继续推进。"
 
+    if scheduler_service is not None:
+        scheduler_service._send_event = safe_send
+
     agent_runtime = AgentRuntime(
         config_getter=runtime_state.get_config,
         confirmation_store=tool_confirmations,
@@ -1883,6 +1902,80 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     envelope.request_id,
                     envelope.conversation_id,
                     ErrorPayload(message=f"不支持的桌面执行控制动作: {control.action}", code="solo_unsupported_control").model_dump(),
+                )
+                continue
+
+            if envelope.type == "client:scheduled_task_list":
+                tasks = scheduler_list_tasks()
+                await safe_send(
+                    "server:scheduled_tasks",
+                    envelope.request_id,
+                    envelope.conversation_id,
+                    {
+                        "tasks": [
+                            t.model_dump(by_alias=True, exclude_none=True) for t in tasks
+                        ]
+                    },
+                )
+                continue
+
+            if envelope.type == "client:scheduled_task_create":
+                from .scheduler.models import ScheduledTask
+
+                task = ScheduledTask.model_validate(envelope.payload.get("task", {}))
+                scheduler_create_task(task)
+                if scheduler_service is not None:
+                    scheduler_service.add_task(task)
+                await safe_send(
+                    "server:scheduled_task_created",
+                    envelope.request_id,
+                    envelope.conversation_id,
+                    {"task": task.model_dump(by_alias=True, exclude_none=True)},
+                )
+                continue
+
+            if envelope.type == "client:scheduled_task_update":
+                from .scheduler.models import ScheduledTask
+
+                task = ScheduledTask.model_validate(envelope.payload.get("task", {}))
+                scheduler_update_task(task)
+                if scheduler_service is not None:
+                    scheduler_service.update_task(task)
+                await safe_send(
+                    "server:scheduled_task_updated",
+                    envelope.request_id,
+                    envelope.conversation_id,
+                    {"task": task.model_dump(by_alias=True, exclude_none=True)},
+                )
+                continue
+
+            if envelope.type == "client:scheduled_task_delete":
+                task_id = str(envelope.payload.get("taskId", ""))
+                if scheduler_service is not None:
+                    scheduler_service.remove_task(task_id)
+                scheduler_delete_task(task_id)
+                await safe_send(
+                    "server:scheduled_task_deleted",
+                    envelope.request_id,
+                    envelope.conversation_id,
+                    {"taskId": task_id},
+                )
+                continue
+
+            if envelope.type == "client:scheduled_task_history":
+                task_id = str(envelope.payload.get("taskId", ""))
+                executions = scheduler_get_history(task_id)
+                await safe_send(
+                    "server:scheduled_task_history",
+                    envelope.request_id,
+                    envelope.conversation_id,
+                    {
+                        "taskId": task_id,
+                        "executions": [
+                            e.model_dump(by_alias=True, exclude_none=True)
+                            for e in executions
+                        ],
+                    },
                 )
                 continue
 

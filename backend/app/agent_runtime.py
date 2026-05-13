@@ -110,7 +110,7 @@ class AgentRuntime:
             decision.worker_kind = "general"
             decision.task_brief = enhanced_content
             decision.task_title = decision.task_title or "处理附件"
-            decision.user_visible_summary = "已转交 general worker 处理本轮附件。"
+            decision.user_visible_summary = "我来处理这个附件。"
         await self._send_trace(
             request_id,
             conversation_id,
@@ -129,11 +129,13 @@ class AgentRuntime:
 
         try:
             if decision.route == "answer_directly":
-                reply = await self._direct_answer(
-                    conversation_id=conversation_id,
-                    content=content,
-                    config=config,
-                )
+                reply = decision.answer.strip()
+                if not reply:
+                    reply = await self._direct_answer(
+                        conversation_id=conversation_id,
+                        content=content,
+                        config=config,
+                    )
             elif decision.route == "clarify":
                 reply = decision.user_visible_summary or "我需要先确认一下你的具体目标。"
             elif decision.route == "start_solo":
@@ -162,6 +164,9 @@ class AgentRuntime:
             request_id,
         )
         payload: dict[str, Any] = {"content": reply}
+        if decision.route == "answer_directly":
+            payload["route"] = decision.route
+            payload["answer"] = reply
         if reply_attachments:
             payload["attachments"] = self._attachment_store.public_dicts(reply_attachments)
         await self._send_event("server:message", request_id, conversation_id, payload)

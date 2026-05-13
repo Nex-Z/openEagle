@@ -374,3 +374,31 @@ export interface ErrorPayload {
   message: string;
   code?: string;
 }
+
+export interface ScheduledTask {
+  id: string;
+  name: string;
+  prompt: string;
+  scheduleExpr: string;
+  scheduleType: "cron" | "interval" | "date";
+  enabled: boolean;
+  workerKind: "general" | "coding" | "research" | "solo";
+  conversationId?: string;
+  imChannel?: string;
+  imChatId?: string;
+  createdAt: string;
+  updatedAt: string;
+  nextRunAt?: string;
+  lastRunAt?: string;
+}
+
+export interface ScheduledTaskExecution {
+  id: string;
+  taskId: string;
+  status: "running" | "completed" | "failed";
+  result?: string;
+  error?: string;
+  startedAt: string;
+  completedAt?: string;
+  conversationId?: string;
+}

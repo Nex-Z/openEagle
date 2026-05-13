@@ -18,6 +18,7 @@ from .command_runner import execute_workspace_command
 from .config import ToolConfig
 from .confirmations import PendingToolConfirmation, ToolConfirmationStore
 from .safety import BlockedActionError, assess_tool_action, resolve_workspace_path
+from .scheduler.tools import create_scheduled_task
 
 DEFAULT_MAX_CHARS = 12_000
 DEFAULT_MAX_SEARCH_RESULTS = 50
@@ -414,6 +415,7 @@ class OpenEagleDefaultTools(Toolkit):
             self.apply_text_edits,
             self.run_command,
             self.attach_file_to_reply,
+            self.create_scheduled_task,
         ]
         instructions_parts = [
             "你可以使用内置默认工具执行工作区内的常用操作：查看文件信息、浏览目录、"
@@ -989,6 +991,52 @@ class OpenEagleDefaultTools(Toolkit):
         except (AttachmentError, BlockedActionError) as exc:
             return f"Error: {exc}"
         return f"已登记回复附件: {attachment.name} ({attachment.size} bytes)"
+
+    def create_scheduled_task(
+        self,
+        name: str,
+        prompt: str,
+        schedule_expr: str,
+        worker_kind: str = "general",
+    ) -> str:
+        """创建一个定时任务，系统会在指定时间自动执行，不需要你现在动手做。
+
+        使用示例（每天重复）：
+          create_scheduled_task(
+              name="每日新闻汇总",
+              prompt="搜索今天的热门新闻并生成简洁摘要",
+              schedule_expr="0 20 * * *",
+              worker_kind="research"
+          )
+
+        使用示例（今天下午四点半一次性）：
+          create_scheduled_task(
+              name="今日热门消息汇总",
+              prompt="搜索今天的热门新闻并生成简洁摘要",
+              schedule_expr="30 16 13 5 *",
+              worker_kind="research"
+          )
+
+        Args:
+            name: 任务名称，如"每日新闻汇总"。
+            prompt: 任务到点后自动执行的完整指令。所有需要在那个时间点做的事都写在这里，
+                    系统会拿着这个指令去执行，你不需要现在就去搜索或准备内容。
+            schedule_expr: Cron 表达式。"分 时 日 月 周"。
+                每天20:00 = "0 20 * * *"
+                今天下午16:30 = "30 16 13 5 *"（假设今天是5月13日）
+                每周五17:00 = "0 17 * * 5"
+            worker_kind: 使用哪种 worker 执行：general、coding、research、solo。
+
+        Returns:
+            str: 创建结果，包含任务 ID 和下次执行时间。
+        """
+        return create_scheduled_task(
+            name=name,
+            prompt=prompt,
+            schedule_expr=schedule_expr,
+            worker_kind=worker_kind,
+            conversation_id=self.conversation_id,
+        )
 
 
 def build_default_tools(

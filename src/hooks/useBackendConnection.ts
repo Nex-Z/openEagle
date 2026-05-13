@@ -13,6 +13,8 @@ import type {
   Envelope,
   ErrorPayload,
   IMStatusPayload,
+  ScheduledTask,
+  ScheduledTaskExecution,
   SoloConfirmationPayload,
   SoloDisplayOption,
   SoloControlPayload,
@@ -248,6 +250,10 @@ export function useBackendConnection(
   >({});
   const [wechatBindStatus, setWechatBindStatus] =
     useState<WechatBindStatusPayload | null>(null);
+  const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([]);
+  const [scheduledTaskHistory, setScheduledTaskHistory] = useState<
+    Record<string, ScheduledTaskExecution[]>
+  >({});
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
@@ -519,6 +525,8 @@ export function useBackendConnection(
       const envelope = JSON.parse(event.data) as Envelope<
         {
           content?: string;
+          answer?: string;
+          route?: string;
           attachments?: AttachmentRef[];
           detail?: string;
           trace?: AgentExecutionTrace;
@@ -539,6 +547,13 @@ export function useBackendConnection(
           qrcodeUrl?: string;
           accountId?: string;
           userId?: string;
+          tasks?: ScheduledTask[];
+          task?: ScheduledTask;
+          taskId?: string;
+          executions?: ScheduledTaskExecution[];
+          taskName?: string;
+          result?: string;
+          error?: string;
         } & ErrorPayload &
           StatusPayload
       >;
@@ -630,12 +645,17 @@ export function useBackendConnection(
       if (envelope.type === "server:message") {
         patchMessages((current) =>
           upsertAssistantMessage(current, envelope.requestId, (message) => {
+            const visibleContent =
+              envelope.payload.route === "answer_directly" && envelope.payload.answer
+                ? envelope.payload.answer
+                : envelope.payload.content;
             const blocks = cloneAssistantBlocks(message);
-            if (blocks.length === 0 && envelope.payload.content) {
-              blocks.push({
+            const hasTextBlock = blocks.some((b) => b.kind === "text");
+            if (!hasTextBlock && visibleContent) {
+              blocks.unshift({
                 id: createId("blk"),
                 kind: "text",
-                content: envelope.payload.content,
+                content: visibleContent,
                 status: "done",
               });
             }
@@ -646,7 +666,7 @@ export function useBackendConnection(
               }
             }
 
-            const content = collectAssistantContent(blocks) || envelope.payload.content || "";
+            const content = collectAssistantContent(blocks) || visibleContent || "";
             return {
               id: message?.id ?? createId("assistant"),
               requestId: envelope.requestId,
@@ -988,6 +1008,58 @@ export function useBackendConnection(
         return;
       }
 
+      if (envelope.type === "server:scheduled_tasks") {
+        const tasks = (envelope.payload.tasks ?? []) as ScheduledTask[];
+        setScheduledTasks(tasks);
+        return;
+      }
+
+      if (envelope.type === "server:scheduled_task_created") {
+        const task = envelope.payload.task as ScheduledTask | undefined;
+        if (task) {
+          setScheduledTasks((current) => [task, ...current]);
+        }
+        return;
+      }
+
+      if (envelope.type === "server:scheduled_task_updated") {
+        const task = envelope.payload.task as ScheduledTask | undefined;
+        if (task) {
+          setScheduledTasks((current) =>
+            current.map((t) => (t.id === task.id ? task : t)),
+          );
+        }
+        return;
+      }
+
+      if (envelope.type === "server:scheduled_task_deleted") {
+        const taskId = envelope.payload.taskId as string;
+        setScheduledTasks((current) => current.filter((t) => t.id !== taskId));
+        return;
+      }
+
+      if (envelope.type === "server:scheduled_task_history") {
+        const taskId = envelope.payload.taskId as string;
+        const executions = (envelope.payload.executions ?? []) as ScheduledTaskExecution[];
+        setScheduledTaskHistory((current) => ({ ...current, [taskId]: executions }));
+        return;
+      }
+
+      if (envelope.type === "server:scheduled_task_executed") {
+        const taskName = (envelope.payload.taskName as string) ?? "定时任务";
+        const result = (envelope.payload.result as string) ?? "";
+        const error = envelope.payload.error as string | undefined;
+        appendEnvelopeMessage({
+          requestId: envelope.requestId,
+          role: "assistant",
+          label: "定时任务执行结果",
+          content: `【${taskName}】\n\n${error ?? result}`,
+          createdAt: envelope.timestamp,
+          status: error ? "error" : "done",
+        });
+        return;
+      }
+
       if (envelope.type === "server:error") {
         setStatusLine("后端服务异常");
         setStatusDetail(
@@ -1212,6 +1284,36 @@ export function useBackendConnection(
     return true;
   };
 
+  const sendScheduledTaskMessage = (
+    type: string,
+    payload: Record<string, unknown>,
+  ) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+    const envelope: Envelope<Record<string, unknown>> = {
+      type: type as Envelope<unknown>["type"],
+      requestId: createId("scheduled"),
+      conversationId,
+      payload,
+      timestamp: new Date().toISOString(),
+    };
+    socket.send(JSON.stringify(envelope));
+    return true;
+  };
+
+  const requestScheduledTasks = () =>
+    sendScheduledTaskMessage("client:scheduled_task_list", {});
+  const createScheduledTask = (task: Omit<ScheduledTask, "id" | "createdAt" | "updatedAt">) =>
+    sendScheduledTaskMessage("client:scheduled_task_create", { task });
+  const updateScheduledTask = (task: ScheduledTask) =>
+    sendScheduledTaskMessage("client:scheduled_task_update", { task });
+  const deleteScheduledTask = (taskId: string) =>
+    sendScheduledTaskMessage("client:scheduled_task_delete", { taskId });
+  const requestScheduledTaskHistory = (taskId: string) =>
+    sendScheduledTaskMessage("client:scheduled_task_history", { taskId });
+
   return {
     backend,
     messages,
@@ -1243,5 +1345,12 @@ export function useBackendConnection(
     rejectToolConfirmation: () => sendToolConfirmation("reject"),
     overlayVisible,
     setOverlayVisible,
+    scheduledTasks,
+    scheduledTaskHistory,
+    requestScheduledTasks,
+    createScheduledTask,
+    updateScheduledTask,
+    deleteScheduledTask,
+    requestScheduledTaskHistory,
   };
 }

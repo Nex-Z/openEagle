@@ -152,5 +152,30 @@ class SoloConfirmationPayload(BaseModel):
     }
 
 
+class ScheduledTaskPayload(BaseModel):
+    task: dict[str, Any]
+
+    model_config = {
+        "populate_by_name": True,
+    }
+
+
+class ScheduledTaskListPayload(BaseModel):
+    tasks: list[dict[str, Any]]
+
+    model_config = {
+        "populate_by_name": True,
+    }
+
+
+class ScheduledTaskHistoryPayload(BaseModel):
+    task_id: str = Field(alias="taskId")
+    executions: list[dict[str, Any]]
+
+    model_config = {
+        "populate_by_name": True,
+    }
+
+
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()

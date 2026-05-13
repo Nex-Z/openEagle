@@ -1,10 +1,11 @@
 from __future__ import annotations
 
-import sys
 import asyncio
 import hashlib
 import inspect
+import json
 import os
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -17,6 +18,7 @@ from app.confirmations import ToolConfirmationStore
 from app.default_tools import build_configured_tool_functions, build_default_tools
 from app.prompts import (
     build_chat_instructions,
+    build_main_router_instructions,
     build_main_router_prompt,
     build_solo_decision_prompt,
     build_solo_repair_prompt,
@@ -938,6 +940,23 @@ class SoloAgentKernelTest(unittest.TestCase):
 
 
 class AgentRouterTest(unittest.TestCase):
+    def _model_route_payload(self, **overrides: object) -> str:
+        payload = {
+            "route": "delegate_new",
+            "worker_kind": "general",
+            "task_title": "用户请求",
+            "task_brief": "完成用户请求",
+            "success_criteria": ["完成用户请求"],
+            "requires_write": False,
+            "requires_gui": False,
+            "target_worker_id": None,
+            "answer": "",
+            "user_visible_summary": "我来处理。",
+            "context_summary": "",
+        }
+        payload.update(overrides)
+        return json.dumps(payload, ensure_ascii=False)
+
     def test_router_parse_accepts_json_wrapper(self) -> None:
         decision = AgentRouter.parse(
             '路由如下：{"route":"delegate_new","task_title":"改 README",'
@@ -955,6 +974,106 @@ class AgentRouterTest(unittest.TestCase):
         decision = AgentRouter.parse("not json", "解释一下项目结构")
 
         self.assertEqual(decision.route, "delegate_new")
+        self.assertEqual(decision.worker_kind, "general")
+
+    def test_router_parse_accepts_principle_routing_cases(self) -> None:
+        cases = [
+            (
+                "你好，你是谁？",
+                {
+                    "route": "answer_directly",
+                    "worker_kind": "general",
+                    "task_title": "介绍自己",
+                    "task_brief": "直接回答用户身份问题",
+                    "success_criteria": ["用户知道 openEagle 可以做什么"],
+                    "answer": "我是 openEagle，可以直接聊，也能在需要时调度执行。",
+                    "user_visible_summary": "",
+                },
+                ("answer_directly", "general", False),
+            ),
+            (
+                "明天下午四点把行业新闻整理给我",
+                {
+                    "route": "delegate_new",
+                    "worker_kind": "general",
+                    "task_title": "明天下午整理行业新闻",
+                    "task_brief": "创建持久化任务：明天下午四点整理行业新闻并提供给用户",
+                    "success_criteria": ["已创建按时执行的持久化任务"],
+                },
+                ("delegate_new", "general", False),
+            ),
+            (
+                "现在搜索今天的行业新闻",
+                {
+                    "route": "delegate_new",
+                    "worker_kind": "research",
+                    "task_title": "查询今天行业新闻",
+                    "task_brief": "检索并汇总今天的行业新闻",
+                    "success_criteria": ["提供今天行业新闻汇总"],
+                },
+                ("delegate_new", "research", False),
+            ),
+            (
+                "看一下当前窗口，把登录表单填好",
+                {
+                    "route": "start_solo",
+                    "worker_kind": "solo",
+                    "task_title": "填写当前窗口登录表单",
+                    "task_brief": "查看当前屏幕并填写登录表单",
+                    "success_criteria": ["登录表单已按用户意图填写"],
+                    "requires_gui": True,
+                },
+                ("start_solo", "solo", True),
+            ),
+            (
+                "把这个处理一下",
+                {
+                    "route": "clarify",
+                    "worker_kind": "general",
+                    "task_title": "澄清任务目标",
+                    "task_brief": "询问用户希望处理的对象和目标",
+                    "success_criteria": ["获得足够执行的信息"],
+                },
+                ("clarify", "general", False),
+            ),
+        ]
+
+        for content, payload_overrides, expected in cases:
+            with self.subTest(content=content):
+                decision = AgentRouter.parse(
+                    self._model_route_payload(**payload_overrides),
+                    content,
+                )
+
+                self.assertEqual(decision.route, expected[0])
+                self.assertEqual(decision.worker_kind, expected[1])
+                self.assertEqual(decision.requires_gui, expected[2])
+
+        direct = AgentRouter.parse(
+            self._model_route_payload(
+                route="answer_directly",
+                worker_kind="general",
+                answer="我是 openEagle，可以直接聊，也能在需要时调度执行。",
+                user_visible_summary="",
+            ),
+            "你是谁？",
+        )
+        self.assertEqual(direct.answer, "我是 openEagle，可以直接聊，也能在需要时调度执行。")
+        self.assertEqual(direct.user_visible_summary, "")
+
+    def test_router_parse_does_not_rewrite_incomplete_schedule_intent(self) -> None:
+        decision = AgentRouter.parse(
+            self._model_route_payload(
+                route="clarify",
+                worker_kind="general",
+                task_title="澄清提醒内容",
+                task_brief="询问用户希望提醒的具体事项",
+                success_criteria=["获得提醒事项后再创建持久化任务"],
+            ),
+            "明天下午提醒我",
+        )
+
+        self.assertEqual(decision.route, "clarify")
         self.assertEqual(decision.worker_kind, "general")
 
     def test_router_prefers_solo_for_im_default(self) -> None:
@@ -976,6 +1095,30 @@ class AgentRouterTest(unittest.TestCase):
 
         self.assertIn(task.worker_id, prompt)
         self.assertIn("preferred_mode", prompt)
+
+    def test_main_router_prompt_uses_principles_not_marker_fallbacks(self) -> None:
+        instructions = "\n".join(build_main_router_instructions())
+        prompt = build_main_router_prompt("conv", "明天下午四点把行业新闻整理给我")
+
+        self.assertIn("worker 选择依据任务所需能力", instructions)
+        self.assertIn("时间意图优先级", instructions)
+        self.assertIn("clarify 仅用于：执行后无法撤销", instructions)
+        self.assertIn("不确定但可以合理假设", instructions)
+        self.assertIn("preferred_mode=solo 时，如果任务涉及桌面状态感知或 GUI 操作", instructions)
+        self.assertIn("按实际能力选 worker，忽略 preferred_mode", instructions)
+        self.assertIn("context_summary 只填写 router 层才知道", instructions)
+        self.assertIn("success_criteria 只写对 worker 有实际约束意义", instructions)
+        self.assertIn("requires_write 与 requires_gui 是意图 hint", instructions)
+        self.assertIn("user_visible_summary 使用第一人称口语", instructions)
+        self.assertIn("当 route=answer_directly 时，将回复写入 answer 字段", instructions)
+        self.assertIn("非即时的时间安排", prompt)
+        self.assertIn('"answer": "route=answer_directly 时的直接回复；其他 route 为空字符串"', prompt)
+        self.assertEqual(prompt.count("用户说\""), 4)
+        self.assertNotIn("缺少关键执行信息且无法合理推进", instructions)
+        self.assertNotIn("当本轮不是纯聊天", instructions)
+        self.assertNotIn('"user_visible_summary":"将', prompt)
+        self.assertNotIn("将交给 research worker", prompt)
+        self.assertNotIn("点帮我", instructions + prompt)
 
 
 class SubAgentManagerTest(unittest.TestCase):
@@ -1121,6 +1264,72 @@ class AgentRuntimeTest(unittest.TestCase):
 
         self.assertEqual(reply, "AI 生成的自然回复")
         self.assertEqual(model_calls, [("conv", "你好", "openai")])
+
+    def test_runtime_prefers_router_answer_for_direct_reply(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+
+        async def send_event(
+            type_: str,
+            request_id: str,
+            conversation_id: str,
+            payload: dict[str, object],
+        ) -> None:
+            _ = (request_id, conversation_id)
+            events.append((type_, payload))
+
+        async def start_solo(conversation_id: str, task: str, request_id: str) -> str:
+            _ = (conversation_id, task, request_id)
+            return "solo started"
+
+        async def solo_control(conversation_id: str, request_id: str, action: str) -> str:
+            _ = (conversation_id, request_id, action)
+            return "solo control"
+
+        runtime = AgentRuntime(
+            config_getter=lambda: AppConfig(
+                agent=AgentConfig(provider="openai", api_key="test-key"),
+            ),
+            confirmation_store=ToolConfirmationStore(),
+            confirmed_tool_results={},
+            send_event=send_event,
+            start_solo=start_solo,
+            solo_control=solo_control,
+        )
+
+        async def fake_route(*args, **kwargs):
+            _ = (args, kwargs)
+            return AgentRouter.parse(
+                json.dumps(
+                    {
+                        "route": "answer_directly",
+                        "answer": "我是 openEagle，可以直接聊，也能调度执行。",
+                        "task_title": "介绍 openEagle",
+                        "task_brief": "",
+                        "success_criteria": [],
+                        "worker_kind": "general",
+                        "target_worker_id": None,
+                        "requires_write": False,
+                        "requires_gui": False,
+                        "user_visible_summary": "",
+                        "context_summary": "",
+                    },
+                    ensure_ascii=False,
+                ),
+                "你是谁？",
+            )
+
+        async def fail_model_reply(conversation_id: str, content: str, config: AppConfig) -> str:
+            _ = (conversation_id, content, config)
+            raise AssertionError("direct answer model should not be called")
+
+        runtime._direct_answer_with_model = fail_model_reply  # type: ignore[method-assign]
+        with patch.object(AgentRouter, "route", fake_route):
+            reply = asyncio.run(runtime.handle_user_message("conv", "req", "你是谁？"))
+
+        self.assertEqual(reply, "我是 openEagle，可以直接聊，也能调度执行。")
+        messages = [payload for type_, payload in events if type_ == "server:message"]
+        self.assertEqual(messages[-1]["route"], "answer_directly")
+        self.assertEqual(messages[-1]["answer"], "我是 openEagle，可以直接聊，也能调度执行。")
 
 
 class SoloStabilityTest(unittest.TestCase):

@@ -237,6 +237,13 @@ export default function App() {
     rejectDangerousStep,
     allowToolConfirmation,
     rejectToolConfirmation,
+    scheduledTasks,
+    scheduledTaskHistory,
+    requestScheduledTasks,
+    createScheduledTask,
+    updateScheduledTask,
+    deleteScheduledTask,
+    requestScheduledTaskHistory,
   } = useBackendConnection(
     activeConversationId,
     settings,
@@ -592,6 +599,8 @@ export default function App() {
       <SettingsDrawer
         activeSection={settingsSection}
         imStatuses={imStatuses}
+        scheduledTasks={scheduledTasks}
+        scheduledTaskHistory={scheduledTaskHistory}
         onCancelWechatBind={cancelWechatBind}
         onChange={setSettings}
         onClose={() => setSettingsDrawerOpen(false)}
@@ -599,6 +608,11 @@ export default function App() {
         onSectionChange={setSettingsSection}
         onStartWechatBind={startWechatBind}
         onUnbindWechat={unbindWechat}
+        onRequestScheduledTasks={requestScheduledTasks}
+        onCreateScheduledTask={createScheduledTask}
+        onUpdateScheduledTask={updateScheduledTask}
+        onDeleteScheduledTask={deleteScheduledTask}
+        onRequestScheduledTaskHistory={requestScheduledTaskHistory}
         open={settingsDrawerOpen}
         settings={settings}
         soloDisplays={soloDisplays}

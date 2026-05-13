@@ -31,6 +31,7 @@ WorkerState = Literal[
 
 class AgentRouteDecision(BaseModel):
     route: RouteName = "delegate_new"
+    answer: str = Field(default="", alias="answer")
     task_title: str = Field(default="", alias="task_title")
     task_brief: str = Field(default="", alias="task_brief")
     success_criteria: list[str] = Field(default_factory=list, alias="success_criteria")

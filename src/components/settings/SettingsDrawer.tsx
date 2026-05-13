@@ -7,6 +7,8 @@ import type {
   AppSettings,
   IMStatusPayload,
   McpServerConfig,
+  ScheduledTask,
+  ScheduledTaskExecution,
   SkillConfig,
   SoloDisplayOption,
   ToolConfig,
@@ -21,7 +23,8 @@ export type SettingsSection =
   | "solo"
   | "tools"
   | "mcp"
-  | "skills";
+  | "skills"
+  | "scheduled_tasks";
 
 interface SettingsDrawerProps {
   open: boolean;
@@ -30,10 +33,17 @@ interface SettingsDrawerProps {
   soloDisplays: SoloDisplayOption[];
   imStatuses: Partial<Record<IMStatusPayload["provider"], IMStatusPayload>>;
   wechatBindStatus: WechatBindStatusPayload | null;
+  scheduledTasks: ScheduledTask[];
+  scheduledTaskHistory: Record<string, ScheduledTaskExecution[]>;
   onRefreshSoloDisplays: () => boolean;
   onStartWechatBind: (force?: boolean) => boolean;
   onCancelWechatBind: () => boolean;
   onUnbindWechat: () => boolean;
+  onRequestScheduledTasks: () => boolean;
+  onCreateScheduledTask: (task: Omit<ScheduledTask, "id" | "createdAt" | "updatedAt">) => boolean;
+  onUpdateScheduledTask: (task: ScheduledTask) => boolean;
+  onDeleteScheduledTask: (taskId: string) => boolean;
+  onRequestScheduledTaskHistory: (taskId: string) => boolean;
   onChange: (settings: AppSettings) => void;
   onClose: () => void;
   onSectionChange: (section: SettingsSection) => void;
@@ -51,6 +61,7 @@ const sectionMeta: Array<{
   { id: "tools", title: "Tools", summary: "本地工具入口。" },
   { id: "mcp", title: "MCP", summary: "MCP Server 配置。" },
   { id: "skills", title: "Skills", summary: "提示技能配置。" },
+  { id: "scheduled_tasks", title: "定时任务", summary: "自动执行的任务管理与历史。" },
 ];
 
 function createToolConfig(): ToolConfig {
@@ -212,10 +223,17 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
     soloDisplays,
     imStatuses,
     wechatBindStatus,
+    scheduledTasks,
+    scheduledTaskHistory,
     onRefreshSoloDisplays,
     onStartWechatBind,
     onCancelWechatBind,
     onUnbindWechat,
+    onRequestScheduledTasks,
+    onCreateScheduledTask,
+    onUpdateScheduledTask,
+    onDeleteScheduledTask,
+    onRequestScheduledTaskHistory,
     onChange,
     onClose,
     onSectionChange,
@@ -223,6 +241,10 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
   const [expandedToolId, setExpandedToolId] = useState<string | null>(null);
   const [expandedMcpId, setExpandedMcpId] = useState<string | null>(null);
   const [expandedSkillId, setExpandedSkillId] = useState<string | null>(null);
+  const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  const [taskFormOpen, setTaskFormOpen] = useState(false);
+  const [editingTask, setEditingTask] = useState<ScheduledTask | null>(null);
+  const [historyTaskId, setHistoryTaskId] = useState<string | null>(null);
   const [previewDataUrls, setPreviewDataUrls] = useState<Record<string, string>>({});
   const [failedPreviews, setFailedPreviews] = useState<Set<string>>(new Set());
   const [wechatQrDataUrl, setWechatQrDataUrl] = useState<string | null>(null);
@@ -233,7 +255,10 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
     if (open && activeSection === "solo") {
       onRefreshSoloDisplays();
     }
-  }, [activeSection, onRefreshSoloDisplays, open]);
+    if (open && activeSection === "scheduled_tasks") {
+      onRequestScheduledTasks();
+    }
+  }, [activeSection, onRefreshSoloDisplays, onRequestScheduledTasks, open]);
 
   useEffect(() => {
     const displaysChanged =
@@ -1317,9 +1342,226 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                 </section>
               </div>
             ) : null}
+
+            {activeSection === "scheduled_tasks" ? (
+              <div className="settings-stack">
+                <section className="settings-panel">
+                  <div className="settings-panel-head">
+                    <div>
+                      <span className="card-kicker">Scheduled</span>
+                      <strong>定时任务列表</strong>
+                    </div>
+                    <button
+                      className="ghost-button"
+                      onClick={() => {
+                        setEditingTask(null);
+                        setTaskFormOpen(true);
+                      }}
+                      type="button"
+                    >
+                      新增任务
+                    </button>
+                  </div>
+
+                  {taskFormOpen ? (
+                    <ScheduledTaskForm
+                      task={editingTask}
+                      onSave={(data) => {
+                        if (editingTask) {
+                          onUpdateScheduledTask({ ...editingTask, ...data });
+                        } else {
+                          onCreateScheduledTask(data);
+                        }
+                        setTaskFormOpen(false);
+                        setEditingTask(null);
+                      }}
+                      onCancel={() => {
+                        setTaskFormOpen(false);
+                        setEditingTask(null);
+                      }}
+                    />
+                  ) : null}
+
+                  <div className="config-list">
+                    {scheduledTasks.length === 0 ? (
+                      <div className="form-hint">暂无定时任务。</div>
+                    ) : null}
+                    {scheduledTasks.map((task) => (
+                      <ConfigListItem
+                        key={task.id}
+                        enabled={task.enabled}
+                        expanded={expandedTaskId === task.id}
+                        onDelete={() => onDeleteScheduledTask(task.id)}
+                        onToggleEnabled={(value) =>
+                          onUpdateScheduledTask({ ...task, enabled: value })
+                        }
+                        onToggleExpanded={() => {
+                          const next = expandedTaskId === task.id ? null : task.id;
+                          setExpandedTaskId(next);
+                          if (next) {
+                            onRequestScheduledTaskHistory(task.id);
+                            setHistoryTaskId(task.id);
+                          }
+                        }}
+                        subtitle={`${task.scheduleExpr} · ${task.workerKind}`}
+                        title={task.name || "未命名任务"}
+                      >
+                        <label className="form-field">
+                          <span>名称</span>
+                          <input
+                            value={task.name}
+                            onChange={(e) =>
+                              onUpdateScheduledTask({ ...task, name: e.target.value })
+                            }
+                          />
+                        </label>
+                        <label className="form-field">
+                          <span>执行指令</span>
+                          <textarea
+                            className="form-textarea"
+                            value={task.prompt}
+                            onChange={(e) =>
+                              onUpdateScheduledTask({ ...task, prompt: e.target.value })
+                            }
+                          />
+                        </label>
+                        <label className="form-field">
+                          <span>调度表达式 (Cron)</span>
+                          <input
+                            value={task.scheduleExpr}
+                            onChange={(e) =>
+                              onUpdateScheduledTask({ ...task, scheduleExpr: e.target.value })
+                            }
+                          />
+                          <span className="form-hint">
+                            如 0 20 * * * 表示每天20:00执行
+                          </span>
+                        </label>
+                        <label className="form-field">
+                          <span>Worker 类型</span>
+                          <select
+                            value={task.workerKind}
+                            onChange={(e) =>
+                              onUpdateScheduledTask({
+                                ...task,
+                                workerKind: e.target.value as ScheduledTask["workerKind"],
+                              })
+                            }
+                          >
+                            <option value="general">general</option>
+                            <option value="coding">coding</option>
+                            <option value="research">research</option>
+                            <option value="solo">solo</option>
+                          </select>
+                        </label>
+                        <div className="form-hint">
+                          {task.nextRunAt ? (
+                            <span>下次执行: {new Date(task.nextRunAt).toLocaleString()}</span>
+                          ) : null}
+                          {task.lastRunAt ? (
+                            <span>上次执行: {new Date(task.lastRunAt).toLocaleString()}</span>
+                          ) : null}
+                        </div>
+                        {historyTaskId === task.id ? (
+                          <ScheduledTaskHistory
+                            executions={scheduledTaskHistory[task.id] ?? []}
+                          />
+                        ) : null}
+                      </ConfigListItem>
+                    ))}
+                  </div>
+                </section>
+              </div>
+            ) : null}
           </div>
         </div>
       </aside>
     </>
+  );
+}
+
+function ScheduledTaskForm(props: {
+  task: ScheduledTask | null;
+  onSave: (data: Omit<ScheduledTask, "id" | "createdAt" | "updatedAt">
+) => void;
+  onCancel: () => void;
+}) {
+  const { task, onSave, onCancel } = props;
+  const [name, setName] = useState(task?.name ?? "");
+  const [prompt, setPrompt] = useState(task?.prompt ?? "");
+  const [scheduleExpr, setScheduleExpr] = useState(task?.scheduleExpr ?? "0 20 * * *");
+  const [workerKind, setWorkerKind] = useState<ScheduledTask["workerKind"]>(
+    task?.workerKind ?? "general",
+  );
+
+  return (
+    <div className="config-row-body" style={{ marginBottom: 12 }}>
+      <label className="form-field">
+        <span>任务名称</span>
+        <input value={name} onChange={(e) => setName(e.target.value)} />
+      </label>
+      <label className="form-field">
+        <span>执行指令</span>
+        <textarea
+          className="form-textarea"
+          value={prompt}
+          onChange={(e) => setPrompt(e.target.value)}
+          placeholder="如：搜索今天的重要新闻并生成摘要"
+        />
+      </label>
+      <label className="form-field">
+        <span>调度表达式 (Cron)</span>
+        <input
+          value={scheduleExpr}
+          onChange={(e) => setScheduleExpr(e.target.value)}
+        />
+        <span className="form-hint">如 0 20 * * * 表示每天20:00执行</span>
+      </label>
+      <label className="form-field">
+        <span>Worker 类型</span>
+        <select value={workerKind} onChange={(e) => setWorkerKind(e.target.value as ScheduledTask["workerKind"])}>
+          <option value="general">general</option>
+          <option value="coding">coding</option>
+          <option value="research">research</option>
+          <option value="solo">solo</option>
+        </select>
+      </label>
+      <div className="inline-actions">
+        <button
+          className="ghost-button"
+          onClick={() =>
+            onSave({ name, prompt, scheduleExpr, workerKind, enabled: true, scheduleType: "cron" })
+          }
+          type="button"
+          disabled={!name.trim() || !prompt.trim() || !scheduleExpr.trim()}
+        >
+          保存
+        </button>
+        <button className="ghost-button danger" onClick={onCancel} type="button">
+          取消
+        </button>
+      </div>
+    </div>
+  );
+}
+
+function ScheduledTaskHistory(props: { executions: ScheduledTaskExecution[] }) {
+  const { executions } = props;
+  if (executions.length === 0) {
+    return <div className="form-hint">暂无执行记录。</div>;
+  }
+  return (
+    <div className="scheduled-task-history">
+      {executions.map((exec) => (
+        <div key={exec.id} className={`history-row ${exec.status}`}>
+          <span className="history-time">{new Date(exec.startedAt).toLocaleString()}</span>
+          <span className={`history-status ${exec.status}`}>
+            {exec.status === "completed" ? "成功" : exec.status === "failed" ? "失败" : "执行中"}
+          </span>
+          {exec.result ? <pre className="history-result">{exec.result}</pre> : null}
+          {exec.error ? <pre className="history-error">{exec.error}</pre> : null}
+        </div>
+      ))}
+    </div>
   );
 }

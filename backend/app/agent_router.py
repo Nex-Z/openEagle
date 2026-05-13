@@ -175,7 +175,7 @@ class AgentRouter:
             decision.task_brief = content.strip()
         if not decision.task_title:
             decision.task_title = cls._title_from_content(content)
-        if not decision.user_visible_summary:
+        if not decision.user_visible_summary and decision.route != "answer_directly":
             decision.user_visible_summary = cls._summary_for_route(decision)
         return decision
 
@@ -326,13 +326,13 @@ class AgentRouter:
     @staticmethod
     def _summary_for_route(decision: AgentRouteDecision) -> str:
         if decision.route == "answer_directly":
-            return "main agent 将直接回复。"
+            return ""
         if decision.route == "start_solo":
-            return "main agent 将启动桌面执行。"
+            return "我来处理，一会儿给你结果。"
         if decision.route == "control_solo":
-            return "main agent 将转发桌面执行控制动作。"
+            return "我来调整桌面执行状态。"
         if decision.route == "delegate_existing":
-            return f"main agent 将复用 {decision.worker_kind} worker 继续处理。"
+            return "我接着处理刚才那件事。"
         if decision.route == "clarify":
-            return "main agent 需要先澄清任务。"
-        return f"main agent 将交给 {decision.worker_kind} worker 处理。"
+            return "我需要先确认一个关键信息。"
+        return "我来处理，一会儿给你结果。"

@@ -102,11 +102,16 @@ Frontend      →  通过 WebSocket 连接 ws://127.0.0.1:<端口>/ws
 | 自动化     | mss（截图）, pyautogui（输入）                         |
 | Agent 框架 | agno                                                   |
 | 搜索       | baidusearch（免费，无需 API Key）                      |
+| 定时调度   | APScheduler + SQLite                                  |
 | 远程 IM    | 飞书长连接、Telegram Bot 长轮询、微信 ClawBot 扫码绑定 |
 
 ### Main/Sub-Agent Runtime
 
 所有用户消息都会先进入轻量 main agent。main agent 负责理解意图、直接对话、澄清需求和调度：直接回答、委派给干净 worker、启动桌面执行 worker，或控制已有桌面执行任务。worker 使用内部 scoped conversation id 执行任务，前台会话只保留摘要、证据和最终结果，减少上下文污染。
+
+router prompt 采用原则驱动，而不是关键词驱动：根据任务所需能力选择 worker，把非即时的时间意图视为持久化任务，只在缺失信息会导致不可撤销且完全错误的结果时才追问。直接回答写入独立的 `answer` 字段；面向用户的调度说明使用第一人称口语，让 main agent 更像协作助理，而不是系统日志。
+
+当用户要求稍后或周期性执行某件事时，main agent 会创建持久化定时任务，而不是立即把任务做掉。定时任务存储在 `.open-eagle/scheduler.db`，使用 cron 表达式调度，执行时仍走同一套 worker 类型，并可将执行结果回传到原会话。
 
 内置 worker 类型：
 
@@ -298,12 +303,13 @@ prompt: |
 
 - [ ] 离开主窗口后，执行状态也能更清楚地呈现给用户
 - [ ] 良好的自迭代上下文管理机制（对话级 compaction、token 计数）
-- [ ] 类似 OpenClaw 那样的定时任务
 - [ ] 更快的响应操作（prompt caching 等）
 - [ ] macOS 和 Linux 支持
 - [ ] 社区插件系统
 - [ ] 会话回放与更完整的历史记录
 - [ ] 语音输入
+- [x] 定时任务：持久化存储、worker 执行、UI 管理与执行历史
+- [x] 原则驱动的 main agent router prompt 与助理式直接回复
 - [x] 多显示器感知（已支持 display 选择与运行时切换）
 - [x] 模型适配：OpenAI 兼容 API + Anthropic Claude 原生支持
 

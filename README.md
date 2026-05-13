@@ -102,11 +102,16 @@ Frontend      →  connects via WebSocket to ws://127.0.0.1:<port>/ws
 | Automation | mss (screenshots), pyautogui (input) |
 | Agent framework | agno |
 | Search | baidusearch (free, no API key) |
+| Scheduling | APScheduler + SQLite |
 | Remote IM | Feishu long connection, Telegram Bot polling, WeChat ClawBot QR binding |
 
 ### Main/Sub-Agent Runtime
 
 Every user message first goes through a lightweight main agent. The main agent decides whether to answer directly, delegate to a clean worker, start the desktop execution worker, or control an existing desktop execution task. Workers use scoped internal conversation IDs, so task execution stays focused while the visible conversation only keeps summaries, evidence, and final results.
+
+The router prompt is principle-driven rather than keyword-driven. It chooses workers by required capability, treats non-immediate time intent as a persistent task, and only asks clarifying questions when a missing detail would make an irreversible action completely wrong. Direct answers are returned in a dedicated `answer` field, while user-visible routing summaries are written in first person so the assistant reads like a collaborator instead of a system log.
+
+When users ask for work to happen later or on a cadence, the main agent creates a persistent scheduled task instead of doing the work immediately. Scheduled tasks are stored in `.open-eagle/scheduler.db`, use cron expressions for timing, run through the same worker kinds, and can report execution results back into the originating conversation.
 
 Built-in worker kinds:
 
@@ -299,12 +304,13 @@ All three compose. For example: an MCP server that provides database queries, a 
 
 - [ ] Clearer execution status when you leave the main window
 - [ ] Better self-iterating context management (conversation compaction, token counting)
-- [ ] Scheduled tasks, similar to OpenClaw
 - [ ] Faster responses and actions (prompt caching, etc.)
 - [ ] macOS and Linux support
 - [ ] Community plugin system
 - [ ] Session replay and richer history
 - [ ] Voice input
+- [x] Scheduled tasks with persistent storage, worker execution, UI management, and run history
+- [x] Principle-based main-agent router prompts and assistant-style direct answers
 - [x] Multi-monitor awareness (display selection and runtime switching supported)
 - [x] Model support: OpenAI-compatible API + Anthropic Claude native provider
 
