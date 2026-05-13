@@ -666,6 +666,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                       <option value="mock">mock</option>
                       <option value="openai">openai</option>
                       <option value="openai-like">openai-like</option>
+                      <option value="anthropic">anthropic</option>
                     </select>
                   </label>
                   <label className="form-field">
@@ -739,6 +740,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                     >
                       <option value="openai">openai</option>
                       <option value="openai-like">openai-like</option>
+                      <option value="anthropic">anthropic</option>
                     </select>
                   </label>
                   <label className="form-field">

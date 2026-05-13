@@ -102,7 +102,7 @@ class AgentRouter:
         return self.heuristic(content, preferred_mode, recent_tasks)
 
     def _can_use_model_router(self) -> bool:
-        return self._config.agent.provider in {"openai", "openai-like"} and bool(
+        return self._config.agent.provider in {"openai", "openai-like", "anthropic"} and bool(
             self._config.agent.api_key
         )
 
@@ -114,6 +114,26 @@ class AgentRouter:
         recent_tasks: list[AgentTaskRecord],
     ) -> str:
         agent_config = self._config.agent
+        prompt = build_main_router_prompt(
+            conversation_id=conversation_id,
+            content=content,
+            preferred_mode=preferred_mode,
+            recent_tasks=recent_tasks,
+        )
+
+        if agent_config.provider == "anthropic":
+            import anthropic
+
+            client = anthropic.AsyncAnthropic(api_key=agent_config.api_key)
+            response = await client.messages.create(
+                model=agent_config.model_id or "claude-sonnet-4-20250514",
+                max_tokens=1024,
+                system="\n".join(build_main_router_instructions()),
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text_parts = [block.text for block in response.content if block.type == "text"]
+            return "".join(text_parts)
+
         if agent_config.provider == "openai-like":
             if not agent_config.base_url:
                 raise ValueError("openai-like 模式需要配置 Base URL。")
@@ -133,14 +153,7 @@ class AgentRouter:
             markdown=False,
             instructions=build_main_router_instructions(),
         )
-        result = await agent.arun(
-            build_main_router_prompt(
-                conversation_id=conversation_id,
-                content=content,
-                preferred_mode=preferred_mode,
-                recent_tasks=recent_tasks,
-            )
-        )
+        result = await agent.arun(prompt)
         raw = getattr(result, "content", None)
         return raw if isinstance(raw, str) else str(result)
 

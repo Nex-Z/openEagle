@@ -130,11 +130,11 @@ export interface ImSettings {
 }
 
 export interface AgentSettings {
-  provider: "mock" | "openai" | "openai-like";
+  provider: "mock" | "openai" | "openai-like" | "anthropic";
   modelId: string;
   apiKey: string;
   baseUrl: string;
-  vlProvider: "openai" | "openai-like";
+  vlProvider: "openai" | "openai-like" | "anthropic";
   vlModelId: string;
   vlApiKey: string;
   vlBaseUrl: string;

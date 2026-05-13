@@ -7,6 +7,7 @@ from .confirmations import ToolConfirmationStore
 from .attachments import AttachmentStore
 from .models import AttachmentRef
 from .providers.agno_provider import AgnoAgentProvider
+from .providers.anthropic_provider import AnthropicAgentProvider
 from .providers.base import AgentProvider, ProviderStreamEvent
 from .providers.mock import MockAgentProvider
 
@@ -46,6 +47,14 @@ def build_agent_service(
 ) -> AgentService:
     if config.agent.provider in {"openai", "openai-like"}:
         provider = AgnoAgentProvider(
+            config,
+            confirmation_store=confirmation_store,
+            attachment_store=attachment_store,
+            request_id=request_id,
+            conversation_id=conversation_id,
+        )
+    elif config.agent.provider == "anthropic":
+        provider = AnthropicAgentProvider(
             config,
             confirmation_store=confirmation_store,
             attachment_store=attachment_store,

@@ -402,7 +402,7 @@ class AgentRuntime:
 
     @staticmethod
     def _can_use_direct_answer_model(agent_config: AgentConfig) -> bool:
-        return agent_config.provider in {"openai", "openai-like"} and bool(agent_config.api_key)
+        return agent_config.provider in {"openai", "openai-like", "anthropic"} and bool(agent_config.api_key)
 
     async def _direct_answer_with_model(
         self,
@@ -411,6 +411,24 @@ class AgentRuntime:
         config: AppConfig,
     ) -> str:
         agent_config = config.agent
+        prompt = build_direct_answer_prompt(content)
+
+        if agent_config.provider == "anthropic":
+            import anthropic
+
+            client = anthropic.AsyncAnthropic(api_key=agent_config.api_key)
+            response = await client.messages.create(
+                model=agent_config.model_id or "claude-sonnet-4-20250514",
+                max_tokens=4096,
+                system="\n".join(build_direct_answer_instructions()),
+                messages=[{"role": "user", "content": prompt}],
+            )
+            text_parts = [block.text for block in response.content if block.type == "text"]
+            answer = "".join(text_parts).strip()
+            if answer:
+                return answer
+            return str(response)
+
         model_id = agent_config.model_id or "gpt-5-mini"
         if agent_config.provider == "openai-like":
             if not agent_config.base_url:
@@ -431,7 +449,7 @@ class AgentRuntime:
             markdown=False,
             instructions=build_direct_answer_instructions(),
         )
-        result = await agent.arun(build_direct_answer_prompt(content))
+        result = await agent.arun(prompt)
         answer = getattr(result, "content", None)
         if isinstance(answer, str) and answer.strip():
             return answer.strip()
