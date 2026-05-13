@@ -32,6 +32,7 @@ openEagle 填补了"理解你想做什么"和"在你的电脑上实际完成"之
 > 已尝试的场景：
 >  - 直接操作浏览器收集信息
 >  - 操作客户端软件（播放暂停、音乐）
+>  - 操作word，编写文档
 >  - ...
 
 ## 快速上手（5 分钟）
@@ -91,16 +92,16 @@ Frontend      →  通过 WebSocket 连接 ws://127.0.0.1:<端口>/ws
 
 ### 技术栈
 
-| 层级       | 技术                              |
-| ---------- | --------------------------------- |
-| 桌面壳     | Tauri 2, Rust                     |
-| 前端       | React 18, TypeScript, Vite        |
-| 后端       | Python 3.12+, FastAPI, WebSocket  |
-| LLM        | OpenAI 兼容 API（可配置）         |
-| 视觉模型   | VL 模型，通过 OpenAI 兼容接口接入 |
-| 自动化     | mss（截图）, pyautogui（输入）    |
-| Agent 框架 | agno                              |
-| 搜索       | baidusearch（免费，无需 API Key） |
+| 层级       | 技术                                                   |
+| ---------- | ------------------------------------------------------ |
+| 桌面壳     | Tauri 2, Rust                                          |
+| 前端       | React 18, TypeScript, Vite                             |
+| 后端       | Python 3.12+, FastAPI, WebSocket                       |
+| LLM        | OpenAI 兼容 API（可配置）                              |
+| 视觉模型   | VL 模型，通过 OpenAI 兼容接口接入                      |
+| 自动化     | mss（截图）, pyautogui（输入）                         |
+| Agent 框架 | agno                                                   |
+| 搜索       | baidusearch（免费，无需 API Key）                      |
 | 远程 IM    | 飞书长连接、Telegram Bot 长轮询、微信 ClawBot 扫码绑定 |
 
 ### Main/Sub-Agent Runtime
@@ -109,12 +110,12 @@ Frontend      →  通过 WebSocket 连接 ws://127.0.0.1:<端口>/ws
 
 内置 worker 类型：
 
-| Worker | 用途 |
-| ------ | ---- |
-| `general` | 通用解释、轻量工具、只读检查 |
-| `coding` | 代码修改、文档、构建、测试、写文件任务 |
-| `research` | 搜索、查询、信息整理 |
-| `solo` | 视觉桌面执行的内部 worker id |
+| Worker     | 用途                                   |
+| ---------- | -------------------------------------- |
+| `general`  | 通用解释、轻量工具、只读检查           |
+| `coding`   | 代码修改、文档、构建、测试、写文件任务 |
+| `research` | 搜索、查询、信息整理                   |
+| `solo`     | 视觉桌面执行的内部 worker id           |
 
 只读 worker 可以保守并发；代码/写入任务与桌面执行串行执行，避免文件和桌面操作互相打架。
 
@@ -144,23 +145,23 @@ Frontend      →  通过 WebSocket 连接 ws://127.0.0.1:<端口>/ws
 
 远程命令：
 
-| 命令 | 行为 |
-| ---- | ---- |
-| `<普通文本>` | 发送给 main agent |
-| `/solo <任务>` | 显式请求桌面执行 |
+| 命令                         | 行为                 |
+| ---------------------------- | -------------------- |
+| `<普通文本>`                 | 发送给 main agent    |
+| `/solo <任务>`               | 显式请求桌面执行     |
 | `/pause`、`/resume`、`/stop` | 控制当前桌面执行任务 |
-| `/allow`、`/reject` | 确认或拒绝待确认动作 |
-| `/help` | 查看命令帮助 |
+| `/allow`、`/reject`          | 确认或拒绝待确认动作 |
+| `/help`                      | 查看命令帮助         |
 
 ### 安全模型
 
 每个操作都经过三级风险评估：
 
-| 级别      | 行为                             |
-| --------- | -------------------------------- |
-| `safe`    | 立即执行（低风险桌面动作、只读工具等）         |
+| 级别      | 行为                                          |
+| --------- | --------------------------------------------- |
+| `safe`    | 立即执行（低风险桌面动作、只读工具等）        |
 | `confirm` | 等待你确认（写文件、删除/移动、系统快捷键等） |
-| `blocked` | 直接拒绝（危险命令如 `rm -rf`）              |
+| `blocked` | 直接拒绝（危险命令如 `rm -rf`）               |
 
 额外护栏：最多 150 步、动作签名重复检测、截图无变化检测、恢复模式下抑制 batch；动作参数格式错误或执行失败会优先反馈给当前 agent 自修复，而不是直接抛给用户。
 
@@ -170,27 +171,128 @@ openEagle 支持灵活的模型路由——main agent 文本对话和 Vision-Lan
 
 关键设置（通过应用内设置面板访问）：
 
-| 设置项              | 说明                                          |
-| ------------------- | --------------------------------------------- |
-| `agent.provider`  | 文本模型提供商（`openai`、`openai-like`、`mock`） |
-| `agent.modelId`   | main agent 与直接对话用的文本模型                  |
-| `agent.baseUrl`   | OpenAI 兼容 API 的自定义地址                      |
-| `agent.vlProvider` | 桌面执行视觉模型提供商（`openai`、`openai-like`） |
-| `agent.vlModelId` | 桌面执行用的视觉语言模型                           |
-| `agent.vlBaseUrl` | 视觉模型的 OpenAI 兼容 API 地址                    |
-| `feishu.enabled` | 启用飞书远程入口                                  |
-| `feishu.appId` / `feishu.appSecret` | 飞书长连接应用凭据                 |
-| `feishu.allowedOpenIds` / `feishu.allowedChatIds` | 飞书用户/会话白名单     |
-| `telegram.enabled` | 启用 Telegram 远程入口                            |
-| `telegram.botToken` | Telegram Bot API Token                          |
-| `telegram.allowedUserIds` / `telegram.allowedChatIds` | Telegram 用户/会话白名单 |
-| `wechat.enabled` | 启用微信 ClawBot 远程入口 |
-| `wechat.accountId` | 微信扫码绑定后保存的 ClawBot 账号 |
-| `wechat.baseUrl` / `wechat.botType` | 可选 ClawBot API 地址与 Bot Type |
-| `wechat.allowedUserIds` / `wechat.allowedChatIds` | 微信用户/会话白名单 |
-| `tools`           | 自定义工具定义                                    |
-| `mcp`             | MCP 服务器连接                                    |
-| `skills`          | 自定义 Skill Prompt                               |
+| 设置项                                                | 说明                                              |
+| ----------------------------------------------------- | ------------------------------------------------- |
+| `agent.provider`                                      | 文本模型提供商（`openai`、`openai-like`、`mock`） |
+| `agent.modelId`                                       | main agent 与直接对话用的文本模型                 |
+| `agent.baseUrl`                                       | OpenAI 兼容 API 的自定义地址                      |
+| `agent.vlProvider`                                    | 桌面执行视觉模型提供商（`openai`、`openai-like`） |
+| `agent.vlModelId`                                     | 桌面执行用的视觉语言模型                          |
+| `agent.vlBaseUrl`                                     | 视觉模型的 OpenAI 兼容 API 地址                   |
+| `feishu.enabled`                                      | 启用飞书远程入口                                  |
+| `feishu.appId` / `feishu.appSecret`                   | 飞书长连接应用凭据                                |
+| `feishu.allowedOpenIds` / `feishu.allowedChatIds`     | 飞书用户/会话白名单                               |
+| `telegram.enabled`                                    | 启用 Telegram 远程入口                            |
+| `telegram.botToken`                                   | Telegram Bot API Token                            |
+| `telegram.allowedUserIds` / `telegram.allowedChatIds` | Telegram 用户/会话白名单                          |
+| `wechat.enabled`                                      | 启用微信 ClawBot 远程入口                         |
+| `wechat.accountId`                                    | 微信扫码绑定后保存的 ClawBot 账号                 |
+| `wechat.baseUrl` / `wechat.botType`                   | 可选 ClawBot API 地址与 Bot Type                  |
+| `wechat.allowedUserIds` / `wechat.allowedChatIds`     | 微信用户/会话白名单                               |
+| `tools`                                               | 自定义命令工具（[详见下方](#tool--自定义命令工具)） |
+| `mcp`                                                 | MCP 服务器连接（[详见下方](#mcp--连接外部服务)）    |
+| `skills`                                              | 自定义 Skill 行为指令（[详见下方](#skill--注入私域经验)） |
+
+## 工具、MCP 与 Skill
+
+openEagle 的能力不只是内置的。你可以通过三种机制扩展 Agent 的行为，从"能做什么"到"怎么做"全面定制。
+
+### Tool — 自定义命令工具
+
+Tool 是最基础的扩展：给 Agent 一个可执行的 shell 命令，它就能在对话或桌面执行中调用。
+
+在 **Settings -> Tools** 中添加，每个 Tool 定义：
+
+| 字段 | 说明 |
+|------|------|
+| `name` | 工具名称，Agent 会根据名称和描述判断何时调用 |
+| `command` | Shell 命令模板，支持 `{placeholder}` 占位符，Agent 会自动填充参数 |
+| `description` | 告诉 Agent 这个工具做什么、什么时候该用 |
+| `cwd` | 工作目录（可选） |
+| `timeout_ms` | 超时时间，默认 30 秒 |
+
+**示例**：定义一个 `run_tests` 工具，命令为 `uv run python -m pytest {test_path} -v`，描述为"运行指定路径的 pytest 测试"。Agent 在需要跑测试时会自动选择它。
+
+### MCP — 连接外部服务
+
+openEagle 支持 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/)，可以接入任何 MCP 服务器提供的工具。这意味着你可以复用整个 MCP 生态的能力，而不需要自己写集成代码。
+
+在 **Settings -> MCP** 中配置，支持三种传输方式：
+
+| 传输方式 | 说明 | 适用场景 |
+|----------|------|----------|
+| `stdio` | 启动本地进程通信 | 本地 MCP 服务器 |
+| `sse` | Server-Sent Events | 远程 MCP 服务器 |
+| `http` | Streamable HTTP | 远程 MCP 服务器 |
+
+配置示例（stdio）：`id: "my-mcp"`, `name: "我的 MCP 服务"`, `transport: "stdio"`, `endpoint: "npx -y @some/mcp-server"`
+
+MCP 工具在桌面执行和对话中均可使用。默认权限模式下，MCP 调用需要用户确认。
+
+### Skill — 注入私域经验
+
+Skill 是 openEagle 最独特的扩展机制。它不执行代码，而是**向 Agent 注入一段行为指令**——告诉 Agent "遇到这类任务时，按这个经验来做，不要走通用的路子"。
+
+这解决了一个核心问题：**通用模型会走大众路线，但你的工作流有私域经验**。比如：
+
+- 你公司的部署流程不是标准的 `docker compose up`，而是一套自定义脚本
+- 你习惯用特定的文件组织方式、命名规范、commit 风格
+- 某个操作的正确顺序和网上搜到的不一样
+
+Skill 让你把这些经验"教"给 Agent，它在相关场景下会自动遵循。
+
+在 **Settings -> Skills** 中添加：
+
+| 字段 | 说明 |
+|------|------|
+| `name` | Skill 名称 |
+| `description` | 一句话描述这个 Skill 适用于什么场景 |
+| `prompt` | 完整的行为指令——越具体越好 |
+
+**示例**：
+
+```
+name: "项目部署"
+description: "部署本项目到测试环境时的正确流程"
+prompt: |
+  部署到测试环境时，不要用 docker compose。
+  正确流程：
+  1. 运行 scripts/build.sh
+  2. 运行 scripts/deploy-test.sh
+  3. 检查 health check: curl http://test.internal:8080/health
+  4. 如果失败，回滚: scripts/rollback.sh
+```
+
+**使用方式**：
+
+- **自动激活**：启用的 Skill 会在桌面执行时自动注入系统指令，Agent 会根据 Skill 描述自动判断是否适用
+- **手动指定**：在对话中输入 `/skill <名称>` 显式选择某个 Skill 用于当前轮次
+
+> Skill 的本质是**经验的结构化传递**。你不需要写代码，只需要把"正确做法"写清楚，Agent 就会照做。这比让模型自己猜或者搜索通用方案可靠得多。
+
+### 三者的关系
+
+```
+                ┌─────────────────────────────────┐
+                │           Agent 决策             │
+                │  "我该怎么完成这个任务？"          │
+                └──────────┬──────────────────────┘
+                           │
+            ┌──────────────┼──────────────────┐
+            ▼              ▼                  ▼
+     ┌──────────┐   ┌──────────┐      ┌──────────┐
+     │   Tool   │   │   MCP    │      │  Skill   │
+     │ 执行命令  │   │ 外部能力  │      │ 行为指令  │
+     │          │   │          │      │          │
+     │ "做什么"  │   │ "用什么"  │      │ "怎么做"  │
+     └──────────┘   └──────────┘      └──────────┘
+```
+
+- **Tool** 决定 Agent 能调用什么命令
+- **MCP** 决定 Agent 能使用什么外部能力
+- **Skill** 决定 Agent 在特定场景下怎么做
+
+三者可以组合使用。比如你有一个 MCP 服务器提供了数据库查询能力，一个 Skill 定义了你们团队的查询规范，一个 Tool 封装了常用的分析脚本——Agent 会在合适的场景自动组合它们。
 
 ## Roadmap
 

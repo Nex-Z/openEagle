@@ -189,9 +189,111 @@ Key settings (accessible from the in-app Settings panel):
 | `wechat.accountId` | WeChat ClawBot account saved after QR binding |
 | `wechat.baseUrl` / `wechat.botType` | Optional ClawBot API base URL and bot type |
 | `wechat.allowedUserIds` / `wechat.allowedChatIds` | WeChat user/chat whitelist |
-| `tools` | Custom tool definitions |
-| `mcp` | MCP server connections |
-| `skills` | Custom skill prompts |
+| `tools` | Custom command tools ([see below](#tool--custom-command-tools)) |
+| `mcp` | MCP server connections ([see below](#mcp--connect-external-services)) |
+| `skills` | Custom skill directives ([see below](#skill--inject-domain-specific-knowledge)) |
+
+## Tools, MCP & Skills
+
+openEagle's capabilities don't stop at the built-ins. Three extension mechanisms let you customize everything from what the agent *can do* to *how it does it*.
+
+### Tool — Custom Command Tools
+
+A Tool is the simplest extension: give the agent a shell command template, and it can call it during conversation or desktop execution.
+
+Add tools in **Settings -> Tools**:
+
+| Field | Description |
+|-------|-------------|
+| `name` | Tool name — the agent uses this and the description to decide when to invoke it |
+| `command` | Shell command template with `{placeholder}` parameters the agent fills in |
+| `description` | Tells the agent what this tool does and when to use it |
+| `cwd` | Working directory (optional) |
+| `timeout_ms` | Timeout, defaults to 30 seconds |
+
+**Example**: A `run_tests` tool with command `uv run python -m pytest {test_path} -v` and description "Run pytest tests at the given path." The agent will pick it up automatically when it needs to run tests.
+
+### MCP — Connect External Services
+
+openEagle supports the [Model Context Protocol (MCP)](https://modelcontextprotocol.io/), so you can plug in any MCP server's tools. This lets you reuse the entire MCP ecosystem without writing integration code.
+
+Configure in **Settings -> MCP** with three transport types:
+
+| Transport | Description | Use case |
+|-----------|-------------|----------|
+| `stdio` | Launches a local process | Local MCP servers |
+| `sse` | Server-Sent Events | Remote MCP servers |
+| `http` | Streamable HTTP | Remote MCP servers |
+
+Example (stdio): `id: "my-mcp"`, `name: "My MCP Server"`, `transport: "stdio"`, `endpoint: "npx -y @some/mcp-server"`
+
+MCP tools are available in both desktop execution and chat. In default permission mode, MCP calls require user confirmation.
+
+### Skill — Inject Domain-Specific Knowledge
+
+Skill is openEagle's most distinctive extension. It doesn't execute code — it **injects a behavioral directive** into the agent: "When you encounter this kind of task, follow this approach instead of the generic one."
+
+This solves a core problem: **general-purpose models take the well-known path, but your workflow has private knowledge**. For example:
+
+- Your company's deploy process isn't `docker compose up` — it's a custom script chain
+- You follow specific file organization, naming conventions, or commit styles
+- The correct sequence for an operation differs from what a web search would suggest
+
+Skills let you "teach" the agent your experience so it follows your way automatically.
+
+Add skills in **Settings -> Skills**:
+
+| Field | Description |
+|-------|-------------|
+| `name` | Skill name |
+| `description` | One-line summary of when this skill applies |
+| `prompt` | The full behavioral directive — the more specific, the better |
+
+**Example**:
+
+```
+name: "Project Deploy"
+description: "Correct procedure for deploying to the test environment"
+prompt: |
+  When deploying to the test environment, do NOT use docker compose.
+  Correct steps:
+  1. Run scripts/build.sh
+  2. Run scripts/deploy-test.sh
+  3. Check health: curl http://test.internal:8080/health
+  4. If it fails, rollback: scripts/rollback.sh
+```
+
+**How it works**:
+
+- **Auto-activated**: Enabled skills are injected into the system prompt during desktop execution. The agent matches them against the current task via the skill description.
+- **Manual selection**: Type `/skill <name>` in chat to explicitly apply a skill for the current turn.
+
+> Skills are **structured transfer of experience**. You don't write code — you just write down "the right way to do it," and the agent follows. This is far more reliable than letting the model guess or search for generic solutions.
+
+### How They Fit Together
+
+```
+                ┌─────────────────────────────────┐
+                │          Agent Decision          │
+                │  "How should I do this task?"    │
+                └──────────┬──────────────────────┘
+                           │
+            ┌──────────────┼──────────────────┐
+            ▼              ▼                  ▼
+     ┌──────────┐   ┌──────────┐      ┌──────────┐
+     │   Tool   │   │   MCP    │      │  Skill   │
+     │  Execute │   │ External │      │Behavioral│
+     │ Command  │   │ Capabil. │      │Directive │
+     │          │   │          │      │          │
+     │  "What"  │   │  "With"  │      │   "How"  │
+     └──────────┘   └──────────┘      └──────────┘
+```
+
+- **Tool** defines what commands the agent can run
+- **MCP** defines what external capabilities are available
+- **Skill** defines how the agent approaches specific scenarios
+
+All three compose. For example: an MCP server that provides database queries, a Skill that encodes your team's query conventions, and a Tool that wraps a common analysis script — the agent will combine them automatically when the context fits.
 
 ## Roadmap
 
