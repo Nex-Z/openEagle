@@ -10,7 +10,8 @@ from apscheduler.triggers.cron import CronTrigger
 
 from ..config import AppConfig
 from ..models import utc_now
-from ..subagent_models import AgentRouteDecision
+from ..providers.base import ReplyChunk
+from ..subagent_models import AgentRouteDecision, WorkerReport
 from .models import ScheduledTask, ScheduledTaskExecution
 from .store import (
     complete_execution,
@@ -122,10 +123,8 @@ class SchedulerService:
                 confirmation_store=_AutoConfirmStore(),
                 request_id=execution.id,
             ):
-                from ..providers.base import ReplyChunk, ReplyTrace, WorkerReport
-
                 if isinstance(event, ReplyChunk):
-                    result_parts.append(event.text)
+                    result_parts.append(event.content)
                 elif isinstance(event, WorkerReport):
                     result = event.result or event.summary or ""
                     if not result and result_parts:
