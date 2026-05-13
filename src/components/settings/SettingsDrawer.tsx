@@ -247,7 +247,8 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
         try {
           const dataUrl = await invoke<string>("read_image_data_url", { path });
           return { path, dataUrl };
-        } catch {
+        } catch (err) {
+          console.warn("read_image_data_url failed, falling back to asset protocol:", path, err);
           return null;
         }
       }),
@@ -841,7 +842,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                                   previewDataUrls[display.previewPath] ||
                                   (display.previewPath.startsWith("data:")
                                     ? display.previewPath
-                                    : convertFileSrc(display.previewPath))
+                                    : convertFileSrc(display.previewPath.replace(/\//g, "\\")))
                                 }
                                 style={previewStyle}
                               />
