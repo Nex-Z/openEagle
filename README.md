@@ -298,15 +298,15 @@ All three compose. For example: an MCP server that provides database queries, a 
 ## Roadmap
 
 - [ ] Clearer execution status when you leave the main window
-- [ ] Better support for more models
+- [ ] Better self-iterating context management (conversation compaction, token counting)
 - [ ] Scheduled tasks, similar to OpenClaw
-- [ ] Faster responses and actions
-- [ ] Better self-iterating context management
+- [ ] Faster responses and actions (prompt caching, etc.)
 - [ ] macOS and Linux support
 - [ ] Community plugin system
-- [ ] Multi-monitor awareness
 - [ ] Session replay and richer history
 - [ ] Voice input
+- [x] Multi-monitor awareness (display selection and runtime switching supported)
+- [x] Model support: OpenAI-compatible API + Anthropic Claude native provider
 
 ## Contributing
 
