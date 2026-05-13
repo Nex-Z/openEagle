@@ -11,6 +11,7 @@ import {
   Wrench,
   X,
 } from "lucide-react";
+import { executionStateLabel } from "../../lib/runLabels";
 import type {
   AgentExecutionTrace,
   SoloConfirmationPayload,
@@ -167,7 +168,7 @@ export function ActivityInspector(props: ActivityInspectorProps) {
     >
       <header className="inspector-header">
         <div className="inspector-header-copy">
-          <p>Inspector</p>
+          <p>活动面板</p>
           {!inspectorCollapsed ? <strong>执行侧栏</strong> : null}
         </div>
         <button className="icon-button" onClick={onToggleCollapsed} type="button">
@@ -182,27 +183,27 @@ export function ActivityInspector(props: ActivityInspectorProps) {
         </div>
       ) : (
         <>
-          <div className="inspector-tabs" role="tablist" aria-label="Inspector tabs">
+          <div className="inspector-tabs" role="tablist" aria-label="活动面板标签">
             <button
               className={activeTab === "activity" ? "inspector-tab is-active" : "inspector-tab"}
               onClick={() => setActiveTab("activity")}
               type="button"
             >
-              Activity
+              动态
             </button>
             <button
               className={activeTab === "traces" ? "inspector-tab is-active" : "inspector-tab"}
               onClick={() => setActiveTab("traces")}
               type="button"
             >
-              Traces
+              轨迹
             </button>
             <button
               className={activeTab === "assets" ? "inspector-tab is-active" : "inspector-tab"}
               onClick={() => setActiveTab("assets")}
               type="button"
             >
-              Assets
+              资产
             </button>
           </div>
 
@@ -213,9 +214,8 @@ export function ActivityInspector(props: ActivityInspectorProps) {
                   <div className="inspector-card-head">
                     <div>
                       <span className="card-kicker">当前运行状态</span>
-                      <strong>SOLO</strong>
+                      <strong>{executionStateLabel(soloStatus.state)}</strong>
                     </div>
-                    <span className={`status-badge tone-${statusTone}`}>{soloStatus.state}</span>
                   </div>
                 </section>
 
@@ -224,7 +224,7 @@ export function ActivityInspector(props: ActivityInspectorProps) {
                 <section className="inspector-card">
                   <div className="inspector-card-head">
                     <div>
-                      <span className="card-kicker">SOLO 时间线</span>
+                      <span className="card-kicker">执行时间线</span>
                       <strong>最近事件</strong>
                     </div>
                     <ListTree size={16} />
@@ -383,7 +383,7 @@ export function ActivityInspector(props: ActivityInspectorProps) {
                 <div className="inspector-card-head">
                   <div>
                     <span className="card-kicker">截图与素材</span>
-                    <strong>SOLO 预览</strong>
+                    <strong>执行预览</strong>
                   </div>
                   <Image size={16} />
                 </div>

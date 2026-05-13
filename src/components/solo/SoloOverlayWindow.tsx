@@ -20,7 +20,7 @@ declare global {
 }
 
 const FALLBACK: OverlayState = {
-  title: "SOLO 正在执行桌面操作",
+  title: "正在执行桌面任务",
   detail: "请保持桌面可见",
   stepText: "",
   historyText: "",

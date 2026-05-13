@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { executionStateLabel, executionStatusLabel } from "../lib/runLabels";
 import type {
   AgentExecutionTrace,
   AssistantMessageBlock,
@@ -608,7 +609,6 @@ export function useBackendConnection(
           attachments: envelope.payload.attachments,
           createdAt: envelope.timestamp,
           status: "done",
-          mode: "chat",
         });
         return;
       }
@@ -801,7 +801,7 @@ export function useBackendConnection(
           appendChatMessage(current, createChatMessage({
             role: "tool",
             label: envelope.payload.label || "截图预览",
-            content: `SOLO 已捕获新的屏幕状态。`,
+            content: "已捕获新的屏幕状态。",
             createdAt: screenshot.capturedAt ?? envelope.timestamp,
             requestId: envelope.requestId,
             mode: "solo",
@@ -821,7 +821,7 @@ export function useBackendConnection(
           detail: nextStatus.detail || current.detail,
         }));
         appendSoloTimeline(
-          `状态更新: ${nextStatus.state}${nextStatus.detail ? ` · ${nextStatus.detail}` : ""}`,
+          `状态更新: ${executionStateLabel(nextStatus.state)}${nextStatus.detail ? ` · ${nextStatus.detail}` : ""}`,
         );
         if (
           nextStatus.detail &&
@@ -834,7 +834,7 @@ export function useBackendConnection(
           patchMessages((current) =>
             appendChatMessage(current, createChatMessage({
               role: nextStatus.state === "error" ? "system" : "assistant",
-              label: `SOLO ${nextStatus.state}`,
+              label: executionStatusLabel(nextStatus.state),
               content: statusDetailText,
               createdAt: new Date().toISOString(),
               requestId: envelope.requestId,
@@ -1146,7 +1146,6 @@ export function useBackendConnection(
         attachments,
         createdAt: now,
         status: "done",
-        mode: "chat",
       },
       {
         id: createId("assistant"),
@@ -1170,76 +1169,6 @@ export function useBackendConnection(
     socket.send(JSON.stringify(envelope));
     setStatusLine("AI 正在思考");
     setStatusDetail("请求已发送，等待模型开始生成。");
-    return true;
-  };
-
-  const canStartSolo =
-    backend.phase === "connected" &&
-    Boolean(settings.agent.vlModelId.trim()) &&
-    Boolean(settings.agent.vlApiKey.trim());
-
-  const startSolo = async (content: string, attachments: AttachmentRef[] = []) => {
-    const socket = socketRef.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      setStatusLine("后端服务未就绪");
-      setStatusDetail("当前连接尚未建立完成，SOLO 未启动。");
-      return false;
-    }
-    if (!settings.agent.vlModelId.trim() || !settings.agent.vlApiKey.trim()) {
-      setStatusLine("SOLO 配置缺失");
-      setStatusDetail("请先在设置中配置 VL 模型 ID 与 API Key。");
-      return false;
-    }
-
-    const now = new Date().toISOString();
-    const requestId = createId("solo");
-    activeSoloRequestIdRef.current = requestId;
-    setSoloStatus({
-      state: "running",
-      detail: "SOLO 启动中，准备首帧截图。",
-      stepCount: 0,
-      maxSteps: 100,
-      startedAt: now,
-    });
-    setSoloStep(null);
-    setSoloConfirmation(null);
-    setSoloTimeline([]);
-    setSoloLastError(null);
-    setSoloPlan(null);
-    appendSoloTimeline("SOLO 启动，请求已发送，等待后端截图与决策");
-
-    setMessages((current) => [
-      ...current,
-      {
-        id: createId("user"),
-        requestId,
-        role: "user",
-        content,
-        attachments,
-        createdAt: now,
-        status: "done",
-        mode: "solo",
-      },
-    ]);
-
-    const envelope: Envelope<{
-      content: string;
-      attachments?: AttachmentRef[];
-    }> = {
-      type: "client:start_solo",
-      requestId,
-      conversationId,
-      payload: {
-        content,
-        attachments,
-      },
-      timestamp: now,
-    };
-
-    socket.send(JSON.stringify(envelope));
-    setStatusLine("SOLO 执行中");
-    setStatusDetail("视觉操作链路已启动。");
-    appendSoloTimeline("等待后端完成首帧截图并返回 VL 决策");
     return true;
   };
 
@@ -1298,8 +1227,6 @@ export function useBackendConnection(
     soloPlan,
     imStatuses,
     wechatBindStatus,
-    canStartSolo,
-    startSolo,
     requestSoloDisplays,
     startWechatBind: (force = false) =>
       sendWechatControl("client:wechat_bind_start", { force }),

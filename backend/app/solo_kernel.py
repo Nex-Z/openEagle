@@ -220,7 +220,7 @@ class SoloAgentKernel:
             SoloPlanItem(3, "execute", "执行下一步并验证结果，不原样重复失败动作。"),
             SoloPlanItem(4, "report", "整理发现和完成状态，向用户汇报。"),
         ]
-        kernel.agent_message = "SOLO 已接管任务，会边观察边执行，并在失败时自动换路线。"
+        kernel.agent_message = "我已接管这个桌面任务，会边观察边执行，并在失败时自动换路线。"
         return kernel
 
     @staticmethod
@@ -354,7 +354,7 @@ class SoloAgentKernel:
     def reject_premature_finish(self, reason: str) -> bool:
         self.last_recovery_hint = reason
         self.alternative = reason
-        self.agent_message = "完成证据还不够，SOLO 将继续观察、执行并验证结果。"
+        self.agent_message = "完成证据还不够，我会继续观察、执行并验证结果。"
         self.replan_count += 1
         execute_item = next((item for item in self.plan if item.action == "execute"), None)
         if execute_item:
@@ -398,7 +398,7 @@ class SoloAgentKernel:
             for item in self.plan:
                 if item.status in {"pending", "in_progress"}:
                     item.status = "completed"
-            self.agent_message = getattr(decision, "agent_message", "") or "SOLO 准备收尾汇报。"
+            self.agent_message = getattr(decision, "agent_message", "") or "正在准备收尾汇报。"
             changed = True
         else:
             self._ensure_active_plan_item()
@@ -472,7 +472,7 @@ class SoloAgentKernel:
         )
         pause_reason = None
         if should_pause:
-            pause_reason = recovery_hint or "SOLO 连续恢复失败，已暂停等待人工判断。"
+            pause_reason = recovery_hint or "桌面执行连续恢复失败，已暂停等待人工判断。"
 
         return SoloStepOutcome(
             semantic_success=semantic_success,
@@ -552,7 +552,7 @@ class SoloAgentKernel:
         self.recovery_mode = True
         self.replan_count += 1
         self.alternative = recovery_hint
-        self.agent_message = "检测到执行没有按预期推进，SOLO 将换路线继续尝试。"
+        self.agent_message = "检测到执行没有按预期推进，我会换路线继续尝试。"
         execute_item = next((item for item in self.plan if item.action == "execute"), None)
         if execute_item:
             execute_item.status = "in_progress"

@@ -194,14 +194,13 @@ class AgentRouter:
         lowered = text.lower()
         recent_tasks = recent_tasks or []
 
-        if preferred_mode == "solo":
-            return cls._decision("start_solo", "solo", text, requires_gui=True)
-        if preferred_mode == "chat":
-            return cls._delegate_or_direct(text, lowered, recent_tasks, force_chat=True)
-
         control = cls._solo_control_route(lowered)
         if control:
             return control
+        if preferred_mode == "solo":
+            if cls._looks_like_direct_answer(lowered):
+                return cls._decision("answer_directly", "general", text)
+            return cls._decision("start_solo", "solo", text, requires_gui=True)
         if any(keyword in lowered or keyword in text for keyword in GUI_KEYWORDS):
             return cls._decision("start_solo", "solo", text, requires_gui=True)
         return cls._delegate_or_direct(text, lowered, recent_tasks)
@@ -212,7 +211,6 @@ class AgentRouter:
         text: str,
         lowered: str,
         recent_tasks: list[AgentTaskRecord],
-        force_chat: bool = False,
     ) -> AgentRouteDecision:
         if cls._looks_like_followup(lowered) and recent_tasks:
             reusable = next(
@@ -232,7 +230,7 @@ class AgentRouter:
                     requires_write=reusable.requires_write,
                 )
 
-        if not force_chat and cls._looks_like_direct_answer(lowered):
+        if cls._looks_like_direct_answer(lowered):
             return cls._decision("answer_directly", "general", text)
 
         requires_write = any(keyword in lowered or keyword in text for keyword in WRITE_KEYWORDS)
@@ -317,9 +315,9 @@ class AgentRouter:
         if decision.route == "answer_directly":
             return "main agent 将直接回复。"
         if decision.route == "start_solo":
-            return "main agent 将启动 SOLO 视觉执行。"
+            return "main agent 将启动桌面执行。"
         if decision.route == "control_solo":
-            return "main agent 将转发 SOLO 控制动作。"
+            return "main agent 将转发桌面执行控制动作。"
         if decision.route == "delegate_existing":
             return f"main agent 将复用 {decision.worker_kind} worker 继续处理。"
         if decision.route == "clarify":

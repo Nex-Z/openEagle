@@ -24,19 +24,16 @@ SoloControl = Callable[[str, str, str], Awaitable[str]]
 ToolDecision = Callable[[str, str, str], Awaitable[str]]
 ReplyAttachments = Callable[[str, str], list[AttachmentRef]]
 
-IM_RECEIVED_ACK_TEXT = "收到，开始处理。"
-
 HELP_TEXT = """openEagle IM 命令：
-/chat <内容> - 只进入 Chat 对话，不启动 SOLO
-/solo <任务> - 启动 SOLO 桌面任务
-/pause - 暂停 SOLO
-/resume - 恢复 SOLO
-/stop - 停止 SOLO
+/solo <任务> - 明确让 main agent 优先调度桌面执行
+/pause - 暂停桌面执行
+/resume - 恢复桌面执行
+/stop - 停止桌面执行
 /allow - 允许当前危险动作或工具确认
 /reject - 拒绝当前危险动作或工具确认
 /help - 查看命令
 
-普通文本默认按 SOLO 任务处理；想聊天请用 /chat <内容>。"""
+普通文本会先交给 main agent 理解，再由 main agent 决定直接回复或调度 worker。"""
 
 
 class IMBridge:
@@ -225,14 +222,6 @@ class IMBridge:
         request_id = f"im-{uuid.uuid4()}"
         command = parse_im_command(event.text, allow_empty_task=bool(event.attachments))
         explicit_command = event.text.strip().startswith("/")
-        sent_ack = _should_send_processing_ack(
-            command.name,
-            explicit_command=explicit_command,
-            has_attachments=bool(event.attachments),
-        )
-        if sent_ack:
-            await self.send_text(binding.conversation_id, IM_RECEIVED_ACK_TEXT)
-
         attachments = await self._prepare_event_attachments(event, binding)
         await self._send_client(
             "server:external_user_message",
@@ -258,10 +247,10 @@ class IMBridge:
                 request_id,
                 attachments,
             )
-        elif command.name == "chat":
+        elif command.name == "auto":
             reply = await self._handle_chat(
                 binding,
-                command.argument or "请处理这些附件。",
+                command.argument,
                 request_id,
                 attachments,
             )
@@ -278,16 +267,14 @@ class IMBridge:
         else:
             reply = HELP_TEXT
 
-        emit_client_reply = command.name not in {"chat", "solo"} or bool(attachment_errors)
+        emit_client_reply = command.name not in {"auto", "solo"} or bool(attachment_errors)
         reply_attachments = (
             self._reply_attachments(binding.conversation_id, request_id)
             if self._reply_attachments is not None
             else []
         )
-        duplicate_ack = sent_ack and reply.strip() == IM_RECEIVED_ACK_TEXT
-        outbound_text = "" if duplicate_ack else reply
-        if outbound_text.strip() or reply_attachments:
-            await self.send_text(binding.conversation_id, outbound_text, reply_attachments)
+        if reply.strip() or reply_attachments:
+            await self.send_text(binding.conversation_id, reply, reply_attachments)
             if emit_client_reply:
                 await self._send_client(
                     "server:message",
@@ -489,17 +476,6 @@ def _attachment_error_reply(attachments: list[AttachmentRef]) -> str:
         for item in attachments
     ]
     return "附件处理失败，未调用模型。\n" + "\n".join(rows)
-
-
-def _should_send_processing_ack(
-    command_name: str,
-    *,
-    explicit_command: bool,
-    has_attachments: bool,
-) -> bool:
-    if command_name in {"chat", "solo"}:
-        return True
-    return has_attachments and not explicit_command
 
 
 def _provider_label(channel: str) -> str:

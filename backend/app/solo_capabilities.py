@@ -60,7 +60,7 @@ class SoloDefaultCapabilityToolkit(Toolkit):
             name="solo_default_capabilities",
             tools=tools,
             instructions=(
-                "SOLO 可主动使用这些只读默认工具收集信息、读取工作区文本、搜索文件和联网查询。"
+                "桌面执行 worker 可主动使用这些只读默认工具收集信息、读取工作区文本、搜索文件和联网查询。"
             ),
             add_instructions=True,
         )
@@ -186,7 +186,7 @@ class SoloCapabilityRuntime:
                     kind="skill",
                     name=skill.name,
                     status="completed",
-                    summary="SOLO 已自动加载该 Skill 提示。",
+                    summary="桌面执行已自动加载该 Skill 提示。",
                     params={"description": skill.description, "prompt": skill.prompt},
                 )
             )
@@ -338,7 +338,7 @@ class SoloCapabilityRuntime:
                         kind="mcp",
                         name=server.name,
                         status="completed",
-                        summary="SOLO 已连接并加载 MCP 工具。",
+                        summary="桌面执行已连接并加载 MCP 工具。",
                         params={"transport": transport, "endpoint": server.endpoint},
                         result={"toolCount": len(getattr(toolkit, "functions", {}))},
                     )
@@ -352,7 +352,7 @@ class SoloCapabilityRuntime:
                         kind="mcp",
                         name=server.name,
                         status="error",
-                        summary="SOLO 连接 MCP 失败，已跳过该 server。",
+                        summary="桌面执行连接 MCP 失败，已跳过该 server。",
                         params={"transport": server.transport, "endpoint": server.endpoint},
                         result=str(exc),
                     )
@@ -473,7 +473,7 @@ class SoloCapabilityRuntime:
                 conversation_id=self.conversation_id,
                 kind="tool",
                 name=str(params.get("toolName") or "configured_tool"),
-                reason="SOLO capability execution",
+                reason="桌面执行能力调用",
                 params=params,
             ),
         )

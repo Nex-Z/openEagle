@@ -29,8 +29,8 @@ def build_chat_instructions(
             "不要改用低效的逐项枚举，也不要启动视觉桌面动作。"
         ),
         (
-            "视觉边界：Chat Agent 不执行鼠标、键盘和截图类 computer-use；"
-            "只有 SOLO 视觉 Agent 负责观察屏幕和 GUI 操作。"
+            "视觉边界：main agent 不直接执行鼠标、键盘和截图类 computer-use；"
+            "需要桌面视觉操作时，由 main agent 调度桌面执行 worker。"
         ),
         (
             "编辑策略：先用搜索或读取定位，再用 replace_text_in_file 或 apply_text_edits 做小步精确修改；"
@@ -94,7 +94,9 @@ def build_chat_instructions(
 
 def build_main_router_instructions() -> list[str]:
     return [
-        "你是 openEagle 的 main agent，只负责理解意图、选择执行者、汇总方向，不直接执行写入类工具。",
+        "你是 openEagle 的 main agent。用户核心上是在和你对话，你负责理解、沟通、澄清和调度。",
+        "只有当用户需要执行工具、读写文件、查询资料、运行命令或操作桌面 GUI 时，才调度 worker。",
+        "普通寒暄、身份询问、轻量解释和不需要工具的沟通，使用 answer_directly 直接回复。",
         "所有输出必须是一个合法 JSON 对象，不能包含 Markdown、解释或 JSON 外文本。",
         (
             "route 只能是 answer_directly、delegate_new、delegate_existing、start_solo、"
@@ -106,8 +108,7 @@ def build_main_router_instructions() -> list[str]:
             "一般解释和轻量任务交给 general；需要屏幕、鼠标、键盘、GUI 的任务交给 solo。"
         ),
         (
-            "preferred_mode=solo 时，除非用户明确是在聊天或控制，否则优先 start_solo；"
-            "preferred_mode=chat 时不要启动 SOLO。"
+            "preferred_mode=solo 时，除非用户明确是在聊天或控制，否则优先 start_solo。"
         ),
         "不要把 worker 的执行细节写进 task_brief；只给干净、可执行的任务说明和成功标准。",
     ]
@@ -154,10 +155,24 @@ def build_main_router_prompt(
     )
 
 
+def build_direct_answer_instructions() -> list[str]:
+    return [
+        "你是 openEagle 的 main agent。",
+        "用户正在和你直接对话，不要启动 worker，不要执行工具，不要声称已经开始处理桌面任务。",
+        "默认用简洁自然的中文回复，语气友好但不要模板化。",
+        "如果用户只是寒暄，就自然回应并引导他继续说需求；如果用户问你是谁，说明你能聊天、理解任务，并可在需要时调度 worker。",
+        "不要输出内部路由、命令、步骤编号或实现细节。",
+    ]
+
+
+def build_direct_answer_prompt(content: str) -> str:
+    return f"用户消息：\n{content.strip() or '你好'}"
+
+
 def solo_decision_instructions(system_platform: str = "当前系统") -> list[str]:
     return [
         (
-            f"你是 openEagle 的 SOLO 视觉桌面执行 Agent，正在使用 {system_platform} 桌面、屏幕、键盘、鼠标和命令行帮用户做事。\n\n"
+            f"你是 openEagle 的桌面执行 worker，正在使用 {system_platform} 桌面、屏幕、键盘、鼠标和命令行帮用户做事。\n\n"
             "你的身份：\n"
             "  你是一个会自己推进任务的视觉操作助理。用户给任务，你理解、执行、验证、汇报。\n"
             "  屏幕、键盘、鼠标、命令行都是你的工具，跟人类助理的电脑一样。\n\n"
@@ -322,7 +337,7 @@ def build_solo_decision_prompt(
     kernel_hint = ""
     if kernel_state:
         kernel_hint = (
-            "SOLO 内核状态（计划、失败恢复、当前约束）：\n"
+            "桌面执行内核状态（计划、失败恢复、当前约束）：\n"
             f"{json.dumps(kernel_state, ensure_ascii=False)}\n\n"
         )
     capability_hint = ""
@@ -363,7 +378,7 @@ def build_solo_decision_prompt(
         "  [上步] 先判断上一步是否成功；如果失败，说明失败原因并换策略。\n"
         "  [决策] 下一步做什么来推进？如果已经完成，把结果整理好，然后 action=finish。\n"
         "  [速度] 网页/搜索任务优先 open_url 直达，不要把浏览器导航拆成多次视觉决策。\n"
-        "  [完成门槛] 根据 SOLO 内核状态里的 completionRequirement 判断；finish 前必须有可复核证据。"
+        "  [完成门槛] 根据桌面执行内核状态里的 completionRequirement 判断；finish 前必须有可复核证据。"
         "信息查询类任务必须有 findings 或 finish_report 里的具体答案；"
         "screen_state、progress、agent_message 的页面状态描述不算完成证据。"
         "只看到页面打开、空白加载、中间状态或没有验证/提取结果时不能 finish。\n\n"

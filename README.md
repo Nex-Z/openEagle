@@ -25,9 +25,9 @@
 
 Most AI assistants can chat and run commands. Very few can **look at your screen and actually do the work**.
 
-openEagle bridges the gap between "understanding what you want" and "actually doing it on your desktop." It watches your screen in real time, reasons about what it sees, and operates your mouse, keyboard, and applications — all while keeping you in control with a three-tier safety model.
+openEagle bridges the gap between "understanding what you want" and "actually doing it on your desktop." You talk to one main agent. It can answer directly, use tools, delegate focused work, or dispatch a desktop execution worker that watches your screen and operates your mouse, keyboard, and applications — all while keeping you in control with a three-tier safety model.
 
-**Chat mode** for when you need an AI that can search, read files, and run commands. **SOLO mode** for when you need an AI that can navigate GUIs, fill forms, and complete multi-step workflows across applications — the kind of tasks that normally require a human.
+There is no mode switch to choose. The main agent decides whether the right response is a natural answer, a tool-backed worker task, or visual desktop execution for GUI workflows such as navigating apps, filling forms, and completing multi-step operations.
 
 > Tried so far:
 >  - Using a browser directly to collect information
@@ -80,11 +80,11 @@ Frontend      →  connects via WebSocket to ws://127.0.0.1:<port>/ws
 │  Overlay window · Notifications                     │
 ├──────────────────────────────────────────────────────┤
 │                Python Backend (FastAPI)               │
-│  Main/Sub-agent runtime · SOLO orchestration · Tools │
+│  Main/Sub-agent runtime · Desktop execution · Tools │
 │  Safety assessment · Prompt engine · Model routing   │
 ├──────────────────────────────────────────────────────┤
 │               React Frontend (TypeScript)             │
-│  Chat UI · SOLO overlay · Activity inspector         │
+│  Conversation UI · Desktop overlay · Activity panel  │
 │  Settings · Dark/light theme · Responsive layout     │
 └──────────────────────────────────────────────────────┘
          ↕ WebSocket (Envelope protocol)
@@ -106,7 +106,7 @@ Frontend      →  connects via WebSocket to ws://127.0.0.1:<port>/ws
 
 ### Main/Sub-Agent Runtime
 
-Every user message first goes through a lightweight main agent. The main agent decides whether to answer directly, delegate to a clean worker, start SOLO, or control an existing SOLO task. Workers use scoped internal conversation IDs, so task execution stays focused while the visible conversation only keeps summaries, evidence, and final results.
+Every user message first goes through a lightweight main agent. The main agent decides whether to answer directly, delegate to a clean worker, start the desktop execution worker, or control an existing desktop execution task. Workers use scoped internal conversation IDs, so task execution stays focused while the visible conversation only keeps summaries, evidence, and final results.
 
 Built-in worker kinds:
 
@@ -115,13 +115,13 @@ Built-in worker kinds:
 | `general` | General explanation, light tool use, read-only checks |
 | `coding` | Code edits, docs, builds, tests, file-changing work |
 | `research` | Search, lookup, information gathering |
-| `solo` | Visual desktop automation through SOLO |
+| `solo` | Internal worker id for visual desktop execution |
 
-Read-only workers may run concurrently. Coding/write work and SOLO are kept serial to avoid file and desktop conflicts.
+Read-only workers may run concurrently. Coding/write work and desktop execution are kept serial to avoid file and desktop conflicts.
 
-### SOLO Mode — How It Works
+### Desktop Execution — How It Works
 
-SOLO is a **goal-driven agent**, not a task executor with a fixed plan:
+Desktop execution is a **goal-driven worker**, not a task executor with a fixed plan:
 
 1. **Observe** — captures a screenshot of your desktop
 2. **Think** — VL model analyzes the image + task goal + history
@@ -130,7 +130,7 @@ SOLO is a **goal-driven agent**, not a task executor with a fixed plan:
 
 The model autonomously decides what to do at each step. No pre-programmed scripts. No brittle selectors. Just visual understanding and reasoning.
 
-SOLO now uses soft stability signals instead of rigid scripts: action signatures detect true repeated actions, visual no-op and uncertain outcomes trigger recovery hints, and batch actions are only suppressed while recovering. Navigation-like actions such as `open_url`, click, double-click, and `press_keys` use short post-action screenshot stabilization so the next model step sees the loaded page instead of an early loading frame. This keeps SOLO flexible for general tasks while still reducing repeated clicks and stalled screens.
+The desktop execution worker uses soft stability signals instead of rigid scripts: action signatures detect true repeated actions, visual no-op and uncertain outcomes trigger recovery hints, and batch actions are only suppressed while recovering. Navigation-like actions such as `open_url`, click, double-click, and `press_keys` use short post-action screenshot stabilization so the next model step sees the loaded page instead of an early loading frame. This keeps the worker flexible for general tasks while still reducing repeated clicks and stalled screens.
 
 ### Remote IM Control
 
@@ -140,16 +140,16 @@ openEagle can accept tasks from Feishu, Telegram, or WeChat after you enable the
 - Telegram requires a Bot Token. The whitelist accepts either `user_id` or `chat_id`.
 - WeChat uses `wechat-clawbot`. Click "Scan to bind" in the WeChat card, scan the QR code with WeChat, then enable the entry after the `accountId` is saved. "Unbind" stops polling and removes the local ClawBot account credentials used by openEagle.
 - Empty whitelists reject all remote messages by default.
-- Plain remote text starts a SOLO task by default. Use `/chat <message>` when you only want a text chat.
+- Plain remote text is handled by the main agent first. It can reply naturally, use tools, or dispatch desktop execution when the task needs GUI control.
+- Use `/solo <task>` only when you want to explicitly bias the request toward desktop execution.
 
 Remote commands:
 
 | Command | Behavior |
 |---------|----------|
-| `<plain text>` | Start a SOLO desktop task |
-| `/solo <task>` | Start a SOLO desktop task explicitly |
-| `/chat <message>` | Send a Chat-only message |
-| `/pause`, `/resume`, `/stop` | Control the current SOLO task |
+| `<plain text>` | Send the message to the main agent |
+| `/solo <task>` | Explicitly request desktop execution |
+| `/pause`, `/resume`, `/stop` | Control the current desktop execution task |
 | `/allow`, `/reject` | Approve or reject pending confirmations |
 | `/help` | Show command help |
 
@@ -167,17 +167,17 @@ Additional guardrails: max 150 steps, action-signature duplicate detection, scre
 
 ## Configuration
 
-openEagle supports flexible model routing — separate providers for chat (text) and vision-language tasks, with configurable base URLs for any OpenAI-compatible API.
+openEagle supports flexible model routing — separate providers for main-agent text work and vision-language desktop execution, with configurable base URLs for any OpenAI-compatible API.
 
 Key settings (accessible from the in-app Settings panel):
 
 | Setting | Description |
 |---------|-------------|
 | `agent.provider` | Text model provider (`openai`, `openai-like`, `mock`) |
-| `agent.modelId` | Text model for chat |
+| `agent.modelId` | Text model for the main agent and direct conversation |
 | `agent.baseUrl` | Custom OpenAI-compatible API base URL |
 | `agent.vlProvider` | Vision model provider (`openai`, `openai-like`) |
-| `agent.vlModelId` | Vision-Language model for SOLO |
+| `agent.vlModelId` | Vision-Language model for desktop execution |
 | `agent.vlBaseUrl` | OpenAI-compatible API base URL for the vision model |
 | `feishu.enabled` | Enable the Feishu remote entry |
 | `feishu.appId` / `feishu.appSecret` | Feishu app credentials for long-connection events |
@@ -229,7 +229,7 @@ Contributions are welcome! Here's how to get started:
 
 ### Areas Where Help Is Needed
 
-- **SOLO reliability** — testing across different applications and workflows
+- **Desktop execution reliability** — testing across different applications and workflows
 - **Context management** — stronger context strategies inspired by tools like OpenClaw and Hermes
 - **Cross-platform** — macOS and Linux adaptation
 - **Tools & integrations** — new built-in tools, MCP servers, skills

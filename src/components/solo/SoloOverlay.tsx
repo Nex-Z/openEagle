@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { X } from "lucide-react";
-import type { SoloRunState } from "../../types/protocol";
+import { executionStateLabel } from "../../lib/runLabels";
 
 interface SoloOverlayProps {
   title: string;
@@ -12,16 +12,6 @@ interface SoloOverlayProps {
   maxSteps: number;
   onDismiss: () => void;
 }
-
-const stateLabels: Record<string, string> = {
-  idle: "空闲",
-  running: "运行中",
-  paused: "已暂停",
-  waiting_user_confirmation: "待确认",
-  completed: "已完成",
-  aborted: "已结束",
-  error: "失败",
-};
 
 export function SoloOverlay(props: SoloOverlayProps) {
   const { title, detail, stepText, historyText, state, stepCount, maxSteps, onDismiss } = props;
@@ -50,11 +40,11 @@ export function SoloOverlay(props: SoloOverlayProps) {
       <section className={`solo-overlay-card tone-${state}`}>
         <header className="solo-overlay-header">
           <div>
-            <p>SOLO</p>
+            <p>桌面执行</p>
             <strong>{title}</strong>
           </div>
           <div className="solo-overlay-header-actions">
-            <span className="solo-overlay-state">{stateLabels[state] ?? state}</span>
+            <span className="solo-overlay-state">{executionStateLabel(state)}</span>
             <button
               className="solo-overlay-dismiss"
               onClick={onDismiss}

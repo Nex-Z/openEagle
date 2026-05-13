@@ -14,11 +14,11 @@ import uvicorn
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from .agent_runtime import AgentRuntime
-from .attachments import AttachmentError, AttachmentStore, append_attachment_context
+from .attachments import AttachmentStore
 from .config import AppConfig, load_config
 from .confirmations import ToolConfirmationStore
 from .default_tools import build_default_tools, execute_confirmed_tool
-from .im.bridge import IMBridge, bind_config_getter
+from .im.bridge import IMBridge, IM_RECEIVED_ACK_TEXT, bind_config_getter
 from .im.models import IMConversationBinding
 from .models import (
     AttachmentRef,
@@ -27,7 +27,6 @@ from .models import (
     MessagePayload,
     SoloConfirmationPayload,
     SoloControlPayload,
-    SoloStartPayload,
     SoloStatusPayload,
     SoloStepPayload,
     StatusPayload,
@@ -205,7 +204,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             if active_solo is None or active_solo.state in {"aborted", "completed", "error"}:
                 return
             active_solo.state = "error"
-            active_solo.detail = f"SOLO 后台任务异常: {exc}"
+            active_solo.detail = f"桌面执行后台任务异常: {exc}"
             solo_logger.write("error", {"reason": active_solo.detail})
             await emit_solo_status(active_solo)
             await close_solo_capabilities()
@@ -263,7 +262,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         trace = {
             "id": f"solo-trace-{session.step_count}-{name}-{status}",
             "kind": kind,
-            "name": f"SOLO/{name}",
+            "name": f"桌面执行/{name}",
             "status": trace_status,
             "summary": summary,
             "params": params or {},
@@ -305,7 +304,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         ):
             await im_bridge.send_text(
                 session.conversation_id,
-                f"SOLO {session.state}: {session.detail}",
+                f"桌面执行 {session.state}: {session.detail}",
             )
 
     async def emit_solo_plan(session: SoloSessionState, kernel: SoloAgentKernel) -> None:
@@ -389,7 +388,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         if im_bridge is not None and session.conversation_id.startswith("im_"):
             await im_bridge.send_text(
                 session.conversation_id,
-                f"SOLO 需要确认动作 `{action}`。\n原因: {reason}\n回复 /allow 继续，或 /reject 拒绝。",
+                f"桌面执行需要确认动作 `{action}`。\n原因: {reason}\n回复 /allow 继续，或 /reject 拒绝。",
             )
 
 
@@ -412,7 +411,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         action_args: dict[str, Any],
         capture_after: bool = True,
     ) -> dict[str, Any]:
-        """Execute a single SOLO action and return the execution result dict.
+        """Execute a single desktop action and return the execution result dict.
 
         Returns a dict with keys: success, action, executionResult, screenshot.
         On exception returns success=False with executionError.
@@ -550,7 +549,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         nonlocal solo_service, solo_kernel
         if solo_service is None:
             session.state = "error"
-            session.detail = "SOLO 服务未初始化。"
+            session.detail = "桌面执行服务未初始化。"
             solo_logger.write("error", {"reason": session.detail})
             await emit_solo_status(session)
             await close_solo_capabilities()
@@ -597,7 +596,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     session,
                     str(trace.get("name") or "capability"),
                     str(trace.get("status") or "completed"),
-                    str(trace.get("summary") or "SOLO 能力调用"),
+                    str(trace.get("summary") or "桌面执行能力调用"),
                     params=trace.get("params") if isinstance(trace.get("params"), dict) else {},
                     result=trace.get("result"),
                     kind=str(trace.get("kind") or "tool"),
@@ -643,7 +642,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             # information tasks, artifact/verifier details for file/code tasks, and a
             # visible target state for app/GUI tasks.
             #
-            # This keeps SOLO from ending with "page opened" or an empty "done" report.
+            # This keeps desktop execution from ending with "page opened" or an empty "done" report.
             premature_finish = False
             finish_requested = decision.action == "finish"
             if finish_requested and not solo_kernel.has_completion_evidence(session.findings, decision):
@@ -793,7 +792,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 if is_repairable_solo_block(blocked_action_name, assessment.reason):
                     session.state = "running"
                     outcome = solo_kernel.record_repairable_action_block(assessment.reason)
-                    session.detail = f"SOLO 正在恢复: {outcome.recovery_hint}"
+                    session.detail = f"桌面执行正在恢复: {outcome.recovery_hint}"
                     session.failed_count += 1
                     session.recovery_mode_entries += 1
                     blocked_decision = decision.model_copy(
@@ -834,7 +833,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         session,
                         "decision",
                         "error",
-                        "动作参数无效，已反馈给 SOLO 重新决策",
+                        "动作参数无效，已反馈给桌面执行重新决策",
                         params={
                             "action": blocked_action_name,
                             "reason": assessment.reason,
@@ -847,7 +846,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     await emit_solo_status(session)
                     if outcome.should_pause:
                         session.state = "paused"
-                        session.detail = f"SOLO 连续修复动作参数失败，已暂停: {outcome.pause_reason}"
+                        session.detail = f"桌面执行连续修复动作参数失败，已暂停: {outcome.pause_reason}"
                         solo_logger.write(
                             "paused",
                             {
@@ -1074,7 +1073,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 if outcome.recovery_hint:
                     session.recovery_mode_entries += 1
                 if outcome.recovery_hint:
-                    session.detail = f"SOLO 正在恢复: {outcome.recovery_hint}"
+                    session.detail = f"桌面执行正在恢复: {outcome.recovery_hint}"
                 solo_logger.write(
                     "action_result",
                     {
@@ -1105,7 +1104,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
                 if outcome.should_pause:
                     session.state = "paused"
-                    session.detail = f"SOLO 连续恢复失败，已暂停: {outcome.pause_reason}"
+                    session.detail = f"桌面执行连续恢复失败，已暂停: {outcome.pause_reason}"
                     solo_logger.write("paused", {"reason": session.detail, "action": current_action})
                     solo_logger.write("stability_summary", solo_stability_summary(session, "recovery_failed"))
                     await emit_solo_status(session)
@@ -1159,7 +1158,6 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             request_id,
             content,
             attachments=attachments,
-            preferred_mode="chat",
         )
 
     async def start_solo_for_conversation(
@@ -1173,11 +1171,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             "paused",
             "waiting_user_confirmation",
         }:
-            return "已有 SOLO 任务在进行中，请先 /stop 或等待它结束。"
+            return "已有桌面执行任务在进行中，请先 /stop 或等待它结束。"
 
         current_config = runtime_state.get_config()
         if not current_config.agent.vl_model_id or not current_config.agent.vl_api_key:
-            return "SOLO 配置缺失，请先在 openEagle 设置中配置 VL 模型 ID 与 API Key。"
+            return "桌面执行配置缺失，请先在 openEagle 设置中配置视觉模型 ID 与 API Key。"
 
         await close_solo_capabilities()
         solo_capabilities = SoloCapabilityRuntime(
@@ -1205,7 +1203,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 if first_screenshot.get("capturedAt")
                 else None
             ),
-            detail="SOLO 已启动，正在分析首帧截图。",
+            detail="桌面执行已启动，正在分析首帧截图。",
             display_index=current_config.solo.preferred_display_index,
         )
         active_solo.log_path = solo_logger.start(request_id, task)
@@ -1226,7 +1224,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         await emit_solo_status(active_solo)
         if not active_solo.last_screenshot_path:
             active_solo.state = "error"
-            active_solo.detail = "首帧截图失败，无法启动 SOLO。"
+            active_solo.detail = "首帧截图失败，无法启动桌面执行。"
             await emit_solo_status(active_solo)
             await close_solo_capabilities()
             return active_solo.detail
@@ -1260,7 +1258,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await close_solo_capabilities()
 
         schedule_solo_task(_start_agent())
-        return "收到，开始处理。"
+        return IM_RECEIVED_ACK_TEXT
 
     async def start_solo_from_im(
         binding: IMConversationBinding,
@@ -1281,62 +1279,62 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     ) -> str:
         nonlocal active_solo
         if active_solo is None:
-            return "当前没有进行中的 SOLO 任务。"
+            return "当前没有进行中的桌面执行任务。"
         if active_solo.conversation_id != conversation_id:
-            return "当前 SOLO 任务属于另一个对话，不能从这里控制。"
+            return "当前桌面执行任务属于另一个对话，不能从这里控制。"
 
         if action == "pause":
             active_solo.state = "paused"
-            active_solo.detail = "用户已暂停 SOLO。"
+            active_solo.detail = "用户已暂停桌面执行。"
             cancel_active_solo_task()
             solo_logger.write("paused", {"reason": active_solo.detail})
-            await emit_solo_trace(active_solo, "control", "completed", "用户暂停 SOLO", params={"action": "pause"})
+            await emit_solo_trace(active_solo, "control", "completed", "用户暂停桌面执行", params={"action": "pause"})
             await emit_solo_status(active_solo)
-            return "SOLO 已暂停。"
+            return "桌面执行已暂停。"
 
         if action == "resume":
             if active_solo.last_screenshot_path is None:
                 active_solo.state = "error"
-                active_solo.detail = "缺少截图，无法恢复 SOLO。"
+                active_solo.detail = "缺少截图，无法恢复桌面执行。"
                 solo_logger.write("error", {"reason": active_solo.detail})
                 await emit_solo_status(active_solo)
                 await close_solo_capabilities()
                 return active_solo.detail
             active_solo.state = "running"
-            active_solo.detail = "SOLO 已恢复。"
-            await emit_solo_trace(active_solo, "control", "completed", "用户恢复 SOLO", params={"action": "resume"})
+            active_solo.detail = "桌面执行已恢复。"
+            await emit_solo_trace(active_solo, "control", "completed", "用户恢复桌面执行", params={"action": "resume"})
             await emit_solo_status(active_solo)
             schedule_solo_task(agent_loop(active_solo, active_solo.last_screenshot_path))
-            return "SOLO 已恢复。"
+            return "桌面执行已恢复。"
 
         if action == "stop":
             active_solo.state = "aborted"
-            active_solo.detail = "用户已结束 SOLO。"
+            active_solo.detail = "用户已结束桌面执行。"
             active_solo.completed_at = utc_now()
             active_solo.pending_confirmation = None
             cancel_active_solo_task()
             solo_logger.write("aborted", {"reason": active_solo.detail})
-            await emit_solo_trace(active_solo, "control", "completed", "用户结束 SOLO", params={"action": "stop"})
+            await emit_solo_trace(active_solo, "control", "completed", "用户结束桌面执行", params={"action": "stop"})
             await emit_solo_status(active_solo)
             await close_solo_capabilities()
-            return "SOLO 已结束。"
+            return "桌面执行已结束。"
 
         if action == "confirm_reject":
             if not active_solo.pending_confirmation:
-                return "没有待确认的 SOLO 动作。"
+                return "没有待确认的桌面执行动作。"
             active_solo.pending_confirmation = None
             active_solo.state = "paused"
-            active_solo.detail = "用户拒绝了危险动作，SOLO 已暂停。"
+            active_solo.detail = "用户拒绝了危险动作，桌面执行已暂停。"
             solo_logger.write("paused", {"reason": active_solo.detail})
             await emit_solo_status(active_solo)
-            return "已拒绝危险动作，SOLO 已暂停。"
+            return "已拒绝危险动作，桌面执行已暂停。"
 
         if action != "confirm_allow":
-            return f"不支持的 SOLO 控制动作: {action}"
+            return f"不支持的桌面执行控制动作: {action}"
 
         pending = active_solo.pending_confirmation
         if not pending:
-            return "没有待确认的 SOLO 动作。"
+            return "没有待确认的桌面执行动作。"
         active_solo.pending_confirmation = None
         active_solo.state = "running"
         active_solo.detail = "用户已允许危险动作，继续执行。"
@@ -1401,7 +1399,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await agent_loop(active_solo, next_screenshot)
 
         schedule_solo_task(_execute_confirmed_and_continue())
-        return "已允许危险动作，SOLO 会继续执行。"
+        return "已允许危险动作，桌面执行会继续推进。"
 
     agent_runtime = AgentRuntime(
         config_getter=runtime_state.get_config,
@@ -1701,44 +1699,6 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 )
                 continue
 
-            if envelope.type == "client:start_solo":
-                payload = SoloStartPayload.model_validate(envelope.payload)
-                solo_content = payload.content
-                if payload.attachments:
-                    try:
-                        prepared_attachments = attachment_store.prepare_user_attachments(
-                            envelope.conversation_id,
-                            payload.attachments,
-                        )
-                    except AttachmentError as exc:
-                        await safe_send(
-                            "server:message",
-                            envelope.request_id,
-                            envelope.conversation_id,
-                            {"content": f"附件处理失败: {exc}"},
-                        )
-                        continue
-                    await safe_send(
-                        "server:attachments_ready",
-                        envelope.request_id,
-                        envelope.conversation_id,
-                        {"attachments": attachment_store.public_dicts(prepared_attachments)},
-                    )
-                    solo_content = append_attachment_context(solo_content, prepared_attachments)
-                solo_reply = await start_solo_for_conversation(
-                    envelope.conversation_id,
-                    solo_content,
-                    envelope.request_id,
-                )
-                if solo_reply != "收到，开始处理。":
-                    await safe_send(
-                        "server:message",
-                        envelope.request_id,
-                        envelope.conversation_id,
-                        {"content": solo_reply},
-                    )
-                continue
-
             if envelope.type == "client:solo_control":
                 control = SoloControlPayload.model_validate(envelope.payload)
                 slog(
@@ -1750,20 +1710,20 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         "server:error",
                         envelope.request_id,
                         envelope.conversation_id,
-                        ErrorPayload(message="当前没有进行中的 SOLO 任务", code="solo_missing").model_dump(),
+                        ErrorPayload(message="当前没有进行中的桌面执行任务", code="solo_missing").model_dump(),
                     )
                     continue
 
                 if control.action == "pause":
                     active_solo.state = "paused"
-                    active_solo.detail = "用户已暂停 SOLO。"
+                    active_solo.detail = "用户已暂停桌面执行。"
                     cancel_active_solo_task()
                     solo_logger.write("paused", {"reason": active_solo.detail})
                     await emit_solo_trace(
                         active_solo,
                         "control",
                         "completed",
-                        "用户暂停 SOLO",
+                        "用户暂停桌面执行",
                         params={"action": "pause"},
                     )
                     await emit_solo_status(active_solo)
@@ -1772,18 +1732,18 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 if control.action == "resume":
                     if active_solo.last_screenshot_path is None:
                         active_solo.state = "error"
-                        active_solo.detail = "缺少截图，无法恢复 SOLO。"
+                        active_solo.detail = "缺少截图，无法恢复桌面执行。"
                         solo_logger.write("error", {"reason": active_solo.detail})
                         await emit_solo_status(active_solo)
                         await close_solo_capabilities()
                     else:
                         active_solo.state = "running"
-                        active_solo.detail = "SOLO 已恢复。"
+                        active_solo.detail = "桌面执行已恢复。"
                         await emit_solo_trace(
                             active_solo,
                             "control",
                             "completed",
-                            "用户恢复 SOLO",
+                            "用户恢复桌面执行",
                             params={"action": "resume"},
                         )
                         await emit_solo_status(active_solo)
@@ -1797,7 +1757,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
                 if control.action == "stop":
                     active_solo.state = "aborted"
-                    active_solo.detail = "用户已结束 SOLO。"
+                    active_solo.detail = "用户已结束桌面执行。"
                     active_solo.completed_at = utc_now()
                     active_solo.pending_confirmation = None
                     cancel_active_solo_task()
@@ -1806,7 +1766,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         active_solo,
                         "control",
                         "completed",
-                        "用户结束 SOLO",
+                        "用户结束桌面执行",
                         params={"action": "stop"},
                     )
                     await emit_solo_status(active_solo)
@@ -1897,7 +1857,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 if control.action == "confirm_reject":
                     active_solo.pending_confirmation = None
                     active_solo.state = "paused"
-                    active_solo.detail = "用户拒绝了危险动作，SOLO 已暂停。"
+                    active_solo.detail = "用户拒绝了危险动作，桌面执行已暂停。"
                     solo_logger.write("paused", {"reason": active_solo.detail})
                     await emit_solo_status(active_solo)
                     continue
@@ -1912,7 +1872,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     "server:error",
                     envelope.request_id,
                     envelope.conversation_id,
-                    ErrorPayload(message=f"Unsupported solo control action: {control.action}", code="solo_unsupported_control").model_dump(),
+                    ErrorPayload(message=f"不支持的桌面执行控制动作: {control.action}", code="solo_unsupported_control").model_dump(),
                 )
                 continue
 

@@ -287,7 +287,7 @@ class SoloService:
             return self._agent
         api_key = self._agent_config.vl_api_key
         if not api_key:
-            raise ValueError("SOLO 需要配置 VL API Key。")
+            raise ValueError("桌面执行需要配置视觉模型 API Key。")
 
         if self._agent_config.vl_provider == "openai-like":
             if not self._agent_config.vl_base_url:
@@ -309,7 +309,7 @@ class SoloService:
             instructions.extend(self._capability_runtime.skill_instructions())
             instructions.append(
                 "你可以主动调用已启用的 Agno 工具和 MCP 工具，不需要用户显式点名。"
-                "工具结果是观察信息，最终仍必须输出 SOLO 决策 JSON。"
+                "工具结果是观察信息，最终仍必须输出桌面执行决策 JSON。"
                 "如果工具返回 SOLO_CONFIRMATION_REQUIRED，停止继续调用工具，按该请求等待用户确认。"
             )
             tools = self._capability_runtime.agent_tools
@@ -440,7 +440,7 @@ class SoloService:
                         "kind": self._trace_kind_for_tool(self._tool_name_from_event(event)),
                         "name": self._tool_name_from_event(event),
                         "status": "started",
-                        "summary": "SOLO Agent 正在主动调用能力。",
+                        "summary": "桌面执行 worker 正在主动调用能力。",
                         "params": {},
                     }
                 )
@@ -455,7 +455,7 @@ class SoloService:
                         "kind": self._trace_kind_for_tool(tool_name),
                         "name": tool_name,
                         "status": "completed",
-                        "summary": "SOLO Agent 能力调用完成。",
+                        "summary": "桌面执行 worker 能力调用完成。",
                         "params": getattr(tool, "tool_args", {}) if tool else {},
                         "result": result_text,
                     }
@@ -479,7 +479,7 @@ class SoloService:
                         "kind": self._trace_kind_for_tool(tool_name),
                         "name": tool_name,
                         "status": "error",
-                        "summary": "SOLO Agent 能力调用失败。",
+                        "summary": "桌面执行 worker 能力调用失败。",
                         "params": {},
                         "result": stringify_tool_result(getattr(event, "tool", None)),
                     }
@@ -590,7 +590,7 @@ class SoloService:
             return self._attach_image_metrics(decision, model_image, model_elapsed_ms)
         output_text = run_output.text
         if not isinstance(output_text, str) or not output_text.strip():
-            raise ValueError("VL 返回为空，无法继续 SOLO。")
+            raise ValueError("视觉模型返回为空，无法继续桌面执行。")
         try:
             decision = self._normalize_decision(output_text)
             decision.tool_traces = run_output.tool_traces
@@ -666,7 +666,7 @@ class SoloService:
     def to_error_decision(error: Exception) -> SoloDecision:
         message = str(error)
         return SoloDecision(
-            thought_summary=f"SOLO 解析或推理失败: {message}",
+            thought_summary=f"桌面执行解析或推理失败: {message}",
             action="wait",
             action_args={"ms": 800},
             progress="等待用户处理后重试",

@@ -23,7 +23,7 @@ export interface ChatMessage {
   role: "user" | "assistant" | "system" | "tool";
   content: string;
   createdAt: string;
-  mode?: "chat" | "solo";
+  mode?: "solo";
   imagePath?: string;
   attachments?: AttachmentRef[];
   label?: string;

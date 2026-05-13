@@ -13,3 +13,6 @@ src-tauri/target/
 src-tauri/binaries/*.exe
 src-tauri/binaries/*-x86_64-*
 .open-eagle/
+
+# IDE
+.idea/

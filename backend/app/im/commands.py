@@ -5,7 +5,7 @@ from typing import Literal
 
 
 IMCommandName = Literal[
-    "chat",
+    "auto",
     "solo",
     "pause",
     "resume",
@@ -23,7 +23,6 @@ class IMCommand:
 
 
 _CONTROL_COMMANDS: dict[str, IMCommandName] = {
-    "chat": "chat",
     "solo": "solo",
     "pause": "pause",
     "resume": "resume",
@@ -39,14 +38,14 @@ def parse_im_command(text: str, *, allow_empty_task: bool = False) -> IMCommand:
     if not stripped:
         return IMCommand(name="help")
     if not stripped.startswith("/"):
-        return IMCommand(name="solo", argument=stripped)
+        return IMCommand(name="auto", argument=stripped)
 
     head, _, tail = stripped[1:].partition(" ")
     command = _CONTROL_COMMANDS.get(head.lower())
     if command is None:
         return IMCommand(name="help")
 
-    if command in {"chat", "solo"} and not tail.strip() and not allow_empty_task:
+    if command == "solo" and not tail.strip() and not allow_empty_task:
         return IMCommand(name="help")
 
     return IMCommand(name=command, argument=tail.strip())

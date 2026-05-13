@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
+import { executionStateLabel } from "../../lib/runLabels";
 import type {
   AgentExecutionTrace,
   AssistantMessageBlock,
@@ -32,9 +33,7 @@ import type {
 interface ChatWorkspaceProps {
   messages: ChatMessage[];
   canSend: boolean;
-  canStartSolo: boolean;
   onSend: (content: string, attachments?: AttachmentRef[]) => void;
-  onSoloStart: (content: string, attachments?: AttachmentRef[]) => Promise<boolean>;
   onSoloPause: () => boolean;
   onSoloResume: () => boolean;
   onSoloStop: () => boolean;
@@ -446,9 +445,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
   const {
     messages,
     canSend,
-    canStartSolo,
     onSend,
-    onSoloStart,
     onSoloPause,
     onSoloResume,
     onSoloStop,
@@ -469,7 +466,6 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const [expandedTraceIds, setExpandedTraceIds] = useState<Set<string>>(new Set());
-  const [composerMode, setComposerMode] = useState<"chat" | "solo">("chat");
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const streamRef = useRef<HTMLDivElement | null>(null);
@@ -508,11 +504,6 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
 
   const flatItems = groupedItems.flatMap((group) => group.items);
 
-  const soloDisabledReason = !settings.agent.vlModelId.trim()
-    ? "缺少 VL 模型 ID"
-    : !settings.agent.vlApiKey.trim()
-      ? "缺少 VL API Key"
-      : null;
   const visibleMessages = useMemo(
     () =>
       messages.filter(
@@ -638,21 +629,6 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
       return;
     }
 
-    if (composerMode === "solo") {
-      const ok = await onSoloStart(normalized || "请结合附件执行任务。", publicAttachments(validAttachments));
-      if (ok) {
-        setDraft("");
-        for (const attachment of draftAttachments) {
-          if (attachment.previewUrl) {
-            URL.revokeObjectURL(attachment.previewUrl);
-          }
-        }
-        setDraftAttachments([]);
-        setAttachmentError(null);
-      }
-      return;
-    }
-
     onSend(normalized || "请处理这些附件。", publicAttachments(validAttachments));
     setDraft("");
     for (const attachment of draftAttachments) {
@@ -767,8 +743,8 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
                 <div className="empty-message-icon">
                   <MonitorSmartphone size={24} />
                 </div>
-                <h2>这里会显示对话和 SOLO 执行摘要</h2>
-                <p>输入 `/` 可快速插入 Tool、MCP 和 Skill 指令，右侧 Inspector 会展示更完整的执行细节。</p>
+                <h2>和主 Agent 对话，它会自己调度执行</h2>
+                <p>输入 `/` 可快速插入 Tool、MCP 和 Skill 指令，右侧活动面板会展示更完整的执行细节。</p>
               </>
             )}
           </div>
@@ -899,9 +875,9 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
         {isSoloBusy ? (
           <div className="solo-control-bar">
             <div className="solo-control-copy">
-              <strong>SOLO 进行中</strong>
+              <strong>桌面执行中</strong>
               <span>
-                {soloStatus.stepCount}/{soloStatus.maxSteps} · {soloStatus.state}
+                {soloStatus.stepCount}/{soloStatus.maxSteps} · {executionStateLabel(soloStatus.state)}
               </span>
             </div>
             <div className="solo-control-actions">
@@ -925,22 +901,6 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
         <div className="composer-frame">
           <div className="composer-mode-row">
             <div className="composer-controls">
-              <div className="segmented-control" role="tablist" aria-label="模式切换">
-                <button
-                  className={composerMode === "chat" ? "segment is-active" : "segment"}
-                  onClick={() => setComposerMode("chat")}
-                  type="button"
-                >
-                  Chat
-                </button>
-                <button
-                  className={composerMode === "solo" ? "segment is-active" : "segment"}
-                  onClick={() => setComposerMode("solo")}
-                  type="button"
-                >
-                  SOLO
-                </button>
-              </div>
               <div className="segmented-control permission-control" aria-label="权限控制">
                 <button
                   className={
@@ -962,13 +922,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
                 </button>
               </div>
             </div>
-            {composerMode === "solo" && soloDisabledReason ? (
-              <span className="mode-hint warning">{soloDisabledReason}</span>
-            ) : composerMode === "solo" ? (
-              <span className="mode-hint">将触发桌面视觉操作</span>
-            ) : (
-              <span className="mode-hint">输入 `/` 调出命令面板</span>
-            )}
+            <span className="mode-hint">main agent 会按意图自动聊天或调度执行</span>
           </div>
 
           <input
@@ -1002,16 +956,14 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
               onKeyDown={handleKeyDown}
               placeholder={
                 canSend
-                  ? composerMode === "solo"
-                    ? "描述要自动操作电脑完成的任务..."
-                    : "输入任务，或使用 / 调出 Tool / MCP / Skill..."
+                  ? "输入想聊的内容或要完成的任务..."
                   : "等待后端启动完成..."
               }
               rows={1}
               value={draft}
             />
 
-            {slashQuery && composerMode === "chat" ? (
+            {slashQuery ? (
               <div className="slash-menu" role="listbox">
                 <div className="slash-menu-header">
                   <strong>命令面板</strong>
@@ -1055,7 +1007,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
           <div className="composer-footer">
             <div className="composer-status">
               <Play size={14} />
-              <span>{composerMode === "solo" ? "SOLO" : "聊天"} 已就绪</span>
+              <span>Agent 已就绪</span>
             </div>
             <button
               aria-label="添加附件"
@@ -1072,8 +1024,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
               className="send-button"
               disabled={
                 !canSend ||
-                (!draft.trim() && draftAttachments.every((attachment) => attachment.status === "error")) ||
-                (composerMode === "solo" && !canStartSolo)
+                (!draft.trim() && draftAttachments.every((attachment) => attachment.status === "error"))
               }
               onClick={() => {
                 void submit();

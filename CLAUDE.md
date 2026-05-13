@@ -4,10 +4,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-openEagle is a desktop AI assistant — **Tauri 2 (Rust) + React frontend + Python FastAPI backend**. Two modes:
+openEagle is a desktop AI assistant — **Tauri 2 (Rust) + React frontend + Python FastAPI backend**. Users talk to one main agent:
 
-- **Chat**: LLM conversation with tool calling (file ops, commands, code search, web search via Baidu)
-- **SOLO**: Vision-Language desktop automation — VL model analyzes screenshots and operates the desktop
+- **Main agent**: direct conversation, intent understanding, clarification, routing, and summaries.
+- **Workers**: scoped sub-agents for tools, coding, research, and visual desktop execution.
+- **Desktop execution worker**: internally still named `solo` in protocol/config/code; VL model analyzes screenshots and operates the desktop.
 
 ## Architecture
 
@@ -54,7 +55,7 @@ src/                    React frontend (TypeScript)
   components/inspector/ ActivityInspector, SoloPlanChecklist
   components/layout/    AppShell, NavigationSidebar
   components/settings/  SettingsDrawer
-  components/solo/      SoloOverlay (separate window)
+  components/solo/      Desktop execution overlay (internal solo naming)
   hooks/                useBackendConnection (core state + WS), useTheme
   lib/storage.ts        localStorage persistence with quota protection
   types/protocol.ts     All shared TypeScript types
@@ -72,10 +73,10 @@ backend/                Python FastAPI server
   app/config.py         AppConfig (agent, tools, solo, permissions)
   app/safety.py         3-level risk: safe/confirm/blocked
   app/prompts.py        All LLM prompts (centralized)
-  app/default_tools.py  Chat tool implementations (Toolkit class)
-  app/solo_service.py   SOLO session state
-  app/solo_executor.py  SOLO action execution
-  app/solo_kernel.py    SOLO agent kernel
+  app/default_tools.py  Main agent/default tool implementations (Toolkit class)
+  app/solo_service.py   Desktop execution session state (internal solo naming)
+  app/solo_executor.py  Desktop action execution
+  app/solo_kernel.py    Desktop execution agent kernel
   app/providers/        LLM providers (agno, mock, base)
 ```
 

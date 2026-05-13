@@ -8,10 +8,10 @@ SoloControl = Callable[[str, str, str], Awaitable[str]]
 
 
 class SoloWorkerAdapter:
-    """Thin adapter that lets AgentRuntime treat SOLO as a worker.
+    """Thin adapter that lets AgentRuntime treat desktop execution as a worker.
 
-    The adapter intentionally does not inspect or steer SOLO's internal loop.
-    SOLO remains responsible for visual observation, execution, recovery, and
+    The adapter intentionally does not inspect or steer the worker's internal loop.
+    The worker remains responsible for visual observation, execution, recovery, and
     validation; the main runtime only starts and controls the session.
     """
 
@@ -37,4 +37,4 @@ class SoloWorkerAdapter:
 
     async def get_report(self, conversation_id: str, request_id: str) -> str:
         _ = (conversation_id, request_id)
-        return "SOLO 的运行报告通过现有 status、step、plan 和 final message 事件持续产出。"
+        return "桌面执行的运行报告会通过现有 status、step、plan 和 final message 事件持续产出。"

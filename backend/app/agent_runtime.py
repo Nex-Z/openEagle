@@ -4,11 +4,16 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+from agno.agent import Agent
+from agno.models.openai import OpenAIResponses
+from agno.models.openai.like import OpenAILike
+
 from .agent_router import AgentRouter
 from .attachments import AttachmentError, AttachmentStore, append_attachment_context
-from .config import AppConfig
+from .config import AgentConfig, AppConfig
 from .confirmations import ToolConfirmationStore
 from .models import AttachmentRef, StatusPayload, utc_now
+from .prompts import build_direct_answer_instructions, build_direct_answer_prompt
 from .providers.base import ReplyToolConfirmation, ReplyTrace
 from .solo_worker_adapter import SoloWorkerAdapter
 from .subagent_manager import SubAgentManager
@@ -124,7 +129,11 @@ class AgentRuntime:
 
         try:
             if decision.route == "answer_directly":
-                reply = self._direct_answer(content)
+                reply = await self._direct_answer(
+                    conversation_id=conversation_id,
+                    content=content,
+                    config=config,
+                )
             elif decision.route == "clarify":
                 reply = decision.user_visible_summary or "我需要先确认一下你的具体目标。"
             elif decision.route == "start_solo":
@@ -178,7 +187,7 @@ class AgentRuntime:
                 request_id,
                 "allow" if action == "confirm_allow" else "reject",
             )
-        return f"不支持的 SOLO 控制动作: {action}"
+        return f"不支持的桌面执行控制动作: {action}"
 
     async def handle_confirmation(
         self,
@@ -204,7 +213,7 @@ class AgentRuntime:
                 "kind": "agent",
                 "name": "solo-worker",
                 "status": "started",
-                "summary": "main agent 已将任务交给 SOLO 视觉 worker。",
+                "summary": "main agent 已将任务交给桌面执行 worker。",
                 "params": {"workerKind": "solo", "route": decision.route},
                 "startedAt": started_at,
             },
@@ -222,7 +231,7 @@ class AgentRuntime:
                 "kind": "agent",
                 "name": "solo-worker",
                 "status": "completed",
-                "summary": "SOLO 视觉 worker 已接收任务。",
+                "summary": "桌面执行 worker 已接收任务。",
                 "params": {"workerKind": "solo", "route": decision.route},
                 "result": reply,
                 "startedAt": started_at,
@@ -377,11 +386,62 @@ class AgentRuntime:
             return "stop"
         return "pause"
 
+    async def _direct_answer(
+        self,
+        *,
+        conversation_id: str,
+        content: str,
+        config: AppConfig,
+    ) -> str:
+        if self._can_use_direct_answer_model(config.agent):
+            try:
+                return await self._direct_answer_with_model(conversation_id, content, config)
+            except Exception:
+                pass
+        return self._fallback_direct_answer(content)
+
     @staticmethod
-    def _direct_answer(content: str) -> str:
+    def _can_use_direct_answer_model(agent_config: AgentConfig) -> bool:
+        return agent_config.provider in {"openai", "openai-like"} and bool(agent_config.api_key)
+
+    async def _direct_answer_with_model(
+        self,
+        conversation_id: str,
+        content: str,
+        config: AppConfig,
+    ) -> str:
+        agent_config = config.agent
+        model_id = agent_config.model_id or "gpt-5-mini"
+        if agent_config.provider == "openai-like":
+            if not agent_config.base_url:
+                raise ValueError("openai-like 模式需要配置 Base URL。")
+            model = OpenAILike(
+                id=model_id,
+                api_key=agent_config.api_key,
+                base_url=agent_config.base_url,
+            )
+        else:
+            model = OpenAIResponses(
+                id=model_id,
+                api_key=agent_config.api_key,
+            )
+
+        agent = Agent(
+            model=model,
+            markdown=False,
+            instructions=build_direct_answer_instructions(),
+        )
+        result = await agent.arun(build_direct_answer_prompt(content))
+        answer = getattr(result, "content", None)
+        if isinstance(answer, str) and answer.strip():
+            return answer.strip()
+        return str(result).strip()
+
+    @staticmethod
+    def _fallback_direct_answer(content: str) -> str:
         stripped = content.strip()
         if stripped in {"你好", "hi", "hello"}:
-            return "你好，我在。"
+            return "我在。你可以直接和我聊，也可以告诉我想处理什么。"
         if stripped in {"你是谁", "who are you"}:
-            return "我是 openEagle 的 main agent，负责理解你的请求并调度合适的 worker 或 SOLO 来完成。"
-        return "收到。这类简单问题我可以直接处理；如果需要执行任务，我会交给合适的 worker。"
+            return "我是 openEagle 的 main agent，可以直接和你对话，也可以在需要时调度 worker 帮你处理任务。"
+        return "我明白。你可以继续说，我会按你的意图判断是直接聊，还是交给合适的执行者处理。"

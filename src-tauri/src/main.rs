@@ -590,7 +590,7 @@ fn normalize_overlay_payload(payload: OverlayPayload) -> OverlayPayload {
         title: Some(
             payload
                 .title
-                .unwrap_or_else(|| "SOLO 正在执行桌面操作".to_string()),
+        .unwrap_or_else(|| "正在执行桌面任务".to_string()),
         ),
         detail: Some(
             payload
@@ -632,7 +632,7 @@ fn show_solo_overlay(app: AppHandle, payload: OverlayPayload) -> Result<Value, S
         SOLO_OVERLAY_LABEL,
         WebviewUrl::App("solo-overlay.html".into()),
     )
-    .title("SOLO Overlay")
+        .title("桌面执行浮窗")
     .always_on_top(true)
     .decorations(false)
     .skip_taskbar(true)
@@ -685,10 +685,10 @@ fn solo_overlay_ready(app: AppHandle) -> Result<Value, String> {
 
 fn solo_notification_title(state: &str) -> &str {
     match state {
-        "completed" => "SOLO 已完成",
-        "aborted" => "SOLO 已结束",
-        "error" => "SOLO 执行失败",
-        _ => "SOLO 状态更新",
+        "completed" => "桌面执行已完成",
+        "aborted" => "桌面执行已结束",
+        "error" => "桌面执行失败",
+        _ => "桌面执行状态更新",
     }
 }
 

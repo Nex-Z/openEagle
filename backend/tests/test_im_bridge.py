@@ -113,11 +113,10 @@ class IMRoutingTest(unittest.TestCase):
 
 
 class IMCommandTest(unittest.TestCase):
-    def test_parse_plain_solo_chat_and_control_commands(self) -> None:
-        self.assertEqual(parse_im_command("你好").name, "solo")
+    def test_parse_plain_auto_solo_and_control_commands(self) -> None:
+        self.assertEqual(parse_im_command("你好").name, "auto")
         self.assertEqual(parse_im_command("你好").argument, "你好")
-        self.assertEqual(parse_im_command("/chat 你好").name, "chat")
-        self.assertEqual(parse_im_command("/chat 你好").argument, "你好")
+        self.assertEqual(parse_im_command("/chat 你好").name, "help")
         self.assertEqual(parse_im_command("/pause").name, "pause")
         self.assertEqual(parse_im_command("/resume").name, "resume")
         self.assertEqual(parse_im_command("/stop").name, "stop")
@@ -125,22 +124,17 @@ class IMCommandTest(unittest.TestCase):
         self.assertEqual(parse_im_command("/reject").name, "reject")
         self.assertEqual(parse_im_command("/wat").name, "help")
 
-    def test_chat_and_solo_require_argument(self) -> None:
-        empty_chat = parse_im_command("/chat")
+    def test_solo_requires_argument(self) -> None:
         empty = parse_im_command("/solo")
         task = parse_im_command("/solo 打开记事本")
 
-        self.assertEqual(empty_chat.name, "help")
         self.assertEqual(empty.name, "help")
         self.assertEqual(task.name, "solo")
         self.assertEqual(task.argument, "打开记事本")
 
-    def test_chat_and_solo_allow_empty_argument_for_attachments(self) -> None:
-        empty_chat = parse_im_command("/chat", allow_empty_task=True)
+    def test_solo_allows_empty_argument_for_attachments(self) -> None:
         empty_solo = parse_im_command("/solo", allow_empty_task=True)
 
-        self.assertEqual(empty_chat.name, "chat")
-        self.assertEqual(empty_chat.argument, "")
         self.assertEqual(empty_solo.name, "solo")
         self.assertEqual(empty_solo.argument, "")
 
@@ -293,6 +287,44 @@ class IMBridgeAttachmentTest(unittest.IsolatedAsyncioTestCase):
         )
 
         self.assertEqual([message.text for message in fake.sent], [IM_RECEIVED_ACK_TEXT])
+
+    async def test_plain_conversation_routes_to_main_agent_without_processing_ack(self) -> None:
+        chat_calls = []
+        solo_calls = []
+        fake = FakeIMAdapter()
+        bridge = IMBridge(
+            send_client=lambda *args: _record_async([], args),
+            handle_chat=lambda *args: _record_async(chat_calls, args, result="AI 生成的自然回复"),
+            start_solo=lambda *args: _record_async(solo_calls, args, result="solo"),
+            solo_control=lambda *args: _record_async([], args, result="control"),
+            tool_decision=lambda *args: _record_async([], args, result="tool"),
+            attachment_store=FakeAttachmentStore(),
+        )
+        bridge._telegram_adapter = fake
+        bind_config_getter(
+            bridge,
+            lambda: AppConfig(
+                telegram=TelegramConfig(enabled=True, allowedUserIds=["42"])
+            ),
+        )
+
+        await bridge._handle_event(
+            IMEvent(
+                source=IMMessageSource(
+                    channel="telegram",
+                    chat_id="42",
+                    chat_type="private",
+                    user_id="42",
+                    message_id="12",
+                ),
+                text="你好",
+            )
+        )
+
+        self.assertEqual(len(chat_calls), 1)
+        self.assertEqual(chat_calls[0][1], "你好")
+        self.assertEqual(solo_calls, [])
+        self.assertEqual([message.text for message in fake.sent], ["AI 生成的自然回复"])
 
 
 async def _record_async(target, args, result=None):

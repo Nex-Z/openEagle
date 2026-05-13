@@ -25,9 +25,9 @@
 
 大多数 AI 助手能聊天，能执行命令，但很少能**像人一样去真正看着屏幕去动手做事**。
 
-openEagle 填补了"理解你想做什么"和"在你的电脑上实际完成"之间的鸿沟。它实时观看你的屏幕，分析看到的内容，然后操控鼠标、键盘和应用程序——同时通过三级安全模型让你始终保持控制。
+openEagle 填补了"理解你想做什么"和"在你的电脑上实际完成"之间的鸿沟。你只需要和一个 main agent 对话；它可以直接回答、调用工具、委派 worker，或在需要 GUI 操作时调度桌面执行 worker 去观看屏幕并操控鼠标、键盘和应用程序——同时通过三级安全模型让你始终保持控制。
 
-**Chat 模式**适合需要 AI 搜索信息、读写文件、执行命令的场景。**SOLO 模式**适合需要 AI 操作 GUI 界面、填写表单、跨应用完成多步骤流程的场景——那些通常只有人类才能做的事情。
+现在不再需要手动切换模式。main agent 会根据意图决定自然对话、工具型 worker 任务，还是调度桌面执行 worker 完成 GUI 导航、填写表单、跨应用多步骤操作等任务。
 
 > 已尝试的场景：
 >  - 直接操作浏览器收集信息
@@ -79,11 +79,11 @@ Frontend      →  通过 WebSocket 连接 ws://127.0.0.1:<端口>/ws
 │  进程生命周期 · 截图 · 输入注入 · 悬浮窗 · 通知        │
 ├──────────────────────────────────────────────────────┤
 │              Python 后端 (FastAPI)                     │
-│  Main/Sub-Agent Runtime · SOLO 编排 · 工具执行         │
+│  Main/Sub-Agent Runtime · 桌面执行编排 · 工具执行      │
 │  安全评估 · Prompt 引擎 · 多模型路由                    │
 ├──────────────────────────────────────────────────────┤
 │             React 前端 (TypeScript)                    │
-│  对话界面 · SOLO 悬浮窗 · 执行面板 · 设置               │
+│  对话界面 · 桌面执行悬浮窗 · 执行面板 · 设置            │
 │  深色/浅色主题 · 响应式布局                             │
 └──────────────────────────────────────────────────────┘
          ↕ WebSocket（Envelope 协议）
@@ -105,7 +105,7 @@ Frontend      →  通过 WebSocket 连接 ws://127.0.0.1:<端口>/ws
 
 ### Main/Sub-Agent Runtime
 
-所有用户消息都会先进入轻量 main agent。main agent 只负责理解意图和调度：直接回答、委派给干净 worker、启动 SOLO，或控制已有 SOLO。worker 使用内部 scoped conversation id 执行任务，前台会话只保留摘要、证据和最终结果，减少上下文污染。
+所有用户消息都会先进入轻量 main agent。main agent 负责理解意图、直接对话、澄清需求和调度：直接回答、委派给干净 worker、启动桌面执行 worker，或控制已有桌面执行任务。worker 使用内部 scoped conversation id 执行任务，前台会话只保留摘要、证据和最终结果，减少上下文污染。
 
 内置 worker 类型：
 
@@ -114,13 +114,13 @@ Frontend      →  通过 WebSocket 连接 ws://127.0.0.1:<端口>/ws
 | `general` | 通用解释、轻量工具、只读检查 |
 | `coding` | 代码修改、文档、构建、测试、写文件任务 |
 | `research` | 搜索、查询、信息整理 |
-| `solo` | 通过 SOLO 执行视觉桌面任务 |
+| `solo` | 视觉桌面执行的内部 worker id |
 
-只读 worker 可以保守并发；代码/写入任务与 SOLO 串行执行，避免文件和桌面操作互相打架。
+只读 worker 可以保守并发；代码/写入任务与桌面执行串行执行，避免文件和桌面操作互相打架。
 
-### SOLO 模式 — 工作原理
+### 桌面执行 — 工作原理
 
-SOLO 是一个**目标驱动的 Agent**，而非按固定脚本执行的任务器：
+桌面执行 worker 是一个**目标驱动的 Agent**，而非按固定脚本执行的任务器：
 
 1. **观察** — 截取当前桌面屏幕
 2. **思考** — VL 模型分析截图 + 任务目标 + 历史记录
@@ -129,7 +129,7 @@ SOLO 是一个**目标驱动的 Agent**，而非按固定脚本执行的任务�
 
 模型在每一步自主决策。没有预编程脚本，没有脆弱的元素选择器。纯视觉理解 + 推理。
 
-SOLO 的稳定性策略保持温和：用 action signature 判断真正重复的动作，用 no-op / uncertain / failed 区分执行结果，只在恢复模式下降级 batch。`open_url`、点击、双击、`press_keys` 这类可能触发页面加载的动作会做短暂的动作后截图稳定采样，避免下一轮模型看到过早的 loading 帧。这样可以减少重复点击和卡屏，同时不把通用任务框成固定脚本。
+桌面执行 worker 的稳定性策略保持温和：用 action signature 判断真正重复的动作，用 no-op / uncertain / failed 区分执行结果，只在恢复模式下降级 batch。`open_url`、点击、双击、`press_keys` 这类可能触发页面加载的动作会做短暂的动作后截图稳定采样，避免下一轮模型看到过早的 loading 帧。这样可以减少重复点击和卡屏，同时不把通用任务框成固定脚本。
 
 ### 远程 IM 控制
 
@@ -139,16 +139,16 @@ SOLO 的稳定性策略保持温和：用 action signature 判断真正重复的
 - Telegram 需要填写 Bot Token。白名单支持 `user_id` 或 `chat_id`。
 - 微信使用 `wechat-clawbot`。在微信卡片中点击“扫码绑定”，用微信扫码后会自动保存 `accountId`，再启用微信入口即可开始长轮询。点击“解绑”会停止轮询，并清理 openEagle 专用的本地 ClawBot 账号凭据。
 - 白名单为空时默认拦截所有远程消息。
-- 远程普通文本默认启动 SOLO 任务；只想文字聊天时使用 `/chat <内容>`。
+- 远程普通文本会先交给 main agent。main agent 可以自然回复、调用工具，或在任务需要 GUI 操作时调度桌面执行。
+- 只有明确希望优先走桌面执行时，才使用 `/solo <任务>`。
 
 远程命令：
 
 | 命令 | 行为 |
 | ---- | ---- |
-| `<普通文本>` | 启动 SOLO 桌面任务 |
-| `/solo <任务>` | 显式启动 SOLO 桌面任务 |
-| `/chat <内容>` | 只进入 Chat 对话 |
-| `/pause`、`/resume`、`/stop` | 控制当前 SOLO 任务 |
+| `<普通文本>` | 发送给 main agent |
+| `/solo <任务>` | 显式请求桌面执行 |
+| `/pause`、`/resume`、`/stop` | 控制当前桌面执行任务 |
 | `/allow`、`/reject` | 确认或拒绝待确认动作 |
 | `/help` | 查看命令帮助 |
 
@@ -166,17 +166,17 @@ SOLO 的稳定性策略保持温和：用 action signature 判断真正重复的
 
 ## 配置
 
-openEagle 支持灵活的模型路由——Chat（文本）和 Vision-Language（视觉）任务可使用不同的提供商和模型，支持任何 OpenAI 兼容 API。
+openEagle 支持灵活的模型路由——main agent 文本对话和 Vision-Language 桌面执行可使用不同的提供商和模型，支持任何 OpenAI 兼容 API。
 
 关键设置（通过应用内设置面板访问）：
 
 | 设置项              | 说明                                          |
 | ------------------- | --------------------------------------------- |
 | `agent.provider`  | 文本模型提供商（`openai`、`openai-like`、`mock`） |
-| `agent.modelId`   | 对话用的文本模型                                  |
+| `agent.modelId`   | main agent 与直接对话用的文本模型                  |
 | `agent.baseUrl`   | OpenAI 兼容 API 的自定义地址                      |
-| `agent.vlProvider` | SOLO 视觉模型提供商（`openai`、`openai-like`）    |
-| `agent.vlModelId` | SOLO 用的视觉语言模型                             |
+| `agent.vlProvider` | 桌面执行视觉模型提供商（`openai`、`openai-like`） |
+| `agent.vlModelId` | 桌面执行用的视觉语言模型                           |
 | `agent.vlBaseUrl` | 视觉模型的 OpenAI 兼容 API 地址                    |
 | `feishu.enabled` | 启用飞书远程入口                                  |
 | `feishu.appId` / `feishu.appSecret` | 飞书长连接应用凭据                 |
@@ -228,7 +228,7 @@ openEagle 支持灵活的模型路由——Chat（文本）和 Vision-Language�
 
 ### 需要帮助的方向
 
-- **SOLO 可靠性** — 在不同应用和工作流中测试
+- **桌面执行可靠性** — 在不同应用和工作流中测试
 - **优秀的上下文管理机制** — 类似 OpenClaw、Hermes 的上下文管理机制
 - **跨平台** — macOS 和 Linux 适配
 - **工具与集成** — 新的内置工具、MCP 服务器、Skills

@@ -226,8 +226,6 @@ export default function App() {
     soloPlan,
     imStatuses,
     wechatBindStatus,
-    canStartSolo,
-    startSolo,
     requestSoloDisplays,
     startWechatBind,
     cancelWechatBind,
@@ -542,7 +540,6 @@ export default function App() {
         mainPanel={
           <ChatWorkspace
             canSend={canSend}
-            canStartSolo={canStartSolo}
             messages={messages}
             onAllowDangerousStep={allowDangerousStep}
             onAllowToolConfirmation={allowToolConfirmation}
@@ -561,7 +558,6 @@ export default function App() {
             onSend={sendMessage}
             onSoloPause={pauseSolo}
             onSoloResume={resumeSolo}
-            onSoloStart={startSolo}
             onSoloStop={stopSolo}
             settings={settings}
             soloConfirmation={soloConfirmation}

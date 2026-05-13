@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { executionStatusLabel } from "./runLabels";
 import type {
   AgentExecutionKind,
   AgentExecutionStatus,
@@ -635,7 +636,11 @@ function hasTerminalSoloMessage(messages: ChatMessage[], requestId: string) {
       (message.label === "SOLO completed" ||
         message.label === "SOLO aborted" ||
         message.label === "SOLO error" ||
-        message.label === "SOLO paused"),
+        message.label === "SOLO paused" ||
+        message.label === executionStatusLabel("completed") ||
+        message.label === executionStatusLabel("aborted") ||
+        message.label === executionStatusLabel("error") ||
+        message.label === executionStatusLabel("paused")),
   );
 }
 
@@ -680,7 +685,9 @@ function shouldRecoverSoloRun(
     !requestMessages.some(
       (message) =>
         message.role === "assistant" ||
-        (message.role === "tool" && message.label && message.label !== "SOLO/agent"),
+        (message.role === "tool" &&
+          message.label &&
+          !["SOLO/agent", "桌面执行/agent"].includes(message.label)),
     );
   return (
     hasOnlyStarter ||
@@ -746,7 +753,7 @@ function buildMessagesFromSoloRun(
         createRestoredTraceMessage({
           requestId,
           traceId: `${requestId}-solo-trace-0-agent-started`,
-          name: "SOLO/agent",
+          name: "桌面执行/agent",
           status: "completed",
           summary: "Agent 开始自主决策执行任务...",
           timestamp,
@@ -768,7 +775,7 @@ function buildMessagesFromSoloRun(
         createRestoredTraceMessage({
           requestId,
           traceId: `${requestId}-solo-trace-${Math.max(0, step - 1)}-decision-completed`,
-          name: "SOLO/decision",
+          name: "桌面执行/decision",
           status: "completed",
           summary: `视觉决策: ${action}`,
           traceParams: {
@@ -818,7 +825,7 @@ function buildMessagesFromSoloRun(
         createRestoredTraceMessage({
           requestId,
           traceId: `${requestId}-solo-trace-${step ?? 0}-decision_repair-completed`,
-          name: "SOLO/decision_repair",
+          name: "桌面执行/decision_repair",
           status: "completed",
           summary: "决策 JSON 已修复并恢复解析。",
           traceParams: {
@@ -846,7 +853,7 @@ function buildMessagesFromSoloRun(
           traceId: `${requestId}-solo-trace-${step ?? 0}-step_result-${
             record.semanticSuccess === false ? "error" : "completed"
           }`,
-          name: "SOLO/step_result",
+          name: "桌面执行/step_result",
           status: record.semanticSuccess === false ? "error" : "completed",
           summary: actionResultSummary(record),
           traceParams: {
@@ -864,12 +871,12 @@ function buildMessagesFromSoloRun(
     if (event && ["aborted", "error", "paused"].includes(event)) {
       const reason =
         asString(record.reason) ??
-        `SOLO ${event}`;
+        executionStatusLabel(event);
       messages.push(
         createRestoredAssistantMessage({
           requestId,
           id: `restored-solo-${safeIdPart(requestId)}-${event}`,
-          label: `SOLO ${event}`,
+          label: executionStatusLabel(event),
           content: reason,
           timestamp,
           status: event === "error" ? "error" : "done",

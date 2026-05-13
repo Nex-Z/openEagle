@@ -47,7 +47,7 @@ const sectionMeta: Array<{
   { id: "general", title: "General", summary: "外观与基础体验。" },
   { id: "models", title: "Models", summary: "文本模型和视觉模型接入。" },
   { id: "im", title: "IM", summary: "飞书、Telegram 与微信远程接入。" },
-  { id: "solo", title: "SOLO", summary: "显示器预览与截图目标。" },
+  { id: "solo", title: "桌面执行", summary: "显示器预览与截图目标。" },
   { id: "tools", title: "Tools", summary: "本地工具入口。" },
   { id: "mcp", title: "MCP", summary: "MCP Server 配置。" },
   { id: "skills", title: "Skills", summary: "提示技能配置。" },
@@ -645,7 +645,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                   <div className="settings-panel-head">
                     <div>
                       <span className="card-kicker">文本模型</span>
-                      <strong>Chat / Tool 推理</strong>
+                      <strong>主 Agent 推理</strong>
                     </div>
                     <Wrench size={16} />
                   </div>
@@ -719,7 +719,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                   <div className="settings-panel-head">
                     <div>
                       <span className="card-kicker">视觉模型</span>
-                      <strong>SOLO 执行</strong>
+                      <strong>视觉执行</strong>
                     </div>
                     <Monitor size={16} />
                   </div>

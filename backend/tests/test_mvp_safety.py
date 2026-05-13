@@ -8,10 +8,11 @@ import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from app.agent_router import AgentRouter
 from app.agent_runtime import AgentRuntime
-from app.config import AppConfig, McpConfig, SkillConfig, ToolConfig
+from app.config import AgentConfig, AppConfig, McpConfig, SkillConfig, ToolConfig
 from app.confirmations import ToolConfirmationStore
 from app.default_tools import build_configured_tool_functions, build_default_tools
 from app.prompts import (
@@ -962,10 +963,10 @@ class AgentRouterTest(unittest.TestCase):
         self.assertEqual(decision.route, "start_solo")
         self.assertEqual(decision.worker_kind, "solo")
 
-    def test_router_chat_mode_does_not_start_solo(self) -> None:
-        decision = AgentRouter.heuristic("打开浏览器是什么意思", preferred_mode="chat")
+    def test_router_allows_direct_chat_in_solo_mode(self) -> None:
+        decision = AgentRouter.heuristic("你好", preferred_mode="solo")
 
-        self.assertNotEqual(decision.route, "start_solo")
+        self.assertEqual(decision.route, "answer_directly")
 
     def test_main_router_prompt_includes_recent_workers(self) -> None:
         manager = SubAgentManager()
@@ -1073,6 +1074,53 @@ class AgentRuntimeTest(unittest.TestCase):
         self.assertTrue(any(trace["kind"] == "agent" for trace in traces))
         self.assertTrue(any(trace["name"] == "main-router" for trace in traces))
         self.assertTrue(any(trace["name"] == "coding-worker" for trace in traces))
+
+    def test_runtime_uses_model_for_direct_answer_when_configured(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        model_calls: list[tuple[str, str, str]] = []
+
+        async def send_event(
+            type_: str,
+            request_id: str,
+            conversation_id: str,
+            payload: dict[str, object],
+        ) -> None:
+            _ = (request_id, conversation_id)
+            events.append((type_, payload))
+
+        async def start_solo(conversation_id: str, task: str, request_id: str) -> str:
+            _ = (conversation_id, task, request_id)
+            return "solo started"
+
+        async def solo_control(conversation_id: str, request_id: str, action: str) -> str:
+            _ = (conversation_id, request_id, action)
+            return "solo control"
+
+        runtime = AgentRuntime(
+            config_getter=lambda: AppConfig(
+                agent=AgentConfig(provider="openai", api_key="test-key"),
+            ),
+            confirmation_store=ToolConfirmationStore(),
+            confirmed_tool_results={},
+            send_event=send_event,
+            start_solo=start_solo,
+            solo_control=solo_control,
+        )
+
+        async def fake_route(*args, **kwargs):
+            _ = (args, kwargs)
+            return AgentRouter.heuristic("你好", preferred_mode="solo")
+
+        async def fake_model_reply(conversation_id: str, content: str, config: AppConfig) -> str:
+            model_calls.append((conversation_id, content, config.agent.provider))
+            return "AI 生成的自然回复"
+
+        runtime._direct_answer_with_model = fake_model_reply  # type: ignore[method-assign]
+        with patch.object(AgentRouter, "route", fake_route):
+            reply = asyncio.run(runtime.handle_user_message("conv", "req", "你好"))
+
+        self.assertEqual(reply, "AI 生成的自然回复")
+        self.assertEqual(model_calls, [("conv", "你好", "openai")])
 
 
 class SoloStabilityTest(unittest.TestCase):
@@ -1283,7 +1331,7 @@ class PromptPolicyTest(unittest.TestCase):
         self.assertIn("不要猜年份", prompt)
         self.assertIn("步骤历史（最新在后，共 1 步）", prompt)
         self.assertIn("历史字段说明", prompt)
-        self.assertIn("SOLO 内核状态", prompt)
+        self.assertIn("桌面执行内核状态", prompt)
         self.assertIn("换用 GUI 路线", prompt)
         self.assertIn("outputTail", prompt)
         self.assertIn("screenshot.contentHash", prompt)

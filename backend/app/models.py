@@ -67,12 +67,6 @@ class SoloScreenshotPayload(BaseModel):
     }
 
 
-class SoloStartPayload(BaseModel):
-    content: str
-    screenshot: SoloScreenshotPayload | None = None
-    attachments: list[AttachmentRef] = Field(default_factory=list)
-
-
 class SoloControlPayload(BaseModel):
     action: str
     solo_request_id: str | None = Field(default=None, alias="soloRequestId")
