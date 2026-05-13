@@ -1,4 +1,4 @@
-import { useEffect, useState, type CSSProperties } from "react";
+import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import { Monitor, SlidersHorizontal, Sparkles, Wrench, X } from "lucide-react";
 import QRCode from "qrcode";
@@ -224,7 +224,10 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
   const [expandedMcpId, setExpandedMcpId] = useState<string | null>(null);
   const [expandedSkillId, setExpandedSkillId] = useState<string | null>(null);
   const [previewDataUrls, setPreviewDataUrls] = useState<Record<string, string>>({});
+  const [failedPreviews, setFailedPreviews] = useState<Set<string>>(new Set());
   const [wechatQrDataUrl, setWechatQrDataUrl] = useState<string | null>(null);
+  const attemptedPathsRef = useRef<Set<string>>(new Set());
+  const prevSoloDisplaysRef = useRef<SoloDisplayOption[]>([]);
 
   useEffect(() => {
     if (open && activeSection === "solo") {
@@ -233,12 +236,30 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
   }, [activeSection, onRefreshSoloDisplays, open]);
 
   useEffect(() => {
+    const displaysChanged =
+      soloDisplays.length !== prevSoloDisplaysRef.current.length ||
+      soloDisplays.some(
+        (d, i) => d.previewPath !== prevSoloDisplaysRef.current[i]?.previewPath,
+      );
+    if (displaysChanged) {
+      prevSoloDisplaysRef.current = soloDisplays;
+      attemptedPathsRef.current = new Set();
+      setPreviewDataUrls({});
+      setFailedPreviews(new Set());
+    }
+
     const previewPaths = soloDisplays
       .map((display) => display.previewPath)
       .filter(Boolean) as string[];
-    const missing = previewPaths.filter((path) => !previewDataUrls[path]);
+    const missing = previewPaths.filter(
+      (path) => !previewDataUrls[path] && !attemptedPathsRef.current.has(path),
+    );
     if (missing.length === 0) {
       return;
+    }
+
+    for (const path of missing) {
+      attemptedPathsRef.current.add(path);
     }
 
     let cancelled = false;
@@ -248,7 +269,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
           const dataUrl = await invoke<string>("read_image_data_url", { path });
           return { path, dataUrl };
         } catch (err) {
-          console.warn("read_image_data_url failed, falling back to asset protocol:", path, err);
+          console.warn("read_image_data_url failed:", path, err);
           return null;
         }
       }),
@@ -256,12 +277,14 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
       if (cancelled) {
         return;
       }
+      const successful = entries.filter((e): e is { path: string; dataUrl: string } => e !== null);
+      if (successful.length === 0) {
+        return;
+      }
       setPreviewDataUrls((current) => {
         const next = { ...current };
-        for (const entry of entries) {
-          if (entry) {
-            next[entry.path] = entry.dataUrl;
-          }
+        for (const entry of successful) {
+          next[entry.path] = entry.dataUrl;
         }
         return next;
       });
@@ -269,7 +292,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
     return () => {
       cancelled = true;
     };
-  }, [previewDataUrls, soloDisplays]);
+  }, [soloDisplays]);
 
   const wechatIsBinding =
     wechatBindStatus?.state === "qrcode" || wechatBindStatus?.state === "waiting";
@@ -835,7 +858,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                                 {display.width}x{display.height} · ({display.left}, {display.top})
                               </span>
                             </div>
-                            {display.previewPath ? (
+                            {display.previewPath && !failedPreviews.has(display.previewPath) ? (
                               <img
                                 alt={display.label}
                                 src={
@@ -845,6 +868,10 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                                     : convertFileSrc(display.previewPath.replace(/\//g, "\\")))
                                 }
                                 style={previewStyle}
+                                onError={() => {
+                                  console.warn("[solo] display preview load failed:", display.previewPath);
+                                  setFailedPreviews((prev) => new Set(prev).add(display.previewPath!));
+                                }}
                               />
                             ) : (
                               <div className="display-preview-empty" style={previewStyle}>

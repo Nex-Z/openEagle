@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "@tauri-apps/api/core";
 import {
   AlertTriangle,
@@ -104,15 +104,36 @@ export function ActivityInspector(props: ActivityInspectorProps) {
   const [expandedTraceId, setExpandedTraceId] = useState<string | null>(null);
   const [imageDataUrls, setImageDataUrls] = useState<Record<string, string>>({});
   const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const attemptedPathsRef = useRef<Set<string>>(new Set());
+  const prevAssetsRef = useRef<typeof assets>([]);
 
   useEffect(() => {
     const imagePaths = Array.from(
       new Set(assets.map((asset) => asset.imagePath).filter(Boolean)),
     );
-    const missing = imagePaths.filter((path) => !imageDataUrls[path]);
+    const prevPaths = Array.from(
+      new Set(prevAssetsRef.current.map((a) => a.imagePath).filter(Boolean)),
+    );
+    const assetsChanged =
+      imagePaths.length !== prevPaths.length ||
+      imagePaths.some((p, i) => p !== prevPaths[i]);
+    if (assetsChanged) {
+      prevAssetsRef.current = assets;
+      attemptedPathsRef.current = new Set();
+      setImageDataUrls({});
+    }
+
+    const missing = imagePaths.filter(
+      (path) => !imageDataUrls[path] && !attemptedPathsRef.current.has(path),
+    );
     if (missing.length === 0) {
       return;
     }
+
+    for (const path of missing) {
+      attemptedPathsRef.current.add(path);
+    }
+
     let cancelled = false;
     void Promise.all(
       missing.map(async (path) => {
@@ -128,12 +149,13 @@ export function ActivityInspector(props: ActivityInspectorProps) {
       if (cancelled) {
         return;
       }
+      const successful = entries.filter((e): e is { path: string; dataUrl: string } => e !== null);
+      if (successful.length === 0) {
+        return;
+      }
       setImageDataUrls((current) => {
         const next = { ...current };
-        for (const entry of entries) {
-          if (!entry) {
-            continue;
-          }
+        for (const entry of successful) {
           next[entry.path] = entry.dataUrl;
         }
         return next;

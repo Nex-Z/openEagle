@@ -35,6 +35,8 @@ HELP_TEXT = """openEagle IM 命令：
 
 普通文本会先交给 main agent 理解，再由 main agent 决定直接回复或调度 worker。"""
 
+IM_RECEIVED_ACK_TEXT = "收到，开始处理。"
+
 
 class IMBridge:
     def __init__(

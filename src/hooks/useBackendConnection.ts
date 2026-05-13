@@ -324,6 +324,7 @@ export function useBackendConnection(
   const requestSoloDisplays = useCallback(() => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
+      console.warn("[ws] requestSoloDisplays skipped: socket not open");
       return false;
     }
     const now = new Date().toISOString();
@@ -335,6 +336,7 @@ export function useBackendConnection(
       payload: {},
       timestamp: now,
     };
+    console.log("[ws] sending client:list_solo_displays", requestId);
     socket.send(JSON.stringify(envelope));
     return true;
   }, [conversationId]);
@@ -788,9 +790,9 @@ export function useBackendConnection(
       }
 
       if (envelope.type === "server:solo_displays") {
-        setSoloDisplays(
-          Array.isArray(envelope.payload.displays) ? envelope.payload.displays : [],
-        );
+        const displays = Array.isArray(envelope.payload.displays) ? envelope.payload.displays : [];
+        console.log("[ws] received server:solo_displays, count:", displays.length, displays);
+        setSoloDisplays(displays);
         return;
       }
 

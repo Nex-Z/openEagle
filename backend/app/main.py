@@ -1683,20 +1683,30 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 continue
 
             if envelope.type == "client:list_solo_displays":
-                current_config = runtime_state.get_config()
-                solo_executor.set_preferred_display_index(
-                    current_config.solo.preferred_display_index
-                )
-                displays = await asyncio.to_thread(solo_executor.list_displays, True)
-                await safe_send(
-                    "server:solo_displays",
-                    envelope.request_id,
-                    envelope.conversation_id,
-                    {
-                        "displays": displays,
-                        "preferredDisplayIndex": current_config.solo.preferred_display_index,
-                    },
-                )
+                try:
+                    current_config = runtime_state.get_config()
+                    solo_executor.set_preferred_display_index(
+                        current_config.solo.preferred_display_index
+                    )
+                    displays = await asyncio.to_thread(solo_executor.list_displays, True)
+                    slog(f"list_solo_displays returned {len(displays)} displays")
+                    await safe_send(
+                        "server:solo_displays",
+                        envelope.request_id,
+                        envelope.conversation_id,
+                        {
+                            "displays": displays,
+                            "preferredDisplayIndex": current_config.solo.preferred_display_index,
+                        },
+                    )
+                except Exception as exc:
+                    slog(f"list_solo_displays failed: {exc}")
+                    await safe_send(
+                        "server:error",
+                        envelope.request_id,
+                        envelope.conversation_id,
+                        ErrorPayload(message=str(exc), code="list_displays_failed").model_dump(),
+                    )
                 continue
 
             if envelope.type == "client:solo_control":
