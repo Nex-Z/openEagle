@@ -146,6 +146,30 @@ fn get_backend_state(state: State<'_, Arc<BackendRuntime>>) -> BackendStatePaylo
     state.state.lock().unwrap().clone()
 }
 
+#[tauri::command]
+fn write_frontend_log(app: AppHandle, level: String, message: String) -> Result<Value, String> {
+    let normalized_level = match level.as_str() {
+        "error" | "warn" | "info" | "log" => level.as_str(),
+        _ => "log",
+    };
+    let stderr = matches!(normalized_level, "error" | "warn");
+    let capped = if message.chars().count() > 20_000 {
+        format!(
+            "{}... [truncated]",
+            message.chars().take(20_000).collect::<String>()
+        )
+    } else {
+        message
+    };
+    emit_prefixed_log(
+        &app,
+        stderr,
+        &format!("[FRONTEND/{normalized_level}]"),
+        &capped,
+    );
+    Ok(json!({"ok": true}))
+}
+
 fn conversation_store_root(app: &AppHandle) -> Result<PathBuf, String> {
     app.path()
         .app_data_dir()
@@ -741,7 +765,78 @@ fn set_state(app: &AppHandle, runtime: &Arc<BackendRuntime>, next: BackendStateP
         *state = next.clone();
     }
 
+    emit_prefixed_log(
+        app,
+        false,
+        "[BACKEND/state]",
+        &format!(
+            "phase={} port={:?} message={}",
+            next.phase, next.port, next.message
+        ),
+    );
     let _ = app.emit(BACKEND_EVENT, next);
+}
+
+fn app_log_dir(app: &AppHandle) -> PathBuf {
+    if cfg!(debug_assertions) {
+        project_root().join(".open-eagle").join("logs")
+    } else {
+        app.path()
+            .app_data_dir()
+            .unwrap_or_else(|_| project_root().join(".open-eagle"))
+            .join("logs")
+    }
+}
+
+fn app_log_path(app: &AppHandle) -> PathBuf {
+    app_log_dir(app).join(format!("openEagle-{}.log", Utc::now().format("%Y-%m-%d")))
+}
+
+fn append_app_log(app: &AppHandle, line: &str) {
+    let path = app_log_path(app);
+    if let Some(parent) = path.parent() {
+        let _ = fs::create_dir_all(parent);
+    }
+    if let Ok(mut file) = fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = writeln!(file, "{} {}", Utc::now().to_rfc3339(), line);
+    }
+}
+
+fn emit_prefixed_log(app: &AppHandle, stderr: bool, prefix: &str, message: &str) {
+    let mut wrote_line = false;
+    for line in message.lines() {
+        wrote_line = true;
+        let entry = format!("{prefix} {line}");
+        if stderr {
+            eprintln!("{entry}");
+        } else {
+            println!("{entry}");
+        }
+        append_app_log(app, &entry);
+    }
+
+    if !wrote_line {
+        let entry = prefix.to_string();
+        if stderr {
+            eprintln!("{entry}");
+        } else {
+            println!("{entry}");
+        }
+        append_app_log(app, &entry);
+    }
+}
+
+fn relay_backend_output(app: &AppHandle, stream: &str, line: &[u8]) -> String {
+    let text = String::from_utf8_lossy(line).trim_end().to_string();
+    if !text.is_empty() {
+        emit_prefixed_log(
+            app,
+            stream == "stderr",
+            &format!("[BACKEND/{stream}]"),
+            &text,
+        );
+    }
+    text
 }
 
 fn project_root() -> PathBuf {
@@ -880,7 +975,7 @@ fn spawn_backend(app: AppHandle) {
         while let Some(event) = receiver.recv().await {
             match event {
                 CommandEvent::Stdout(line) => {
-                    let text = String::from_utf8_lossy(&line).trim().to_string();
+                    let text = relay_backend_output(&app, "stdout", &line);
                     if let Some(captures) = ready_regex.captures(&text) {
                         let port = captures
                             .get(1)
@@ -892,7 +987,7 @@ fn spawn_backend(app: AppHandle) {
                     }
                 }
                 CommandEvent::Stderr(line) => {
-                    let text = String::from_utf8_lossy(&line).trim().to_string();
+                    let text = relay_backend_output(&app, "stderr", &line);
                     if !text.is_empty() {
                         let current = runtime.state.lock().unwrap().clone();
                         if current.phase != "ready" {
@@ -963,6 +1058,7 @@ fn main() {
             save_conversation_index,
             delete_conversation_file,
             load_solo_run_log,
+            write_frontend_log,
             capture_screenshot,
             read_image_data_url,
             perform_mouse_action,
@@ -990,7 +1086,15 @@ fn main() {
             }
         })
         .setup(|app| {
-            spawn_backend(app.handle().clone());
+            let handle = app.handle().clone();
+            let log_path = app_log_path(&handle);
+            emit_prefixed_log(
+                &handle,
+                false,
+                "[APP]",
+                &format!("log file: {}", log_path.display()),
+            );
+            spawn_backend(handle);
             Ok(())
         })
         .build(tauri::generate_context!())
