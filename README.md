@@ -113,6 +113,12 @@ The router prompt is principle-driven rather than keyword-driven. It chooses wor
 
 When users ask for work to happen later or on a cadence, the main agent creates a persistent scheduled task instead of doing the work immediately. Scheduled tasks are stored in `.open-eagle/scheduler.db`, use cron expressions for timing, run through the same worker kinds, and can report execution results back into the originating conversation.
 
+### Memory & Context Management
+
+openEagle now includes Hermes-inspired single-user long-term memory stored in `.open-eagle/memory.db`. Memory has four layers: user profile, user notes, agent soul, and raw memory events. Raw events keep broader turn and compaction snapshots, while the distilled profile, active notes, and agent personality summary are the only parts injected into prompts. The agent can asynchronously distill completed turns into profile updates, notes, and side notes; user-edited profile, notes, and core agent soul always take priority.
+
+Context cleanup uses the same settings channel. Once the estimated input token threshold is reached, the backend preserves system messages and the latest N messages, then processes only the middle of the conversation. Tool messages are removed or replaced with compact placeholders before any AI summary step, so the summarizer does not waste tokens on large tool outputs. The Anthropic provider can replace the middle segment with an AI summary and falls back to rule-based truncation if summarization fails. Remote IM sessions can also start a new context window after a configurable idle period.
+
 Built-in worker kinds:
 
 | Worker | Use case |
@@ -146,6 +152,7 @@ openEagle can accept tasks from Feishu, Telegram, or WeChat after you enable the
 - WeChat uses `wechat-clawbot`. Click "Scan to bind" in the WeChat card, scan the QR code with WeChat, then enable the entry after the `accountId` is saved. "Unbind" stops polling and removes the local ClawBot account credentials used by openEagle.
 - Empty whitelists reject all remote messages by default.
 - Plain remote text is handled by the main agent first. It can reply naturally, use tools, or dispatch desktop execution when the task needs GUI control.
+- If a remote session has been idle for longer than `context.imIdleCleanupMinutes`, the next message tells the main agent to treat it as a fresh context window.
 - Use `/solo <task>` only when you want to explicitly bias the request toward desktop execution.
 
 Remote commands:
@@ -194,6 +201,11 @@ Key settings (accessible from the in-app Settings panel):
 | `wechat.accountId` | WeChat ClawBot account saved after QR binding |
 | `wechat.baseUrl` / `wechat.botType` | Optional ClawBot API base URL and bot type |
 | `wechat.allowedUserIds` / `wechat.allowedChatIds` | WeChat user/chat whitelist |
+| `context.maxInputTokens` | Estimated input token threshold for context cleanup |
+| `context.preserveRecentMessages` | Number of recent messages preserved exactly during cleanup |
+| `context.toolMessageMode` | Whether middle tool messages are compacted to placeholders or removed |
+| `context.aiSummaryEnabled` | Enables AI summaries for middle conversation context |
+| `context.snapshotOnCompaction` | Writes a memory snapshot before compaction |
 | `tools` | Custom command tools ([see below](#tool--custom-command-tools)) |
 | `mcp` | MCP server connections ([see below](#mcp--connect-external-services)) |
 | `skills` | Custom skill directives ([see below](#skill--inject-domain-specific-knowledge)) |
@@ -303,12 +315,13 @@ All three compose. For example: an MCP server that provides database queries, a 
 ## Roadmap
 
 - [ ] Clearer execution status when you leave the main window
-- [ ] Better self-iterating context management (conversation compaction, token counting)
 - [ ] Faster responses and actions (prompt caching, etc.)
 - [ ] macOS and Linux support
 - [ ] Community plugin system
 - [ ] Session replay and richer history
 - [ ] Voice input
+- [x] Hermes-style long-term memory: user profile, user notes, agent personality, and raw events
+- [x] Configurable context cleanup: token threshold, recent-message preservation, tool pre-cleaning, AI middle summaries, and IM idle windows
 - [x] Scheduled tasks with persistent storage, worker execution, UI management, and run history
 - [x] Principle-based main-agent router prompts and assistant-style direct answers
 - [x] Multi-monitor awareness (display selection and runtime switching supported)

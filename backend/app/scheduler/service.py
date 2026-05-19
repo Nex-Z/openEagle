@@ -24,6 +24,7 @@ from .store import (
 
 SendEvent = Callable[[str, str, str, dict[str, Any]], Awaitable[None]]
 ConfigGetter = Callable[[], AppConfig]
+MemoryContextGetter = Callable[[], str]
 
 
 class SchedulerService:
@@ -32,11 +33,13 @@ class SchedulerService:
         *,
         config_getter: ConfigGetter,
         send_event: SendEvent | None = None,
+        memory_context_getter: MemoryContextGetter | None = None,
     ) -> None:
         from ..subagent_manager import SubAgentManager
 
         self._config_getter = config_getter
         self._send_event = send_event
+        self._memory_context_getter = memory_context_getter
         self._scheduler = AsyncIOScheduler()
         self._subagents = SubAgentManager()
         self._running = False
@@ -122,6 +125,7 @@ class SchedulerService:
                 config=config,
                 confirmation_store=_AutoConfirmStore(),
                 request_id=execution.id,
+                memory_context=self._memory_context_getter() if self._memory_context_getter else None,
             ):
                 if isinstance(event, ReplyChunk):
                     result_parts.append(event.content)

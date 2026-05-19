@@ -18,6 +18,7 @@ def build_chat_instructions(
     selected_tools: list[ToolConfig],
     selected_mcp: list[McpConfig],
     selected_skills: list[SkillConfig],
+    memory_context: str | None = None,
 ) -> list[str]:
     instructions = [
         "你是 openEagle 的桌面 Agent 助手。",
@@ -96,6 +97,8 @@ def build_chat_instructions(
                 for item in selected_skills
             )
         )
+    if memory_context:
+        instructions.append(memory_context)
 
     return instructions
 
@@ -154,6 +157,7 @@ def build_main_router_prompt(
     content: str,
     preferred_mode: str | None = None,
     recent_tasks: list[AgentTaskRecord] | None = None,
+    memory_context: str | None = None,
 ) -> str:
     recent_tasks = recent_tasks or []
     tasks_payload = [
@@ -168,9 +172,11 @@ def build_main_router_prompt(
         }
         for task in recent_tasks[-6:]
     ]
+    memory_block = f"长期记忆:\n{memory_context}\n\n" if memory_context else ""
     return (
         f"conversation_id: {conversation_id}\n"
         f"preferred_mode: {preferred_mode or 'auto'}\n"
+        f"{memory_block}"
         f"用户消息:\n{content}\n\n"
         "recent_workers:\n"
         f"{json.dumps(tasks_payload, ensure_ascii=False)}\n\n"
@@ -212,8 +218,9 @@ def build_direct_answer_instructions() -> list[str]:
     ]
 
 
-def build_direct_answer_prompt(content: str) -> str:
-    return f"用户消息：\n{content.strip() or '你好'}"
+def build_direct_answer_prompt(content: str, memory_context: str | None = None) -> str:
+    memory = f"长期记忆：\n{memory_context}\n\n" if memory_context else ""
+    return f"{memory}用户消息：\n{content.strip() or '你好'}"
 
 
 def solo_decision_instructions(system_platform: str = "当前系统") -> list[str]:
@@ -334,6 +341,7 @@ def build_solo_decision_prompt(
     findings: list[str] | None = None,
     kernel_state: dict[str, object] | None = None,
     capability_context: str | None = None,
+    memory_context: str | None = None,
 ) -> str:
     if len(history) <= 8:
         recent_history = history
@@ -393,6 +401,9 @@ def build_solo_decision_prompt(
             "本轮已启用能力（用户不需要点名；你应根据任务主动选择最合适的工具、MCP 或 Skill）：\n"
             f"{capability_context}\n\n"
         )
+    memory_hint = ""
+    if memory_context:
+        memory_hint = f"长期记忆:\n{memory_context}\n\n"
     first_step_hint = ""
     if step_count == 0:
         first_step_hint = (
@@ -411,6 +422,7 @@ def build_solo_decision_prompt(
         f"{display_hint}"
         f"{app_hint}"
         f"{findings_hint}"
+        f"{memory_hint}"
         f"{kernel_hint}"
         f"{capability_hint}"
         f"{stability_hint}"
@@ -442,6 +454,7 @@ def build_solo_repair_prompt(
     error: str,
     findings: list[str] | None = None,
     capability_context: str | None = None,
+    memory_context: str | None = None,
 ) -> str:
     if len(history) <= 8:
         recent_history = history
@@ -461,11 +474,13 @@ def build_solo_repair_prompt(
             "当前启用能力（可主动使用）：\n"
             f"{capability_context}\n\n"
         )
+    memory_hint = f"长期记忆:\n{memory_context}\n\n" if memory_context else ""
     return (
         "你上一次的回复无法解析为动作决策 JSON，系统没能执行。\n"
         f"具体错误：{error}\n\n"
         f"用户在等你帮忙做的事：{task}\n\n"
         f"{findings_hint}"
+        f"{memory_hint}"
         f"{capability_hint}"
         f"你的操作记录（共 {len(history)} 步）：\n"
         f"{history_text}\n\n"

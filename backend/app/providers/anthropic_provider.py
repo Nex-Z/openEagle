@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import json
 import re
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, AsyncIterator
@@ -13,6 +14,7 @@ from .. import default_tools
 from ..attachments import AttachmentStore
 from ..config import AgentConfig, AppConfig, McpConfig, SkillConfig, ToolConfig
 from ..confirmations import ToolConfirmationStore
+from ..context_cleanup import compact_messages_for_prompt_with_ai
 from ..models import AttachmentRef
 from ..prompts import build_chat_instructions
 from .base import ProviderStreamEvent, ReplyChunk, ReplyToolConfirmation, ReplyTrace
@@ -66,12 +68,14 @@ class AnthropicAgentProvider:
         attachment_store: AttachmentStore | None = None,
         request_id: str | None = None,
         conversation_id: str | None = None,
+        context_snapshot: Callable[[str, str, str, dict[str, Any]], Awaitable[None]] | None = None,
     ) -> None:
         self._config = config
         self._confirmation_store = confirmation_store
         self._attachment_store = attachment_store
         self._request_id = request_id
         self._conversation_id = conversation_id
+        self._context_snapshot = context_snapshot
         self._client = anthropic.AsyncAnthropic(
             api_key=config.agent.api_key,
             base_url=config.agent.base_url or None,
@@ -80,6 +84,31 @@ class AnthropicAgentProvider:
     @property
     def _agent_config(self) -> AgentConfig:
         return self._config.agent
+
+    async def _summarize_context(self, prompt: str) -> str:
+        response = await self._client.messages.create(
+            model=self._agent_config.model_id or "claude-sonnet-4-20250514",
+            max_tokens=2048,
+            system="你是上下文压缩器，只输出摘要正文，不输出 Markdown 栅栏。",
+            messages=[{"role": "user", "content": prompt}],
+        )
+        text_parts = [block.text for block in response.content if block.type == "text"]
+        return "".join(text_parts)
+
+    async def _record_context_snapshot(
+        self,
+        conversation_id: str,
+        content: str,
+        payload: dict[str, Any],
+    ) -> None:
+        if self._context_snapshot is None:
+            return
+        await self._context_snapshot(
+            self._conversation_id or conversation_id,
+            self._request_id or f"context-{utc_now()}",
+            content,
+            payload,
+        )
 
     # ------------------------------------------------------------------
     # Capability extraction (same logic as agno_provider)
@@ -306,12 +335,23 @@ class AnthropicAgentProvider:
 
         max_rounds = 20
         for _ in range(max_rounds):
+            cleanup = await compact_messages_for_prompt_with_ai(
+                messages,
+                self._config.context,
+                system_prompt=system_prompt,
+                summarizer=self._summarize_context,
+                snapshot=lambda content, payload: self._record_context_snapshot(
+                    conversation_id,
+                    content,
+                    payload,
+                ),
+            )
             response = await self._client.messages.create(
                 model=model_id,
                 max_tokens=8192,
                 system=system_prompt,
                 tools=anthropic_tools or anthropic.NOT_GIVEN,
-                messages=messages,
+                messages=cleanup.messages,
             )
 
             text_parts: list[str] = []
@@ -397,13 +437,24 @@ class AnthropicAgentProvider:
             current_tool_name: str | None = None
             current_tool_input_json = ""
             assistant_content_blocks: list[dict[str, Any]] = []
+            cleanup = await compact_messages_for_prompt_with_ai(
+                messages,
+                self._config.context,
+                system_prompt=system_prompt,
+                summarizer=self._summarize_context,
+                snapshot=lambda content, payload: self._record_context_snapshot(
+                    conversation_id,
+                    content,
+                    payload,
+                ),
+            )
 
             async with self._client.messages.stream(
                 model=model_id,
                 max_tokens=8192,
                 system=system_prompt,
                 tools=anthropic_tools or anthropic.NOT_GIVEN,
-                messages=messages,
+                messages=cleanup.messages,
             ) as stream:
                 async for event in stream:
                     if event.type == "content_block_start":

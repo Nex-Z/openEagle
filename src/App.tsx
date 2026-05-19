@@ -239,6 +239,9 @@ export default function App() {
     rejectToolConfirmation,
     scheduledTasks,
     scheduledTaskHistory,
+    memoryState,
+    requestMemoryState,
+    saveMemoryState,
     requestScheduledTasks,
     createScheduledTask,
     updateScheduledTask,
@@ -599,12 +602,14 @@ export default function App() {
       <SettingsDrawer
         activeSection={settingsSection}
         imStatuses={imStatuses}
+        memoryState={memoryState}
         scheduledTasks={scheduledTasks}
         scheduledTaskHistory={scheduledTaskHistory}
         onCancelWechatBind={cancelWechatBind}
         onChange={setSettings}
         onClose={() => setSettingsDrawerOpen(false)}
         onRefreshSoloDisplays={requestSoloDisplays}
+        onRequestMemoryState={requestMemoryState}
         onSectionChange={setSettingsSection}
         onStartWechatBind={startWechatBind}
         onUnbindWechat={unbindWechat}
@@ -613,6 +618,7 @@ export default function App() {
         onUpdateScheduledTask={updateScheduledTask}
         onDeleteScheduledTask={deleteScheduledTask}
         onRequestScheduledTaskHistory={requestScheduledTaskHistory}
+        onSaveMemoryState={saveMemoryState}
         open={settingsDrawerOpen}
         settings={settings}
         soloDisplays={soloDisplays}

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Literal
+
 from pydantic import BaseModel, Field
 
 
@@ -56,6 +58,26 @@ class SoloConfig(BaseModel):
 
 class PermissionConfig(BaseModel):
     mode: str = "default"
+
+
+class ContextConfig(BaseModel):
+    enabled: bool = True
+    max_input_tokens: int = Field(default=24_000, alias="maxInputTokens")
+    preserve_recent_messages: int = Field(default=8, alias="preserveRecentMessages")
+    im_idle_cleanup_minutes: int = Field(default=60, alias="imIdleCleanupMinutes")
+    tool_message_mode: Literal["placeholder", "remove"] = Field(
+        default="placeholder",
+        alias="toolMessageMode",
+    )
+    ai_summary_enabled: bool = Field(default=True, alias="aiSummaryEnabled")
+    snapshot_on_compaction: bool = Field(default=True, alias="snapshotOnCompaction")
+    summary_char_limit: int = Field(default=2400, alias="summaryCharLimit")
+    tool_result_char_limit: int = Field(default=0, alias="toolResultCharLimit")
+    middle_message_char_limit: int = Field(default=1200, alias="middleMessageCharLimit")
+
+    model_config = {
+        "populate_by_name": True,
+    }
 
 
 class AgentConfig(BaseModel):
@@ -142,6 +164,7 @@ class AppConfig(BaseModel):
     wechat: WechatConfig = WechatConfig()
     im: ImConfig = ImConfig()
     permissions: PermissionConfig = PermissionConfig()
+    context: ContextConfig = ContextConfig()
     solo: SoloConfig = SoloConfig()
     tools: list[ToolConfig] = Field(default_factory=list)
     builtin_tools: list[BuiltinToolConfig] = Field(default_factory=list, alias="builtinTools")

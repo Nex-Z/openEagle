@@ -558,6 +558,7 @@ class SoloService:
         app_context: str | None = None,
         findings: list[str] | None = None,
         kernel_state: dict[str, Any] | None = None,
+        memory_context: str | None = None,
     ) -> SoloDecision:
         agent = self._build_agent()
         prompt = build_solo_decision_prompt(
@@ -570,6 +571,7 @@ class SoloService:
             self._capability_runtime.capability_catalog()
             if self._capability_runtime is not None
             else None,
+            memory_context,
         )
         model_image = prepare_model_image(screenshot_path)
         model_image_path = Path(model_image["path"])
@@ -612,6 +614,7 @@ class SoloService:
                     if self._capability_runtime is not None
                     else None
                 ),
+                memory_context=memory_context,
             )
             repair_started_at = time.perf_counter()
             repair_output = await self._run_agent(agent, repair_prompt, image_url)

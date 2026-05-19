@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from .attachments import AttachmentError, AttachmentStore, append_attachment_con
 from .config import AgentConfig, AppConfig
 from .confirmations import ToolConfirmationStore
 from .models import AttachmentRef, StatusPayload, utc_now
+from .memory import MemoryService
 from .prompts import build_direct_answer_instructions, build_direct_answer_prompt
 from .providers.base import ReplyToolConfirmation, ReplyTrace
 from .solo_worker_adapter import SoloWorkerAdapter
@@ -37,6 +39,7 @@ class AgentRuntime:
         send_event: SendEvent,
         start_solo: StartSolo,
         solo_control: SoloControl,
+        memory_service: MemoryService | None = None,
     ) -> None:
         self._config_getter = config_getter
         self._confirmation_store = confirmation_store
@@ -45,6 +48,7 @@ class AgentRuntime:
         self._send_event = send_event
         self._solo_adapter = SoloWorkerAdapter(start_solo, solo_control)
         self._subagents = SubAgentManager()
+        self._memory_service = memory_service
 
     async def handle_user_message(
         self,
@@ -84,6 +88,7 @@ class AgentRuntime:
 
         await self._send_status(request_id, conversation_id, "thinking", "main agent 正在调度任务")
         config = self._config_getter()
+        memory_context = self._memory_service.prompt_context() if self._memory_service else ""
         router = AgentRouter(config)
         route_started_at = utc_now()
         await self._send_trace(
@@ -104,6 +109,7 @@ class AgentRuntime:
             content=enhanced_content,
             preferred_mode=preferred_mode,
             recent_tasks=self._subagents.recent_tasks(conversation_id),
+            memory_context=memory_context,
         )
         if prepared_attachments and decision.route == "answer_directly":
             decision.route = "delegate_new"
@@ -135,6 +141,7 @@ class AgentRuntime:
                         conversation_id=conversation_id,
                         content=content,
                         config=config,
+                        memory_context=memory_context,
                     )
             elif decision.route == "clarify":
                 reply = decision.user_visible_summary or "我需要先确认一下你的具体目标。"
@@ -155,6 +162,7 @@ class AgentRuntime:
                     decision=decision,
                     config=config,
                     attachments=prepared_attachments,
+                    memory_context=memory_context,
                 )
         finally:
             await self._send_status(request_id, conversation_id, "idle", "回复完成")
@@ -172,6 +180,14 @@ class AgentRuntime:
         await self._send_event("server:message", request_id, conversation_id, payload)
         if not conversation_id.startswith("im_"):
             self._attachment_store.pop_reply_attachments(conversation_id, request_id)
+        await self._record_memory_turn(
+            conversation_id=conversation_id,
+            request_id=request_id,
+            user_content=content,
+            assistant_content=reply,
+            route=decision.route,
+            metadata=self._route_params(decision),
+        )
         return reply
 
     async def control_solo(
@@ -253,6 +269,7 @@ class AgentRuntime:
         decision: AgentRouteDecision,
         config: AppConfig,
         attachments: list[AttachmentRef],
+        memory_context: str | None = None,
     ) -> str:
         task = self._subagents.create_or_reuse(conversation_id, decision)
         started_at = utc_now()
@@ -278,6 +295,10 @@ class AgentRuntime:
             request_id=request_id,
             attachment_store=self._attachment_store,
             attachments=attachments,
+            memory_context=memory_context,
+            context_snapshot=(
+                self._record_context_snapshot if self._memory_service is not None else None
+            ),
         ):
             if isinstance(event, ReplyTrace):
                 await self._send_reply_trace(request_id, conversation_id, event)
@@ -391,16 +412,104 @@ class AgentRuntime:
             return "stop"
         return "pause"
 
+    async def _record_memory_turn(
+        self,
+        *,
+        conversation_id: str,
+        request_id: str,
+        user_content: str,
+        assistant_content: str,
+        route: str,
+        metadata: dict[str, Any],
+    ) -> None:
+        if self._memory_service is None:
+            return
+        try:
+            event_id = self._memory_service.record_turn(
+                conversation_id=conversation_id,
+                request_id=request_id,
+                user_content=user_content,
+                assistant_content=assistant_content,
+                route=route,
+                metadata=metadata,
+            )
+        except Exception:
+            return
+
+        async def _distill() -> None:
+            try:
+                changed = await self._memory_service.distill_event(event_id)
+            except Exception:
+                return
+            if changed:
+                try:
+                    await self._send_event(
+                        "server:memory_updated",
+                        request_id,
+                        conversation_id,
+                        self._memory_service.state_payload(),
+                    )
+                except Exception:
+                    return
+
+        asyncio.create_task(_distill())
+
+    async def _record_context_snapshot(
+        self,
+        conversation_id: str,
+        request_id: str,
+        content: str,
+        payload: dict[str, Any],
+    ) -> None:
+        if self._memory_service is None:
+            return
+        try:
+            event_id = self._memory_service.ingest_snapshot(
+                conversation_id=conversation_id,
+                request_id=request_id,
+                source="context_compaction",
+                content=content,
+                payload=payload,
+            )
+        except Exception:
+            return
+
+        async def _distill() -> None:
+            try:
+                changed = await self._memory_service.distill_event(event_id)
+            except Exception:
+                return
+            if changed:
+                try:
+                    await self._send_event(
+                        "server:memory_updated",
+                        request_id,
+                        conversation_id,
+                        self._memory_service.state_payload(),
+                    )
+                except Exception:
+                    return
+
+        asyncio.create_task(_distill())
+
     async def _direct_answer(
         self,
         *,
         conversation_id: str,
         content: str,
         config: AppConfig,
+        memory_context: str | None = None,
     ) -> str:
         if self._can_use_direct_answer_model(config.agent):
             try:
-                return await self._direct_answer_with_model(conversation_id, content, config)
+                try:
+                    return await self._direct_answer_with_model(
+                        conversation_id, content, config, memory_context=memory_context
+                    )
+                except TypeError as exc:
+                    if "memory_context" not in str(exc):
+                        raise
+                    return await self._direct_answer_with_model(conversation_id, content, config)
             except Exception:
                 pass
         return self._fallback_direct_answer(content)
@@ -414,9 +523,10 @@ class AgentRuntime:
         conversation_id: str,
         content: str,
         config: AppConfig,
+        memory_context: str | None = None,
     ) -> str:
         agent_config = config.agent
-        prompt = build_direct_answer_prompt(content)
+        prompt = build_direct_answer_prompt(content, memory_context=memory_context)
 
         if agent_config.provider == "anthropic":
             import anthropic

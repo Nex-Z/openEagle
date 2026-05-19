@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime
 from typing import Any
 
 from ..attachments import AttachmentStore, append_attachment_context
 from ..config import AppConfig, FeishuConfig, TelegramConfig, WechatConfig
+from ..context_cleanup import should_cleanup_for_idle
 from ..models import AttachmentRef
 from .commands import parse_im_command
 from .feishu import FeishuAdapter
@@ -63,6 +65,7 @@ class IMBridge:
         self._wechat_adapter: WechatAdapter | None = None
         self._wechat_signature: tuple[Any, ...] | None = None
         self._bindings: dict[str, IMConversationBinding] = {}
+        self._last_activity_at: dict[str, datetime] = {}
 
     async def update_config(self, config: AppConfig) -> None:
         await self._update_feishu(config)
@@ -201,7 +204,8 @@ class IMBridge:
         )
 
     async def _handle_event(self, event: IMEvent) -> None:
-        config = resolve_channel_config(await self._current_config(), event.source.channel)
+        app_config = await self._current_config()
+        config = resolve_channel_config(app_config, event.source.channel)
         binding = build_conversation_binding(event.source)
         self._bindings[binding.conversation_id] = binding
 
@@ -220,6 +224,12 @@ class IMBridge:
                 "openEagle 当前未允许这个 IM 来源，请在设置里加入用户 ID 或会话 ID。",
             )
             return
+
+        idle_cleanup = should_cleanup_for_idle(
+            self._last_activity_at.get(binding.conversation_id),
+            app_config.context,
+        )
+        self._last_activity_at[binding.conversation_id] = datetime.now(UTC)
 
         request_id = f"im-{uuid.uuid4()}"
         command = parse_im_command(event.text, allow_empty_task=bool(event.attachments))
@@ -241,18 +251,29 @@ class IMBridge:
 
         attachment_errors = [item for item in attachments if item.status == "error"]
         if attachment_errors:
+            await self.send_text(binding.conversation_id, IM_RECEIVED_ACK_TEXT)
             reply = _attachment_error_reply(attachment_errors)
         elif attachments and not explicit_command:
+            chat_text = self._with_idle_cleanup_notice(
+                event.text.strip() or "请处理这些附件。",
+                idle_cleanup,
+                app_config.context.im_idle_cleanup_minutes,
+            )
             reply = await self._handle_chat(
                 binding,
-                event.text.strip() or "请处理这些附件。",
+                chat_text,
                 request_id,
                 attachments,
             )
         elif command.name == "auto":
+            chat_text = self._with_idle_cleanup_notice(
+                command.argument,
+                idle_cleanup,
+                app_config.context.im_idle_cleanup_minutes,
+            )
             reply = await self._handle_chat(
                 binding,
-                command.argument,
+                chat_text,
                 request_id,
                 attachments,
             )
@@ -293,6 +314,22 @@ class IMBridge:
     async def _current_config(self) -> AppConfig:
         # Patched by main.py after construction to avoid a circular import.
         raise RuntimeError("IMBridge current config callback is not configured")
+
+    @staticmethod
+    def _with_idle_cleanup_notice(
+        text: str,
+        idle_cleanup: bool,
+        idle_minutes: int,
+    ) -> str:
+        if not idle_cleanup:
+            return text
+        return (
+            "[上下文整理]\n"
+            f"这个远程 IM 会话已静默超过 {max(0, idle_minutes)} 分钟。"
+            "请把本轮当作新的上下文窗口：保留 system、长期记忆和最近消息，"
+            "不要依赖旧的中间对话或工具结果。\n\n"
+            f"{text}"
+        )
 
     async def _prepare_event_attachments(
         self,

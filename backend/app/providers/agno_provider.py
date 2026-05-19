@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import re
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -109,12 +110,14 @@ class AgnoAgentProvider:
         attachment_store: AttachmentStore | None = None,
         request_id: str | None = None,
         conversation_id: str | None = None,
+        context_snapshot: Callable[[str, str, str, dict[str, Any]], Awaitable[None]] | None = None,
     ) -> None:
         self._config = config
         self._confirmation_store = confirmation_store
         self._attachment_store = attachment_store
         self._request_id = request_id
         self._conversation_id = conversation_id
+        self._context_snapshot = context_snapshot
         self._agent_cache: dict[str, tuple[Agent, dict[str, str]]] = {}
 
     @property
@@ -173,11 +176,23 @@ class AgnoAgentProvider:
             permission_mode=self._config.permissions.mode,
         )
 
+        context_kwargs: dict[str, Any] = {}
+        if self._config.context.enabled:
+            context_kwargs = {
+                "compress_tool_results": True,
+                "num_history_messages": max(0, self._config.context.preserve_recent_messages),
+                "store_tool_messages": self._config.context.tool_message_mode != "remove",
+                "max_tool_calls_from_history": (
+                    0 if self._config.context.tool_message_mode == "remove" else None
+                ),
+            }
+
         agent = Agent(
             model=model,
             markdown=True,
             instructions=instructions,
             tools=[default_toolkit, *configured_functions],
+            **context_kwargs,
         )
         result = (agent, configured_name_map)
         self._agent_cache[cache_key] = result
