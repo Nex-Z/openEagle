@@ -58,6 +58,28 @@ runtime_state = RuntimeState()
 runtime_state.update_config(config)
 workspace_root = Path(__file__).resolve().parents[2]
 attachment_store = AttachmentStore(workspace_root)
+
+
+# --- Settings file persistence (alongside memory and scheduled tasks) ---
+
+def settings_file_path() -> Path:
+    return workspace_root / ".open-eagle" / "settings.json"
+
+
+def load_persisted_settings() -> dict[str, Any] | None:
+    path = settings_file_path()
+    if not path.exists():
+        return None
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def save_persisted_settings(settings: dict[str, Any]) -> None:
+    path = settings_file_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
 memory_service = MemoryService(config_getter=runtime_state.get_config)
 confirmed_tool_results: dict[str, str] = {}
 scheduler_service: SchedulerService | None = None
@@ -227,6 +249,36 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             memory_service.state_payload(),
         )
 
+    async def emit_memory_trace(
+        request_id: str,
+        conversation_id: str,
+        *,
+        name: str,
+        status: str,
+        summary: str,
+        params: dict[str, Any] | None = None,
+        result: str | None = None,
+    ) -> None:
+        now = utc_now()
+        await safe_send(
+            "server:trace",
+            request_id,
+            conversation_id,
+            {
+                "trace": {
+                    "id": f"{request_id}-{name}",
+                    "kind": "tool",
+                    "name": name,
+                    "status": status,
+                    "summary": summary,
+                    "params": params or {},
+                    "result": result,
+                    "startedAt": now,
+                    "completedAt": now if status != "started" else None,
+                }
+            },
+        )
+
     def schedule_memory_distillation(
         event_id: str,
         request_id: str,
@@ -239,6 +291,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 return
             if changed:
                 try:
+                    await emit_memory_trace(
+                        request_id,
+                        conversation_id,
+                        name="memory.distill_event",
+                        status="completed",
+                        summary="已从记忆快照蒸馏更新长期记忆。",
+                        params={"eventId": event_id},
+                    )
                     await emit_memory_state("server:memory_updated", request_id, conversation_id)
                 except Exception:
                     return
@@ -623,7 +683,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     app_context=app_context,
                     findings=session.findings,
                     kernel_state=solo_kernel.prompt_context(),
-                    memory_context=memory_service.prompt_context(),
+                    memory_context=memory_service.prompt_context(query=session.task),
                 )
             except Exception as exc:  # noqa: BLE001
                 if not is_solo_running(session):
@@ -1586,6 +1646,16 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     bind_config_getter(im_bridge, runtime_state.get_config)
     await im_bridge.update_config(runtime_state.get_config())
 
+    # Send persisted settings to frontend on connection
+    persisted = load_persisted_settings()
+    if persisted:
+        await safe_send(
+            "server:settings_loaded",
+            "init",
+            "",
+            {"settings": persisted},
+        )
+
     try:
         while True:
             raw = await websocket.receive_text()
@@ -1594,6 +1664,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             if envelope.type == "client:update_settings":
                 next_config = AppConfig.model_validate(envelope.payload["settings"])
                 await sync_runtime_config(next_config)
+                # Persist settings to file (alongside memory and scheduled tasks)
+                try:
+                    save_persisted_settings(envelope.payload["settings"])
+                except Exception:
+                    pass
                 await safe_send(
                     "server:status",
                     envelope.request_id,
@@ -1612,6 +1687,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             if envelope.type == "client:memory_save":
                 memory_service.save_manual(envelope.payload)
+                await emit_memory_trace(
+                    envelope.request_id,
+                    envelope.conversation_id,
+                    name="memory.save_manual",
+                    status="completed",
+                    summary="已保存用户手动编辑的长期记忆。",
+                    params={"source": "settings"},
+                )
                 await emit_memory_state(
                     "server:memory_updated",
                     envelope.request_id,
@@ -1627,6 +1710,15 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     source=str(envelope.payload.get("source") or "snapshot"),
                     content=content,
                     payload=envelope.payload,
+                )
+                await emit_memory_trace(
+                    envelope.request_id,
+                    envelope.conversation_id,
+                    name="memory.ingest_snapshot",
+                    status="completed",
+                    summary="已在上下文压缩或清理前保存记忆快照。",
+                    params={"source": str(envelope.payload.get("source") or "snapshot")},
+                    result=event_id,
                 )
                 schedule_memory_distillation(
                     event_id,

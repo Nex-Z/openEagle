@@ -240,6 +240,7 @@ export function useBackendConnection(
     summary: ConversationSummary | undefined,
     updater: (messages: ChatMessage[]) => ChatMessage[],
   ) => void,
+  onSettingsLoaded?: (settings: AppSettings) => void,
 ) {
   const [backend, setBackend] = useState<BackendState>(initialState);
   const [messages, setMessages] = useState<ChatMessage[]>(initialMessages);
@@ -524,8 +525,9 @@ export function useBackendConnection(
       }));
       setStatusLine("已连接后端服务");
       setStatusDetail(null);
-      syncSettings();
       requestMemoryState();
+      // Delay settings sync to let backend send persisted settings first
+      setTimeout(syncSettings, 600);
     });
 
     socket.addEventListener("close", () => {
@@ -663,6 +665,14 @@ export function useBackendConnection(
 
       if (envelope.type === "server:memory_state" || envelope.type === "server:memory_updated") {
         setMemoryState(envelope.payload as unknown as MemoryState);
+        return;
+      }
+
+      if (envelope.type === "server:settings_loaded") {
+        const backendSettings = (envelope.payload as unknown as Record<string, unknown>).settings;
+        if (backendSettings && typeof backendSettings === "object" && onSettingsLoaded) {
+          onSettingsLoaded(backendSettings as AppSettings);
+        }
         return;
       }
 

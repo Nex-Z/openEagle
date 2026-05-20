@@ -339,6 +339,14 @@ export default function App() {
         ];
       });
     },
+    (loadedSettings) => {
+      // Backend sent persisted settings; merge with current state
+      setSettings((current) => {
+        const merged = { ...current, ...loadedSettings };
+        saveSettings(merged);
+        return merged;
+      });
+    },
   );
 
   useEffect(() => {
