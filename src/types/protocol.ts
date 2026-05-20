@@ -148,6 +148,21 @@ export interface PermissionSettings {
   mode: PermissionMode;
 }
 
+export type ToolMessageMode = "placeholder" | "remove";
+
+export interface ContextSettings {
+  enabled: boolean;
+  maxInputTokens: number;
+  preserveRecentMessages: number;
+  imIdleCleanupMinutes: number;
+  toolMessageMode: ToolMessageMode;
+  aiSummaryEnabled: boolean;
+  snapshotOnCompaction: boolean;
+  summaryCharLimit: number;
+  toolResultCharLimit: number;
+  middleMessageCharLimit: number;
+}
+
 export interface SoloSettings {
   preferredDisplayIndex: number;
 }
@@ -195,11 +210,67 @@ export interface AppSettings {
   agent: AgentSettings;
   appearance: AppearanceSettings;
   permissions: PermissionSettings;
+  context: ContextSettings;
   solo: SoloSettings;
   tools: ToolConfig[];
   builtinTools: BuiltinToolConfig[];
   mcp: McpServerConfig[];
   skills: SkillConfig[];
+}
+
+export interface MemoryProfile {
+  content: string;
+  updatedAt: string;
+  manualUpdatedAt?: string;
+}
+
+export type MemoryNoteStatus = "active" | "archived";
+
+export interface MemoryNote {
+  id: string;
+  text: string;
+  tags: string[];
+  source: string;
+  confidence: number;
+  status: MemoryNoteStatus;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface AgentSoul {
+  core: string;
+  sideNotes: string;
+  updatedAt: string;
+  sideNotesUpdatedAt?: string;
+}
+
+export interface MemoryAudit {
+  id: string;
+  action: string;
+  targetKind: string;
+  targetId?: string;
+  summary?: string;
+  source: string;
+  createdAt: string;
+}
+
+export interface MemoryEvent {
+  id: string;
+  source: string;
+  conversationId?: string;
+  requestId?: string;
+  summary?: string;
+  content?: string;
+  payload?: Record<string, unknown>;
+  createdAt: string;
+}
+
+export interface MemoryState {
+  profile: MemoryProfile;
+  notes: MemoryNote[];
+  agentSoul: AgentSoul;
+  audit: MemoryAudit[];
+  events: MemoryEvent[];
 }
 
 export interface SoloDisplayOption {

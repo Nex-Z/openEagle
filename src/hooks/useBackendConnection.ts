@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { registerMemorySnapshotSender } from "../lib/storage";
 import { executionStateLabel, executionStatusLabel } from "../lib/runLabels";
 import type {
   AgentExecutionTrace,
@@ -13,6 +14,7 @@ import type {
   Envelope,
   ErrorPayload,
   IMStatusPayload,
+  MemoryState,
   ScheduledTask,
   ScheduledTaskExecution,
   SoloConfirmationPayload,
@@ -36,6 +38,14 @@ const activeSoloStates = new Set<SoloRunState>([
   "paused",
   "waiting_user_confirmation",
 ]);
+
+const emptyMemoryState: MemoryState = {
+  profile: { content: "", updatedAt: "" },
+  notes: [],
+  agentSoul: { core: "", sideNotes: "", updatedAt: "" },
+  audit: [],
+  events: [],
+};
 
 function isTauriRuntime() {
   return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
@@ -254,6 +264,7 @@ export function useBackendConnection(
   const [scheduledTaskHistory, setScheduledTaskHistory] = useState<
     Record<string, ScheduledTaskExecution[]>
   >({});
+  const [memoryState, setMemoryState] = useState<MemoryState>(emptyMemoryState);
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
@@ -291,6 +302,45 @@ export function useBackendConnection(
     };
     socket.send(JSON.stringify(settingsEnvelope));
   };
+
+  const requestMemoryState = () => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+    const now = new Date().toISOString();
+    const envelope: Envelope<Record<string, never>> = {
+      type: "client:memory_get",
+      requestId: createId("memory"),
+      conversationId,
+      payload: {},
+      timestamp: now,
+    };
+    socket.send(JSON.stringify(envelope));
+    return true;
+  };
+
+  const sendMemorySnapshot = (snapshot: {
+    reason: string;
+    content: string;
+    source: string;
+  }) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+    const envelope: Envelope<typeof snapshot> = {
+      type: "client:memory_ingest_snapshot",
+      requestId: createId("memory-snapshot"),
+      conversationId,
+      payload: snapshot,
+      timestamp: new Date().toISOString(),
+    };
+    socket.send(JSON.stringify(envelope));
+    return true;
+  };
+
+  useEffect(() => registerMemorySnapshotSender(sendMemorySnapshot), [conversationId]);
 
   const appendSoloTimeline = (line: string) => {
     const stamped = `[${new Date().toLocaleTimeString()}] ${line}`;
@@ -475,6 +525,7 @@ export function useBackendConnection(
       setStatusLine("已连接后端服务");
       setStatusDetail(null);
       syncSettings();
+      requestMemoryState();
     });
 
     socket.addEventListener("close", () => {
@@ -607,6 +658,11 @@ export function useBackendConnection(
               (payload.state === "waiting" ? current?.qrcodeUrl : undefined),
           }));
         }
+        return;
+      }
+
+      if (envelope.type === "server:memory_state" || envelope.type === "server:memory_updated") {
+        setMemoryState(envelope.payload as unknown as MemoryState);
         return;
       }
 
@@ -1314,6 +1370,24 @@ export function useBackendConnection(
   const requestScheduledTaskHistory = (taskId: string) =>
     sendScheduledTaskMessage("client:scheduled_task_history", { taskId });
 
+  const saveMemoryState = (memory: MemoryState) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      setStatusLine("后端服务未就绪");
+      setStatusDetail("当前连接尚未建立完成，记忆未保存。");
+      return false;
+    }
+    const envelope: Envelope<MemoryState> = {
+      type: "client:memory_save",
+      requestId: createId("memory-save"),
+      conversationId,
+      payload: memory,
+      timestamp: new Date().toISOString(),
+    };
+    socket.send(JSON.stringify(envelope));
+    return true;
+  };
+
   return {
     backend,
     messages,
@@ -1347,6 +1421,9 @@ export function useBackendConnection(
     setOverlayVisible,
     scheduledTasks,
     scheduledTaskHistory,
+    memoryState,
+    requestMemoryState,
+    saveMemoryState,
     requestScheduledTasks,
     createScheduledTask,
     updateScheduledTask,

@@ -20,6 +20,7 @@ from .confirmations import ToolConfirmationStore
 from .default_tools import build_default_tools, execute_confirmed_tool
 from .im.bridge import IMBridge, IM_RECEIVED_ACK_TEXT, bind_config_getter
 from .im.models import IMConversationBinding
+from .memory import MemoryService, init_db as init_memory_db
 from .models import (
     AttachmentRef,
     Envelope,
@@ -57,6 +58,7 @@ runtime_state = RuntimeState()
 runtime_state.update_config(config)
 workspace_root = Path(__file__).resolve().parents[2]
 attachment_store = AttachmentStore(workspace_root)
+memory_service = MemoryService(config_getter=runtime_state.get_config)
 confirmed_tool_results: dict[str, str] = {}
 scheduler_service: SchedulerService | None = None
 ATTACHMENT_WS_MAX_SIZE = 192 * 1024 * 1024
@@ -146,7 +148,11 @@ async def announce_ready() -> None:
     global scheduler_service
     db_path = workspace_root / ".open-eagle" / "scheduler.db"
     init_db(db_path)
-    scheduler_service = SchedulerService(config_getter=runtime_state.get_config)
+    init_memory_db(workspace_root / ".open-eagle" / "memory.db")
+    scheduler_service = SchedulerService(
+        config_getter=runtime_state.get_config,
+        memory_context_getter=memory_service.prompt_context,
+    )
     set_scheduler_service(scheduler_service)
     scheduler_service.start()
     port = getattr(app.state, "ws_port", None)
@@ -207,6 +213,36 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     ) -> None:
         async with send_lock:
             await send_envelope(websocket, type_, request_id, conversation_id, payload)
+
+    async def emit_memory_state(
+        type_: str,
+        request_id: str,
+        conversation_id: str,
+    ) -> None:
+        await safe_send(
+            type_,
+            request_id,
+            conversation_id,
+            memory_service.state_payload(),
+        )
+
+    def schedule_memory_distillation(
+        event_id: str,
+        request_id: str,
+        conversation_id: str,
+    ) -> None:
+        async def _distill() -> None:
+            try:
+                changed = await memory_service.distill_event(event_id)
+            except Exception:
+                return
+            if changed:
+                try:
+                    await emit_memory_state("server:memory_updated", request_id, conversation_id)
+                except Exception:
+                    return
+
+        asyncio.create_task(_distill())
 
     def is_solo_running(session: SoloSessionState) -> bool:
         return active_solo is session and session.state == "running"
@@ -586,6 +622,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     app_context=app_context,
                     findings=session.findings,
                     kernel_state=solo_kernel.prompt_context(),
+                    memory_context=memory_service.prompt_context(),
                 )
             except Exception as exc:  # noqa: BLE001
                 if not is_solo_running(session):
@@ -1428,6 +1465,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         send_event=safe_send,
         start_solo=start_solo_for_conversation,
         solo_control=apply_solo_control,
+        memory_service=memory_service,
     )
 
     async def handle_tool_decision_from_im(
@@ -1558,6 +1596,44 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     envelope.request_id,
                     envelope.conversation_id,
                     StatusPayload(stage="idle", detail="模型配置已同步").model_dump(),
+                )
+                continue
+
+            if envelope.type == "client:memory_get":
+                await emit_memory_state(
+                    "server:memory_state",
+                    envelope.request_id,
+                    envelope.conversation_id,
+                )
+                continue
+
+            if envelope.type == "client:memory_save":
+                memory_service.save_manual(envelope.payload)
+                await emit_memory_state(
+                    "server:memory_updated",
+                    envelope.request_id,
+                    envelope.conversation_id,
+                )
+                continue
+
+            if envelope.type == "client:memory_ingest_snapshot":
+                content = str(envelope.payload.get("content") or envelope.payload.get("summary") or "")
+                event_id = memory_service.ingest_snapshot(
+                    conversation_id=envelope.conversation_id,
+                    request_id=envelope.request_id,
+                    source=str(envelope.payload.get("source") or "snapshot"),
+                    content=content,
+                    payload=envelope.payload,
+                )
+                schedule_memory_distillation(
+                    event_id,
+                    envelope.request_id,
+                    envelope.conversation_id,
+                )
+                await emit_memory_state(
+                    "server:memory_state",
+                    envelope.request_id,
+                    envelope.conversation_id,
                 )
                 continue
 

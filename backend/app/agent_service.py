@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from typing import AsyncIterator
+from collections.abc import Awaitable, Callable
+from typing import Any, AsyncIterator
 
 from .config import AppConfig
 from .confirmations import ToolConfirmationStore
@@ -10,6 +11,11 @@ from .providers.agno_provider import AgnoAgentProvider
 from .providers.anthropic_provider import AnthropicAgentProvider
 from .providers.base import AgentProvider, ProviderStreamEvent
 from .providers.mock import MockAgentProvider
+
+ContextSnapshotCallback = Callable[
+    [str, str, str, dict[str, Any]],
+    Awaitable[None],
+]
 
 
 class AgentService:
@@ -44,6 +50,7 @@ def build_agent_service(
     attachment_store: AttachmentStore | None = None,
     request_id: str | None = None,
     conversation_id: str | None = None,
+    context_snapshot: ContextSnapshotCallback | None = None,
 ) -> AgentService:
     if config.agent.provider in {"openai", "openai-like"}:
         provider = AgnoAgentProvider(
@@ -52,6 +59,7 @@ def build_agent_service(
             attachment_store=attachment_store,
             request_id=request_id,
             conversation_id=conversation_id,
+            context_snapshot=context_snapshot,
         )
     elif config.agent.provider == "anthropic":
         provider = AnthropicAgentProvider(
@@ -60,6 +68,7 @@ def build_agent_service(
             attachment_store=attachment_store,
             request_id=request_id,
             conversation_id=conversation_id,
+            context_snapshot=context_snapshot,
         )
     else:
         provider = MockAgentProvider(config)

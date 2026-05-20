@@ -113,6 +113,12 @@ router prompt 采用原则驱动，而不是关键词驱动：根据任务所需
 
 当用户要求稍后或周期性执行某件事时，main agent 会创建持久化定时任务，而不是立即把任务做掉。定时任务存储在 `.open-eagle/scheduler.db`，使用 cron 表达式调度，执行时仍走同一套 worker 类型，并可将执行结果回传到原会话。
 
+### 记忆与上下文整理
+
+openEagle 现在内置 Hermes 风格的单用户长期记忆，数据保存在 `.open-eagle/memory.db`。记忆分为用户画像、用户笔记、Agent 个性灵魂和原始记忆事件：原始事件尽量保留回合与压缩快照，画像、笔记和人格摘要则用于精简注入 prompt。Agent 可以在用户回合完成后异步蒸馏更新画像、笔记和自动旁注；用户手动编辑的画像、笔记和核心人格优先级最高。
+
+上下文整理走同一套配置入口。达到 token 阈值后，后端会保留 system 和最近 N 条消息，只处理中间消息；工具消息先占位或移除，避免把大段工具输出交给摘要模型。Anthropic provider 会在必要时用文本模型生成中段摘要，失败时退回规则型截断。远程 IM 会话还支持按静默分钟数提示开启新的上下文窗口。
+
 内置 worker 类型：
 
 | Worker     | 用途                                   |
@@ -146,6 +152,7 @@ router prompt 采用原则驱动，而不是关键词驱动：根据任务所需
 - 微信使用 `wechat-clawbot`。在微信卡片中点击“扫码绑定”，用微信扫码后会自动保存 `accountId`，再启用微信入口即可开始长轮询。点击“解绑”会停止轮询，并清理 openEagle 专用的本地 ClawBot 账号凭据。
 - 白名单为空时默认拦截所有远程消息。
 - 远程普通文本会先交给 main agent。main agent 可以自然回复、调用工具，或在任务需要 GUI 操作时调度桌面执行。
+- 远程会话静默超过 `context.imIdleCleanupMinutes` 后，下一轮会提示 main agent 把它视为新的上下文窗口。
 - 只有明确希望优先走桌面执行时，才使用 `/solo <任务>`。
 
 远程命令：
@@ -194,6 +201,11 @@ openEagle 支持灵活的模型路由——main agent 文本对话和 Vision-Lan
 | `wechat.accountId`                                    | 微信扫码绑定后保存的 ClawBot 账号                 |
 | `wechat.baseUrl` / `wechat.botType`                   | 可选 ClawBot API 地址与 Bot Type                  |
 | `wechat.allowedUserIds` / `wechat.allowedChatIds`     | 微信用户/会话白名单                               |
+| `context.maxInputTokens`                              | 触发上下文整理的估算输入 token 阈值               |
+| `context.preserveRecentMessages`                      | 上下文整理时完整保留的最近消息数                  |
+| `context.toolMessageMode`                             | 中段工具消息处理方式：占位或移除                  |
+| `context.aiSummaryEnabled`                            | 是否使用文本模型摘要中段上下文                    |
+| `context.snapshotOnCompaction`                        | 压缩前是否写入长期记忆快照                        |
 | `tools`                                               | 自定义命令工具（[详见下方](#tool--自定义命令工具)） |
 | `mcp`                                                 | MCP 服务器连接（[详见下方](#mcp--连接外部服务)）    |
 | `skills`                                              | 自定义 Skill 行为指令（[详见下方](#skill--注入私域经验)） |
@@ -302,12 +314,13 @@ prompt: |
 ## Roadmap
 
 - [ ] 离开主窗口后，执行状态也能更清楚地呈现给用户
-- [ ] 良好的自迭代上下文管理机制（对话级 compaction、token 计数）
 - [ ] 更快的响应操作（prompt caching 等）
 - [ ] macOS 和 Linux 支持
 - [ ] 社区插件系统
 - [ ] 会话回放与更完整的历史记录
 - [ ] 语音输入
+- [x] Hermes 风格长期记忆：用户画像、用户笔记、Agent 个性与原始事件
+- [x] 可配置上下文整理：token 阈值、最近消息保留、工具预清理、AI 中段摘要与 IM 静默窗口
 - [x] 定时任务：持久化存储、worker 执行、UI 管理与执行历史
 - [x] 原则驱动的 main agent router prompt 与助理式直接回复
 - [x] 多显示器感知（已支持 display 选择与运行时切换）

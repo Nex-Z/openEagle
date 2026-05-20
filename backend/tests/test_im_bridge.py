@@ -3,9 +3,10 @@ from __future__ import annotations
 import asyncio
 import re
 import unittest
+from datetime import UTC, datetime, timedelta
 from unittest.mock import patch
 
-from app.config import AppConfig, FeishuConfig, TelegramConfig, WechatConfig
+from app.config import AppConfig, ContextConfig, FeishuConfig, TelegramConfig, WechatConfig
 from app.im.bridge import IMBridge, IM_RECEIVED_ACK_TEXT, bind_config_getter
 from app.im.commands import parse_im_command
 from app.im.feishu import parse_message_receive_event
@@ -325,6 +326,41 @@ class IMBridgeAttachmentTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(chat_calls[0][1], "你好")
         self.assertEqual(solo_calls, [])
         self.assertEqual([message.text for message in fake.sent], ["AI 生成的自然回复"])
+
+    async def test_idle_im_conversation_marks_next_chat_as_new_context_window(self) -> None:
+        chat_calls = []
+        fake = FakeIMAdapter()
+        bridge = IMBridge(
+            send_client=lambda *args: _record_async([], args),
+            handle_chat=lambda *args: _record_async(chat_calls, args, result="ok"),
+            start_solo=lambda *args: _record_async([], args, result="solo"),
+            solo_control=lambda *args: _record_async([], args, result="control"),
+            tool_decision=lambda *args: _record_async([], args, result="tool"),
+            attachment_store=FakeAttachmentStore(),
+        )
+        bridge._telegram_adapter = fake
+        bind_config_getter(
+            bridge,
+            lambda: AppConfig(
+                telegram=TelegramConfig(enabled=True, allowedUserIds=["42"]),
+                context=ContextConfig(imIdleCleanupMinutes=5),
+            ),
+        )
+        source = IMMessageSource(
+            channel="telegram",
+            chat_id="42",
+            chat_type="private",
+            user_id="42",
+            message_id="13",
+        )
+        binding = build_conversation_binding(source)
+        bridge._last_activity_at[binding.conversation_id] = datetime.now(UTC) - timedelta(minutes=10)
+
+        await bridge._handle_event(IMEvent(source=source, text="回来继续"))
+
+        self.assertEqual(len(chat_calls), 1)
+        self.assertTrue(chat_calls[0][1].startswith("[上下文整理]"))
+        self.assertIn("回来继续", chat_calls[0][1])
 
 
 async def _record_async(target, args, result=None):

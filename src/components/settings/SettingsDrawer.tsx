@@ -6,6 +6,7 @@ import { ThemeToggle } from "../ThemeToggle";
 import type {
   AppSettings,
   IMStatusPayload,
+  MemoryState,
   McpServerConfig,
   ScheduledTask,
   ScheduledTaskExecution,
@@ -24,6 +25,7 @@ export type SettingsSection =
   | "tools"
   | "mcp"
   | "skills"
+  | "memory"
   | "scheduled_tasks";
 
 interface SettingsDrawerProps {
@@ -35,11 +37,14 @@ interface SettingsDrawerProps {
   wechatBindStatus: WechatBindStatusPayload | null;
   scheduledTasks: ScheduledTask[];
   scheduledTaskHistory: Record<string, ScheduledTaskExecution[]>;
+  memoryState: MemoryState;
   onRefreshSoloDisplays: () => boolean;
   onStartWechatBind: (force?: boolean) => boolean;
   onCancelWechatBind: () => boolean;
   onUnbindWechat: () => boolean;
   onRequestScheduledTasks: () => boolean;
+  onRequestMemoryState: () => boolean;
+  onSaveMemoryState: (memory: MemoryState) => boolean;
   onCreateScheduledTask: (task: Omit<ScheduledTask, "id" | "createdAt" | "updatedAt">) => boolean;
   onUpdateScheduledTask: (task: ScheduledTask) => boolean;
   onDeleteScheduledTask: (taskId: string) => boolean;
@@ -61,6 +66,7 @@ const sectionMeta: Array<{
   { id: "tools", title: "Tools", summary: "本地工具入口。" },
   { id: "mcp", title: "MCP", summary: "MCP Server 配置。" },
   { id: "skills", title: "Skills", summary: "提示技能配置。" },
+  { id: "memory", title: "Memory", summary: "用户画像、笔记与 Agent 个性。" },
   { id: "scheduled_tasks", title: "定时任务", summary: "自动执行的任务管理与历史。" },
 ];
 
@@ -98,6 +104,26 @@ function createSkillConfig(): SkillConfig {
   };
 }
 
+function createMemoryNote() {
+  const now = new Date().toISOString();
+  return {
+    id: crypto.randomUUID(),
+    text: "",
+    tags: [],
+    source: "manual",
+    confidence: 1,
+    status: "active" as const,
+    createdAt: now,
+    updatedAt: now,
+  };
+}
+
+function formatMemoryTime(value?: string) {
+  if (!value) return "未记录";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
 function updateListItem<T extends { id: string }>(
   list: T[],
   id: string,
@@ -119,6 +145,14 @@ function splitLines(value: string) {
 
 function joinLines(value: string[]) {
   return value.join("\n");
+}
+
+function readBoundedInteger(value: string, fallback: number, min = 0) {
+  const next = Number(value);
+  if (!Number.isFinite(next)) {
+    return fallback;
+  }
+  return Math.max(min, Math.round(next));
 }
 
 function getToolQualityMessages(tool: ToolConfig, tools: ToolConfig[]) {
@@ -225,11 +259,14 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
     wechatBindStatus,
     scheduledTasks,
     scheduledTaskHistory,
+    memoryState,
     onRefreshSoloDisplays,
     onStartWechatBind,
     onCancelWechatBind,
     onUnbindWechat,
     onRequestScheduledTasks,
+    onRequestMemoryState,
+    onSaveMemoryState,
     onCreateScheduledTask,
     onUpdateScheduledTask,
     onDeleteScheduledTask,
@@ -241,9 +278,12 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
   const [expandedToolId, setExpandedToolId] = useState<string | null>(null);
   const [expandedMcpId, setExpandedMcpId] = useState<string | null>(null);
   const [expandedSkillId, setExpandedSkillId] = useState<string | null>(null);
+  const [expandedMemoryNoteId, setExpandedMemoryNoteId] = useState<string | null>(null);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
   const [taskFormOpen, setTaskFormOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<ScheduledTask | null>(null);
+  const [memoryDraft, setMemoryDraft] = useState<MemoryState>(memoryState);
+  const [memoryDirty, setMemoryDirty] = useState(false);
   const [historyTaskId, setHistoryTaskId] = useState<string | null>(null);
   const [previewDataUrls, setPreviewDataUrls] = useState<Record<string, string>>({});
   const [failedPreviews, setFailedPreviews] = useState<Set<string>>(new Set());
@@ -258,7 +298,22 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
     if (open && activeSection === "scheduled_tasks") {
       onRequestScheduledTasks();
     }
-  }, [activeSection, onRefreshSoloDisplays, onRequestScheduledTasks, open]);
+    if (open && activeSection === "memory") {
+      onRequestMemoryState();
+    }
+  }, [
+    activeSection,
+    onRefreshSoloDisplays,
+    onRequestMemoryState,
+    onRequestScheduledTasks,
+    open,
+  ]);
+
+  useEffect(() => {
+    if (!memoryDirty) {
+      setMemoryDraft(memoryState);
+    }
+  }, [memoryDirty, memoryState]);
 
   useEffect(() => {
     const displaysChanged =
@@ -354,6 +409,27 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
     };
   }, [wechatQrContent]);
 
+  const updateMemoryDraft = (updater: (memory: MemoryState) => MemoryState) => {
+    setMemoryDirty(true);
+    setMemoryDraft((current) => updater(current));
+  };
+
+  const saveMemoryDraft = () => {
+    if (onSaveMemoryState(memoryDraft)) {
+      setMemoryDirty(false);
+    }
+  };
+
+  const updateContextSettings = (patch: Partial<AppSettings["context"]>) => {
+    onChange({
+      ...settings,
+      context: {
+        ...settings.context,
+        ...patch,
+      },
+    });
+  };
+
   const activeMeta = sectionMeta.find((section) => section.id === activeSection) ?? sectionMeta[0];
   const feishuStatus = imStatuses.feishu;
   const telegramStatus = imStatuses.telegram;
@@ -418,6 +494,159 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                     }
                     value={settings.appearance.themeMode}
                   />
+                </section>
+
+                <section className="settings-panel">
+                  <div className="settings-panel-head">
+                    <div>
+                      <span className="card-kicker">Context</span>
+                      <strong>上下文整理</strong>
+                    </div>
+                    <Wrench size={16} />
+                  </div>
+                  <label className="form-switch">
+                    <span>启用整理</span>
+                    <input
+                      checked={settings.context.enabled}
+                      onChange={(event) =>
+                        updateContextSettings({ enabled: event.target.checked })
+                      }
+                      type="checkbox"
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>触发 token 阈值</span>
+                    <input
+                      min={1000}
+                      onChange={(event) =>
+                        updateContextSettings({
+                          maxInputTokens: readBoundedInteger(
+                            event.target.value,
+                            settings.context.maxInputTokens,
+                            1000,
+                          ),
+                        })
+                      }
+                      step={1000}
+                      type="number"
+                      value={settings.context.maxInputTokens}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>保留最近消息数</span>
+                    <input
+                      min={0}
+                      onChange={(event) =>
+                        updateContextSettings({
+                          preserveRecentMessages: readBoundedInteger(
+                            event.target.value,
+                            settings.context.preserveRecentMessages,
+                          ),
+                        })
+                      }
+                      type="number"
+                      value={settings.context.preserveRecentMessages}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>IM 静默整理分钟</span>
+                    <input
+                      min={0}
+                      onChange={(event) =>
+                        updateContextSettings({
+                          imIdleCleanupMinutes: readBoundedInteger(
+                            event.target.value,
+                            settings.context.imIdleCleanupMinutes,
+                          ),
+                        })
+                      }
+                      type="number"
+                      value={settings.context.imIdleCleanupMinutes}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>工具消息处理</span>
+                    <select
+                      onChange={(event) =>
+                        updateContextSettings({
+                          toolMessageMode: event.target.value as AppSettings["context"]["toolMessageMode"],
+                        })
+                      }
+                      value={settings.context.toolMessageMode}
+                    >
+                      <option value="placeholder">占位</option>
+                      <option value="remove">移除</option>
+                    </select>
+                  </label>
+                  <label className="form-switch">
+                    <span>AI 摘要中段</span>
+                    <input
+                      checked={settings.context.aiSummaryEnabled}
+                      onChange={(event) =>
+                        updateContextSettings({ aiSummaryEnabled: event.target.checked })
+                      }
+                      type="checkbox"
+                    />
+                  </label>
+                  <label className="form-switch">
+                    <span>压缩前写入记忆快照</span>
+                    <input
+                      checked={settings.context.snapshotOnCompaction}
+                      onChange={(event) =>
+                        updateContextSettings({ snapshotOnCompaction: event.target.checked })
+                      }
+                      type="checkbox"
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>摘要字符上限</span>
+                    <input
+                      min={200}
+                      onChange={(event) =>
+                        updateContextSettings({
+                          summaryCharLimit: readBoundedInteger(
+                            event.target.value,
+                            settings.context.summaryCharLimit,
+                            200,
+                          ),
+                        })
+                      }
+                      type="number"
+                      value={settings.context.summaryCharLimit}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>工具结果字符上限</span>
+                    <input
+                      min={0}
+                      onChange={(event) =>
+                        updateContextSettings({
+                          toolResultCharLimit: readBoundedInteger(
+                            event.target.value,
+                            settings.context.toolResultCharLimit,
+                          ),
+                        })
+                      }
+                      type="number"
+                      value={settings.context.toolResultCharLimit}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>中段消息字符上限</span>
+                    <input
+                      min={0}
+                      onChange={(event) =>
+                        updateContextSettings({
+                          middleMessageCharLimit: readBoundedInteger(
+                            event.target.value,
+                            settings.context.middleMessageCharLimit,
+                          ),
+                        })
+                      }
+                      type="number"
+                      value={settings.context.middleMessageCharLimit}
+                    />
+                  </label>
                 </section>
               </div>
             ) : null}
@@ -1338,6 +1567,219 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                         </label>
                       </ConfigListItem>
                     ))}
+                  </div>
+                </section>
+              </div>
+            ) : null}
+
+            {activeSection === "memory" ? (
+              <div className="settings-stack">
+                <section className="settings-panel">
+                  <div className="settings-panel-head">
+                    <div>
+                      <span className="card-kicker">Memory</span>
+                      <strong>长期记忆</strong>
+                    </div>
+                    <div className="config-row-actions">
+                      <button className="ghost-button" onClick={onRequestMemoryState} type="button">
+                        刷新
+                      </button>
+                      <button
+                        className="ghost-button"
+                        disabled={!memoryDirty}
+                        onClick={saveMemoryDraft}
+                        type="button"
+                      >
+                        保存记忆
+                      </button>
+                    </div>
+                  </div>
+                  <label className="form-field">
+                    <span>用户画像</span>
+                    <textarea
+                      className="form-textarea lg"
+                      onChange={(event) =>
+                        updateMemoryDraft((memory) => ({
+                          ...memory,
+                          profile: {
+                            ...memory.profile,
+                            content: event.target.value,
+                            updatedAt: new Date().toISOString(),
+                          },
+                        }))
+                      }
+                      placeholder="长期稳定的用户信息、工作方式、偏好和背景。"
+                      value={memoryDraft.profile.content}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Agent 核心灵魂</span>
+                    <textarea
+                      className="form-textarea lg"
+                      onChange={(event) =>
+                        updateMemoryDraft((memory) => ({
+                          ...memory,
+                          agentSoul: {
+                            ...memory.agentSoul,
+                            core: event.target.value,
+                            updatedAt: new Date().toISOString(),
+                          },
+                        }))
+                      }
+                      placeholder="由用户手动维护的核心人格、边界和长期语气。"
+                      value={memoryDraft.agentSoul.core}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Agent 自动旁注</span>
+                    <textarea
+                      className="form-textarea"
+                      placeholder="Agent 自动维护的相处方式、称呼和表达习惯。"
+                      readOnly
+                      value={memoryDraft.agentSoul.sideNotes}
+                    />
+                  </label>
+                </section>
+
+                <section className="settings-panel">
+                  <div className="settings-panel-head">
+                    <div>
+                      <span className="card-kicker">Notes</span>
+                      <strong>用户笔记</strong>
+                    </div>
+                    <button
+                      className="ghost-button"
+                      onClick={() =>
+                        updateMemoryDraft((memory) => ({
+                          ...memory,
+                          notes: [createMemoryNote(), ...memory.notes],
+                        }))
+                      }
+                      type="button"
+                    >
+                      新增笔记
+                    </button>
+                  </div>
+                  <div className="config-list">
+                    {memoryDraft.notes.length === 0 ? (
+                      <div className="form-hint">暂无用户笔记。</div>
+                    ) : null}
+                    {memoryDraft.notes.map((note) => (
+                      <ConfigListItem
+                        key={note.id}
+                        enabled={note.status === "active"}
+                        expanded={expandedMemoryNoteId === note.id}
+                        onDelete={() =>
+                          updateMemoryDraft((memory) => ({
+                            ...memory,
+                            notes: updateListItem(memory.notes, note.id, (item) => ({
+                              ...item,
+                              status: "archived",
+                              updatedAt: new Date().toISOString(),
+                            })),
+                          }))
+                        }
+                        onToggleEnabled={(value) =>
+                          updateMemoryDraft((memory) => ({
+                            ...memory,
+                            notes: updateListItem(memory.notes, note.id, (item) => ({
+                              ...item,
+                              status: value ? "active" : "archived",
+                              updatedAt: new Date().toISOString(),
+                            })),
+                          }))
+                        }
+                        onToggleExpanded={() =>
+                          setExpandedMemoryNoteId((current) =>
+                            current === note.id ? null : note.id,
+                          )
+                        }
+                        subtitle={`${note.status === "active" ? "活跃" : "已归档"} · ${note.source || "manual"} · ${formatMemoryTime(note.updatedAt)}`}
+                        title={note.text || "空笔记"}
+                      >
+                        <label className="form-field">
+                          <span>内容</span>
+                          <textarea
+                            className="form-textarea"
+                            onChange={(event) =>
+                              updateMemoryDraft((memory) => ({
+                                ...memory,
+                                notes: updateListItem(memory.notes, note.id, (item) => ({
+                                  ...item,
+                                  text: event.target.value,
+                                  updatedAt: new Date().toISOString(),
+                                })),
+                              }))
+                            }
+                            value={note.text}
+                          />
+                        </label>
+                        <label className="form-field">
+                          <span>标签（逗号分隔）</span>
+                          <input
+                            onChange={(event) =>
+                              updateMemoryDraft((memory) => ({
+                                ...memory,
+                                notes: updateListItem(memory.notes, note.id, (item) => ({
+                                  ...item,
+                                  tags: event.target.value
+                                    .split(",")
+                                    .map((tag) => tag.trim())
+                                    .filter(Boolean),
+                                  updatedAt: new Date().toISOString(),
+                                })),
+                              }))
+                            }
+                            value={note.tags.join(", ")}
+                          />
+                        </label>
+                        <label className="form-field">
+                          <span>置信度</span>
+                          <input
+                            max={1}
+                            min={0}
+                            onChange={(event) =>
+                              updateMemoryDraft((memory) => ({
+                                ...memory,
+                                notes: updateListItem(memory.notes, note.id, (item) => ({
+                                  ...item,
+                                  confidence: Number(event.target.value),
+                                  updatedAt: new Date().toISOString(),
+                                })),
+                              }))
+                            }
+                            step={0.05}
+                            type="number"
+                            value={note.confidence}
+                          />
+                        </label>
+                      </ConfigListItem>
+                    ))}
+                  </div>
+                </section>
+
+                <section className="settings-panel">
+                  <div className="settings-panel-head">
+                    <div>
+                      <span className="card-kicker">Audit</span>
+                      <strong>审计与原始事件</strong>
+                    </div>
+                  </div>
+                  <div className="config-list">
+                    {memoryDraft.audit.slice(0, 12).map((item) => (
+                      <article className="config-row" key={item.id}>
+                        <div className="config-row-head">
+                          <div className="config-row-copy">
+                            <strong>{item.action} · {item.targetKind}</strong>
+                            <span>{item.summary || item.source}</span>
+                            <small>{formatMemoryTime(item.createdAt)}</small>
+                          </div>
+                        </div>
+                      </article>
+                    ))}
+                    {memoryDraft.audit.length === 0 ? (
+                      <div className="form-hint">暂无审计记录。</div>
+                    ) : null}
                   </div>
                 </section>
               </div>

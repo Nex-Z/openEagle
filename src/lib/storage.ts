@@ -172,6 +172,18 @@ export const defaultSettings: AppSettings = {
   permissions: {
     mode: "default",
   },
+  context: {
+    enabled: true,
+    maxInputTokens: 24_000,
+    preserveRecentMessages: 8,
+    imIdleCleanupMinutes: 60,
+    toolMessageMode: "placeholder",
+    aiSummaryEnabled: true,
+    snapshotOnCompaction: true,
+    summaryCharLimit: 2400,
+    toolResultCharLimit: 0,
+    middleMessageCharLimit: 1200,
+  },
   solo: {
     preferredDisplayIndex: 1,
   },
@@ -225,6 +237,12 @@ export function loadSettings(): AppSettings {
     }
 
     const parsed = JSON.parse(raw) as Partial<AppSettings>;
+    const contextSettings = {
+      ...defaultSettings.context,
+      ...parsed.context,
+      toolMessageMode:
+        parsed.context?.toolMessageMode === "remove" ? "remove" : "placeholder",
+    } satisfies AppSettings["context"];
     return {
       ...defaultSettings,
       ...parsed,
@@ -277,6 +295,7 @@ export function loadSettings(): AppSettings {
         ...defaultSettings.permissions,
         ...parsed.permissions,
       },
+      context: contextSettings,
       solo: {
         ...defaultSettings.solo,
         ...parsed.solo,
@@ -1051,6 +1070,41 @@ function estimateSize(obj: unknown): number {
 
 /** Max localStorage budget: 4 MB (leave headroom under the ~5 MB limit). */
 const STORAGE_BUDGET = 4 * 1024 * 1024;
+type MemorySnapshotSender = (snapshot: {
+  reason: string;
+  content: string;
+  source: string;
+}) => void;
+
+let memorySnapshotSender: MemorySnapshotSender | null = null;
+
+export function registerMemorySnapshotSender(sender: MemorySnapshotSender | null) {
+  memorySnapshotSender = sender;
+  return () => {
+    if (memorySnapshotSender === sender) {
+      memorySnapshotSender = null;
+    }
+  };
+}
+
+function emitMemorySnapshot(reason: string, conversations: PersistedConversation[]) {
+  if (!memorySnapshotSender) {
+    return;
+  }
+  try {
+    memorySnapshotSender({
+      reason,
+      source: "storage_compaction",
+      content: JSON.stringify({
+        reason,
+        conversations,
+        capturedAt: new Date().toISOString(),
+      }),
+    });
+  } catch {
+    // Memory snapshots are best-effort and must not block storage recovery.
+  }
+}
 
 function saveLocalStorageConversations(
   conversations: PersistedConversation[],
@@ -1073,6 +1127,7 @@ function saveLocalStorageConversations(
   }
 
   // Quota exceeded — progressively prune until it fits.
+  emitMemorySnapshot("localStorage quota pruning", compacted);
   let pruned = compacted;
 
   // Phase 1: drop execution blocks/traces from oldest conversations first.
