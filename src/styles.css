@@ -1594,7 +1594,7 @@ a {
   z-index: 40;
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
-  overflow: hidden;
+  overflow: clip;
 }
 
 .settings-drawer.is-open {
@@ -1637,7 +1637,7 @@ a {
   gap: 14px;
   min-width: 0;
   min-height: 0;
-  overflow: hidden;
+  overflow: auto;
 }
 
 .settings-drawer-header h2 {

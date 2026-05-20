@@ -8,6 +8,9 @@ import { hideSoloOverlay } from "./overlay";
 
 const isDev = !app.isPackaged;
 
+// Match Tauri's app data directory for conversation persistence
+app.setName("com.openeagle.desktop");
+
 let mainWindow: BrowserWindow | null = null;
 
 function createMainWindow() {
@@ -21,6 +24,7 @@ function createMainWindow() {
     minWidth: 1080,
     minHeight: 720,
     title: "openEagle",
+    autoHideMenuBar: true,
     show: false, // show after backend ready
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
