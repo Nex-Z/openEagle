@@ -9,8 +9,8 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "electron:dev": "tsc -p tsconfig.electron.json && node -e \"require('fs').writeFileSync('dist-electron/package.json','{\\\"type\\\":\\\"commonjs\\\"}\\n')\" && vite && electron .",
-    "electron:build": "tsc -p tsconfig.electron.json && node -e \"require('fs').writeFileSync('dist-electron/package.json','{\\\"type\\\":\\\"commonjs\\\"}\\n')\" && vite build && electron-builder"
+    "electron:dev": "node scripts/electron-dev.cjs",
+    "electron:build": "tsc -p tsconfig.electron.json && node scripts/ensure-cjs-package.cjs && vite build && electron-builder"
   },
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.6",

@@ -12,8 +12,18 @@ const isDev = !app.isPackaged;
 
 // Match Tauri's app data directory for conversation persistence
 app.setName("com.openeagle.desktop");
+if (process.platform === "win32") {
+  app.setAppUserModelId("com.openeagle.desktop");
+}
 
 let mainWindow: BrowserWindow | null = null;
+
+function appIconPath(): string {
+  return path.resolve(
+    __dirname,
+    process.platform === "win32" ? "../build/icon.ico" : "../build/icon.png",
+  );
+}
 
 function createMainWindow() {
   const display = screen.getPrimaryDisplay();
@@ -26,6 +36,7 @@ function createMainWindow() {
     minWidth: 1080,
     minHeight: 720,
     title: "openEagle",
+    icon: appIconPath(),
     autoHideMenuBar: true,
     show: false, // show after backend ready
     webPreferences: {

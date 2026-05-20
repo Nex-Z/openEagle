@@ -2,9 +2,11 @@ appId: com.openeagle.desktop
 productName: openEagle
 directories:
   output: release
+  buildResources: build
 files:
   - dist/**/*
   - dist-electron/**/*
+  - build/**/*
   - package.json
 extraResources:
   - from: backend/
@@ -16,6 +18,7 @@ extraResources:
       - "!.open-eagle"
 win:
   target: nsis
+  icon: build/icon.ico
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true
