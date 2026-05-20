@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { listen, type UnlistenFn } from "@tauri-apps/api/event";
+import { invoke, listen, type UnlistenFn } from "../lib/electron-bridge";
 import { registerMemorySnapshotSender } from "../lib/storage";
 import { executionStateLabel, executionStatusLabel } from "../lib/runLabels";
 import type {
@@ -47,8 +46,8 @@ const emptyMemoryState: MemoryState = {
   events: [],
 };
 
-function isTauriRuntime() {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+function isElectronRuntime() {
+  return typeof window !== "undefined" && "electronAPI" in window;
 }
 
 function createId(prefix: string) {
@@ -79,7 +78,7 @@ function collectAssistantContent(blocks?: AssistantMessageBlock[]) {
   return blocks
     .filter((block) => block.kind === "text")
     .map((block) => block.content)
-    .join("");
+    .join("\n\n");
 }
 
 function cloneAssistantBlocks(message?: ChatMessage): AssistantMessageBlock[] {
@@ -98,6 +97,7 @@ function cloneAssistantBlocks(message?: ChatMessage): AssistantMessageBlock[] {
         kind: "text",
         content: message.content,
         status: message.status === "pending" ? "pending" : "done",
+        purpose: "final",
       },
     ];
   }
@@ -420,14 +420,14 @@ export function useBackendConnection(
   };
 
   useEffect(() => {
-    if (!isTauriRuntime()) {
+    if (!isElectronRuntime()) {
       setBackend({
         phase: "error",
         port: null,
-        message: "当前不在 Tauri 环境，请通过 `pnpm tauri:dev` 启动。",
+        message: "当前不在 Electron 环境，请通过 `pnpm electron:dev` 启动。",
       });
       setStatusLine("后端服务异常");
-      setStatusDetail("当前不在 Tauri 环境，请通过 `pnpm tauri:dev` 启动。");
+      setStatusDetail("当前不在 Electron 环境，请通过 `pnpm electron:dev` 启动。");
       return;
     }
 
@@ -698,6 +698,60 @@ export function useBackendConnection(
         return;
       }
 
+      if (envelope.type === "server:agent_progress") {
+        const progress = envelope.payload.content?.trim() ?? "";
+        if (!progress) {
+          return;
+        }
+        patchMessages((current) =>
+          upsertAssistantMessage(current, envelope.requestId, (message) => {
+            const blocks = cloneAssistantBlocks(message);
+            const last = blocks[blocks.length - 1];
+            if (
+              last &&
+              last.kind === "text" &&
+              last.purpose === "progress" &&
+              last.content === progress
+            ) {
+              return {
+                id: message?.id ?? createId("assistant"),
+                requestId: envelope.requestId,
+                role: "assistant",
+                content: collectAssistantContent(blocks),
+                createdAt: message?.createdAt ?? envelope.timestamp,
+                status: "pending",
+                attachments: message?.attachments,
+                traces: message?.traces ?? [],
+                blocks,
+              };
+            }
+
+            blocks.push({
+              id: createId("blk"),
+              kind: "text",
+              content: progress,
+              status: "done",
+              purpose: "progress",
+            });
+
+            return {
+              id: message?.id ?? createId("assistant"),
+              requestId: envelope.requestId,
+              role: "assistant",
+              content: collectAssistantContent(blocks),
+              createdAt: message?.createdAt ?? envelope.timestamp,
+              status: "pending",
+              attachments: message?.attachments,
+              traces: message?.traces ?? [],
+              blocks,
+            };
+          }),
+        );
+        setStatusLine("AI 正在处理");
+        setStatusDetail(progress);
+        return;
+      }
+
       if (envelope.type === "server:message") {
         patchMessages((current) =>
           upsertAssistantMessage(current, envelope.requestId, (message) => {
@@ -706,19 +760,40 @@ export function useBackendConnection(
                 ? envelope.payload.answer
                 : envelope.payload.content;
             const blocks = cloneAssistantBlocks(message);
-            const hasTextBlock = blocks.some((b) => b.kind === "text");
-            if (!hasTextBlock && visibleContent) {
-              blocks.unshift({
-                id: createId("blk"),
-                kind: "text",
-                content: visibleContent,
-                status: "done",
-              });
+            const finalBlockIndex = blocks.findIndex(
+              (block) => block.kind === "text" && block.purpose !== "progress",
+            );
+            if (visibleContent) {
+              if (finalBlockIndex >= 0) {
+                const block = blocks[finalBlockIndex];
+                if (block.kind === "text") {
+                  block.content = visibleContent;
+                  block.status = "done";
+                  block.purpose = "final";
+                }
+              } else {
+                const finalBlock: AssistantMessageBlock = {
+                  id: createId("blk"),
+                  kind: "text",
+                  content: visibleContent,
+                  status: "done",
+                  purpose: "final",
+                };
+                const hasProgressBlock = blocks.some(
+                  (block) => block.kind === "text" && block.purpose === "progress",
+                );
+                if (hasProgressBlock) {
+                  blocks.push(finalBlock);
+                } else {
+                  blocks.unshift(finalBlock);
+                }
+              }
             }
 
             for (const block of blocks) {
               if (block.kind === "text") {
                 block.status = "done";
+                block.purpose = block.purpose ?? "final";
               }
             }
 
@@ -756,6 +831,7 @@ export function useBackendConnection(
                 kind: "text",
                 content: delta,
                 status: "pending",
+                purpose: "final",
               });
             }
 
@@ -1158,7 +1234,7 @@ export function useBackendConnection(
   });
 
   useEffect(() => {
-    if (!isTauriRuntime()) return;
+    if (!isElectronRuntime()) return;
 
     const unlisten = listen<boolean>("main://focus_changed", (event) => {
       const focused = event.payload;
@@ -1183,7 +1259,7 @@ export function useBackendConnection(
   }, []);
 
   useEffect(() => {
-    if (!isTauriRuntime()) return;
+    if (!isElectronRuntime()) return;
     const unlisten = listen("solo://user_dismissed", () => {
       userDismissedOverlayRef.current = true;
       setOverlayVisible(false);
@@ -1195,7 +1271,7 @@ export function useBackendConnection(
   }, []);
 
   useEffect(() => {
-    if (!isTauriRuntime()) {
+    if (!isElectronRuntime()) {
       return;
     }
 

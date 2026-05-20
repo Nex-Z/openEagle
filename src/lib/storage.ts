@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./electron-bridge";
 import { executionStatusLabel } from "./runLabels";
 import type {
   AgentExecutionKind,
@@ -334,8 +334,8 @@ export function saveActiveConversationId(conversationId: string) {
   }
 }
 
-function isTauriRuntime() {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+function isElectronRuntime() {
+  return typeof window !== "undefined" && "electronAPI" in window;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -971,7 +971,7 @@ async function recoverPersistedConversation(
   conversation: PersistedConversation,
 ): Promise<{ conversation: PersistedConversation; recovered: boolean }> {
   let current = normalizePersistedConversation(conversation);
-  if (!isTauriRuntime()) {
+  if (!isElectronRuntime()) {
     return { conversation: current, recovered: false };
   }
 
@@ -1284,7 +1284,7 @@ async function loadFileConversations() {
 }
 
 export async function loadPersistedConversations(): Promise<PersistedConversation[]> {
-  if (!isTauriRuntime()) {
+  if (!isElectronRuntime()) {
     const conversations = loadLocalStorageConversations();
     localStorageConversationCache = conversations;
     return conversations;
@@ -1301,7 +1301,7 @@ export async function loadPersistedConversations(): Promise<PersistedConversatio
 export async function savePersistedConversationIndex(
   summaries: ConversationSummary[],
 ) {
-  if (!isTauriRuntime()) {
+  if (!isElectronRuntime()) {
     updateLocalStorageIndex(summaries);
     return;
   }
@@ -1311,7 +1311,7 @@ export async function savePersistedConversationIndex(
 export async function savePersistedConversation(
   conversation: PersistedConversation,
 ) {
-  if (!isTauriRuntime()) {
+  if (!isElectronRuntime()) {
     saveLocalStorageConversation(conversation);
     return;
   }
@@ -1319,7 +1319,7 @@ export async function savePersistedConversation(
 }
 
 export async function deletePersistedConversation(conversationId: string) {
-  if (!isTauriRuntime()) {
+  if (!isElectronRuntime()) {
     deleteLocalStorageConversation(conversationId);
     return;
   }
@@ -1329,7 +1329,7 @@ export async function deletePersistedConversation(conversationId: string) {
 export async function savePersistedConversations(
   conversations: PersistedConversation[],
 ) {
-  if (!isTauriRuntime()) {
+  if (!isElectronRuntime()) {
     saveLocalStorageConversations(conversations);
     return;
   }

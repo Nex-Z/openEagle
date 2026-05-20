@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { onCloseRequested } from "./lib/electron-bridge";
 import { ChatWorkspace } from "./components/chat/ChatWorkspace";
 import { ActivityInspector } from "./components/inspector/ActivityInspector";
 import { AppShell } from "./components/layout/AppShell";
@@ -57,8 +57,8 @@ function createFallbackConversationStore(): PersistedConversation[] {
   ];
 }
 
-function isTauriRuntime() {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+function isElectronRuntime() {
+  return typeof window !== "undefined" && "electronAPI" in window;
 }
 
 function collectMessageTraces(message: ChatMessage) {
@@ -340,15 +340,10 @@ export default function App() {
     document.addEventListener("visibilitychange", flushWhenHidden);
 
     let unlistenClose: (() => void) | undefined;
-    if (isTauriRuntime()) {
-      const currentWindow = getCurrentWindow();
-      void currentWindow
-        .onCloseRequested(() => {
-          void flushPersistedConversations();
-        })
-        .then((unlisten) => {
-          unlistenClose = unlisten;
-        });
+    if (isElectronRuntime()) {
+      unlistenClose = onCloseRequested(() => {
+        void flushPersistedConversations();
+      });
     }
 
     return () => {

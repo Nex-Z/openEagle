@@ -41,7 +41,7 @@ There is no mode switch to choose. The main agent decides whether the right resp
 - [Node.js](https://nodejs.org/) (with corepack)
 - [Python](https://python.org/) >= 3.12
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
-- [Rust](https://rustup.rs/) (for Tauri)
+- [Rust](https://rustup.rs/) (no longer required; migrated to Electron)
 
 ### Install & Run
 
@@ -57,15 +57,15 @@ pnpm install
 uv sync --project ./backend
 
 # Launch the app
-pnpm tauri:dev
+pnpm electron:dev
 ```
 
-That's it. In development, Tauri starts the Python backend for you; packaged builds use the Python sidecar. Either way, you do not need to start the server manually.
+That's it. In development, Electron starts the Python backend for you; packaged builds use the Python sidecar. Either way, you do not need to start the server manually.
 
 ### What's happening under the hood
 
 ```
-Tauri (Rust)  →  starts uv/Python in dev, or the Python sidecar in packaged builds (random port)
+Electron (Node.js)  →  starts uv/Python in dev, or the Python sidecar in packaged builds (random port)
 Python        →  prints [AGENT_READY] WS_PORT: <port> to stdout
 Rust          →  parses the port, notifies the frontend
 Frontend      →  connects via WebSocket to ws://127.0.0.1:<port>/ws
@@ -75,7 +75,7 @@ Frontend      →  connects via WebSocket to ws://127.0.0.1:<port>/ws
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│                   Tauri Shell (Rust)                  │
+│                 Electron Shell (Node.js)               │
 │  Process lifecycle · Screenshots · Input injection   │
 │  Overlay window · Notifications                     │
 ├──────────────────────────────────────────────────────┤
@@ -94,7 +94,7 @@ Frontend      →  connects via WebSocket to ws://127.0.0.1:<port>/ws
 
 | Layer | Technology |
 |-------|-----------|
-| Desktop shell | Tauri 2, Rust |
+| Desktop shell | Electron 42, Node.js |
 | Frontend | React 18, TypeScript, Vite |
 | Backend | Python 3.12+, FastAPI, WebSocket |
 | LLM | OpenAI-compatible API (configurable) |
@@ -107,15 +107,17 @@ Frontend      →  connects via WebSocket to ws://127.0.0.1:<port>/ws
 
 ### Main/Sub-Agent Runtime
 
-Every user message first goes through a lightweight main agent. The main agent decides whether to answer directly, delegate to a clean worker, start the desktop execution worker, or control an existing desktop execution task. Workers use scoped internal conversation IDs, so task execution stays focused while the visible conversation only keeps summaries, evidence, and final results.
+Every user message is handled by MainAgent first. MainAgent owns the user-facing conversation, keeps a bounded recent conversation window for follow-up phrases like "continue" or "look it up", answers simple requests directly, and delegates only when the task needs a focused worker, desktop execution, or asynchronous work. Workers use scoped internal conversation IDs, so task execution stays focused while the visible conversation only keeps summaries, evidence, and final results.
 
-The router prompt is principle-driven rather than keyword-driven. It chooses workers by required capability, treats non-immediate time intent as a persistent task, and only asks clarifying questions when a missing detail would make an irreversible action completely wrong. Direct answers are returned in a dedicated `answer` field, while user-visible routing summaries are written in first person so the assistant reads like a collaborator instead of a system log.
+MainAgent's internal decision step is principle-driven rather than keyword-driven. It chooses workers by required capability, treats non-immediate time intent as a persistent task, and only asks clarifying questions when a missing detail would make an irreversible action completely wrong. Direct answers are returned in a dedicated `answer` field, while user-visible summaries are written in first person so the assistant reads like a collaborator instead of a system log.
 
-When users ask for work to happen later or on a cadence, the main agent creates a persistent scheduled task instead of doing the work immediately. Scheduled tasks are stored in `.open-eagle/scheduler.db`, use cron expressions for timing, run through the same worker kinds, and can report execution results back into the originating conversation.
+Before delegated work starts, MainAgent may emit a short `server:agent_progress` message such as "I'll check that first." Worker execution, tool calls, and user-relevant memory operations are emitted as `server:trace` events. MainAgent's own internal decision JSON stays out of the Run calls UI.
+
+When users ask for work to happen later or on a cadence, MainAgent creates a persistent scheduled task instead of doing the work immediately. Scheduled tasks are stored in `.open-eagle/scheduler.db`, use cron expressions for timing, run through the same worker kinds, and can report execution results back into the originating conversation.
 
 ### Memory & Context Management
 
-openEagle now includes Hermes-inspired single-user long-term memory stored in `.open-eagle/memory.db`. Memory has four layers: user profile, user notes, Soul, and raw memory events. Raw events keep broader turn and compaction snapshots, while the distilled profile, active notes, and Soul summary are the only parts injected into prompts. The agent can asynchronously distill completed turns into profile updates, notes, and side notes; user-edited profile, notes, and Soul core always take priority. Memory reads and writes are exposed as built-in tools (`get_memory_state`, `save_memory_note`, `update_memory_note`, `delete_memory_note`, `save_user_profile`, `save_soul_core`, `save_agent_side_notes`) so "remember this" requests go through the memory database instead of creating project-root files. In Settings -> Memory, deleting a user note archives it and removes it from the active note list while preserving audit history.
+openEagle now includes Hermes-inspired single-user long-term memory stored in `.open-eagle/memory.db`. Memory has four layers: user profile, user notes, Soul, and raw memory events. Raw events keep broader turn and compaction snapshots, while prompt injection uses a V2 retrieval layer: a bounded profile summary, a compact Soul summary, Agent side notes, and only active user notes relevant to the current request. Full memory remains available through built-in tools (`get_memory_state`, `save_memory_note`, `update_memory_note`, `delete_memory_note`, `save_user_profile`, `save_soul_core`, `save_agent_side_notes`), so "remember this" requests go through the memory database instead of creating project-root files. In Settings -> Memory, deleting a user note archives it and removes it from the active note list while preserving audit history.
 
 Context cleanup uses the same settings channel. Once the estimated input token threshold is reached, the backend preserves system messages and the latest N messages, then processes only the middle of the conversation. Tool messages are removed or replaced with compact placeholders before any AI summary step, so the summarizer does not waste tokens on large tool outputs. The Anthropic provider can replace the middle segment with an AI summary and falls back to rule-based truncation if summarization fails. Remote IM sessions can also start a new context window after a configurable idle period.
 
@@ -323,7 +325,7 @@ All three compose. For example: an MCP server that provides database queries, a 
 - [x] Hermes-style long-term memory: user profile, user notes, Soul, raw events, and built-in memory tools
 - [x] Configurable context cleanup: token threshold, recent-message preservation, tool pre-cleaning, AI middle summaries, and IM idle windows
 - [x] Scheduled tasks with persistent storage, worker execution, UI management, and run history
-- [x] Principle-based main-agent router prompts and assistant-style direct answers
+- [x] MainAgent-led delegation, bounded follow-up context, natural progress messages, visible worker/tool/memory traces, and assistant-style direct answers
 - [x] Multi-monitor awareness (display selection and runtime switching supported)
 - [x] Model support: OpenAI-compatible API + Anthropic Claude native provider
 
@@ -339,7 +341,7 @@ Contributions are welcome! Here's how to get started:
    ```bash
    pnpm -s tsc --noEmit          # Frontend type check
    uv run python -m compileall backend/app  # Backend syntax check
-   cd src-tauri && cargo check   # Rust check (if modified)
+   pnpm exec tsc -p tsconfig.electron.json --noEmit  # Electron main process check
    ```
 6. **Commit** with a clear message following [Conventional Commits](https://www.conventionalcommits.org/):
    ```

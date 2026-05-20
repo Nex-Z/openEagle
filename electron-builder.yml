@@ -1,0 +1,21 @@
+appId: com.openeagle.desktop
+productName: openEagle
+directories:
+  output: release
+files:
+  - dist/**/*
+  - dist-electron/**/*
+  - package.json
+extraResources:
+  - from: backend/
+    to: backend/
+    filter:
+      - "**/*"
+      - "!.venv"
+      - "!__pycache__"
+      - "!.open-eagle"
+win:
+  target: nsis
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true

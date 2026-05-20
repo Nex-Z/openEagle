@@ -2,17 +2,18 @@
   "name": "open-eagle",
   "private": true,
   "version": "0.1.0",
+  "main": "dist-electron/main.js",
   "type": "module",
   "packageManager": "pnpm@10.7.0",
   "scripts": {
     "dev": "vite",
     "build": "tsc && vite build",
     "preview": "vite preview",
-    "tauri:dev": "tauri dev",
-    "tauri:build": "tauri build"
+    "electron:dev": "tsc -p tsconfig.electron.json && node -e \"require('fs').writeFileSync('dist-electron/package.json','{\\\"type\\\":\\\"commonjs\\\"}\\n')\" && vite && electron .",
+    "electron:build": "tsc -p tsconfig.electron.json && node -e \"require('fs').writeFileSync('dist-electron/package.json','{\\\"type\\\":\\\"commonjs\\\"}\\n')\" && vite build && electron-builder"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2.3.0",
+    "@nut-tree-fork/nut-js": "^4.2.6",
     "lucide-react": "^1.11.0",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",
@@ -21,11 +22,13 @@
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {
-    "@tauri-apps/cli": "^2.3.1",
+    "@types/node": "^22.19.19",
     "@types/qrcode": "^1.5.6",
     "@types/react": "^18.3.18",
     "@types/react-dom": "^18.3.5",
     "@vitejs/plugin-react": "^4.3.4",
+    "electron": "^42.2.0",
+    "electron-builder": "^26.8.1",
     "typescript": "^5.7.3",
     "vite": "^6.2.1"
   }

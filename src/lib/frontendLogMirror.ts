@@ -1,4 +1,4 @@
-import { invoke } from "@tauri-apps/api/core";
+import { invoke } from "./electron-bridge";
 
 type ConsoleLevel = "log" | "info" | "warn" | "error";
 
@@ -8,8 +8,8 @@ declare global {
   }
 }
 
-function isTauriRuntime() {
-  return typeof window !== "undefined" && "__TAURI_INTERNALS__" in window;
+function isElectronRuntime() {
+  return typeof window !== "undefined" && "electronAPI" in window;
 }
 
 function serializeConsoleArg(value: unknown): string {
@@ -46,7 +46,7 @@ function mirrorFrontendLog(level: ConsoleLevel, args: unknown[]) {
 }
 
 export function installFrontendLogMirror() {
-  if (!isTauriRuntime() || window.__OPEN_EAGLE_LOG_MIRROR_INSTALLED__) {
+  if (!isElectronRuntime() || window.__OPEN_EAGLE_LOG_MIRROR_INSTALLED__) {
     return;
   }
   window.__OPEN_EAGLE_LOG_MIRROR_INSTALLED__ = true;

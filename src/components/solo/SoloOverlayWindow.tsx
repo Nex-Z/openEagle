@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
-import { invoke } from "@tauri-apps/api/core";
-import { emit, listen } from "@tauri-apps/api/event";
+import { invoke, emit, listen } from "../../lib/electron-bridge";
 import { SoloOverlay } from "./SoloOverlay";
 
 interface OverlayState {
@@ -41,7 +40,7 @@ export function SoloOverlayWindow() {
   }, []);
 
   useEffect(() => {
-    const unlisten = listen<OverlayState>("solo://overlay_state", (event) => {
+    const unlisten = listen<OverlayState>("solo:overlay_state", (event) => {
       setOverlay(event.payload);
     });
     return () => {
@@ -59,7 +58,7 @@ export function SoloOverlayWindow() {
       stepCount={overlay.stepCount}
       maxSteps={overlay.maxSteps}
       onDismiss={() => {
-        void emit("solo://user_dismissed");
+        void emit("solo:user-dismissed");
       }}
     />
   );

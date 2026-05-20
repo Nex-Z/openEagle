@@ -42,7 +42,7 @@ openEagle 填补了"理解你想做什么"和"在你的电脑上实际完成"之
 - [Node.js](https://nodejs.org/)（需启用 corepack）
 - [Python](https://python.org/) >= 3.12
 - [uv](https://docs.astral.sh/uv/)（Python 包管理器）
-- [Rust](https://rustup.rs/)（Tauri 编译需要）
+- [Rust](https://rustup.rs/)（已迁移至 Electron，不再需要）
 
 ### 安装与运行
 
@@ -58,15 +58,15 @@ pnpm install
 uv sync --project ./backend
 
 # 启动应用
-pnpm tauri:dev
+pnpm electron:dev
 ```
 
-搞定。开发模式下 Tauri 会自动拉起 Python 后端；打包版本会通过 sidecar 启动，无需手动启动服务器。
+搞定。开发模式下 Electron 会自动拉起 Python 后端；打包版本会通过 sidecar 启动，无需手动启动服务器。
 
 ### 底层流程
 
 ```
-Tauri (Rust)  →  开发模式启动 uv/Python，打包版本启动 Python sidecar（随机端口）
+Electron (Node.js)  →  开发模式启动 uv/Python，打包版本启动 Python sidecar（随机端口）
 Python        →  向 stdout 输出 [AGENT_READY] WS_PORT: <端口>
 Rust          →  解析端口，通知前端
 Frontend      →  通过 WebSocket 连接 ws://127.0.0.1:<端口>/ws
@@ -76,7 +76,7 @@ Frontend      →  通过 WebSocket 连接 ws://127.0.0.1:<端口>/ws
 
 ```
 ┌──────────────────────────────────────────────────────┐
-│                  Tauri 壳层 (Rust)                     │
+│                Electron 壳层 (Node.js)                  │
 │  进程生命周期 · 截图 · 输入注入 · 悬浮窗 · 通知        │
 ├──────────────────────────────────────────────────────┤
 │              Python 后端 (FastAPI)                     │
@@ -94,7 +94,7 @@ Frontend      →  通过 WebSocket 连接 ws://127.0.0.1:<端口>/ws
 
 | 层级       | 技术                                                   |
 | ---------- | ------------------------------------------------------ |
-| 桌面壳     | Tauri 2, Rust                                          |
+| 桌面壳     | Electron 42, Node.js                                         |
 | 前端       | React 18, TypeScript, Vite                             |
 | 后端       | Python 3.12+, FastAPI, WebSocket                       |
 | LLM        | OpenAI 兼容 API（可配置）                              |
@@ -107,15 +107,17 @@ Frontend      →  通过 WebSocket 连接 ws://127.0.0.1:<端口>/ws
 
 ### Main/Sub-Agent Runtime
 
-所有用户消息都会先进入轻量 main agent。main agent 负责理解意图、直接对话、澄清需求和调度：直接回答、委派给干净 worker、启动桌面执行 worker，或控制已有桌面执行任务。worker 使用内部 scoped conversation id 执行任务，前台会话只保留摘要、证据和最终结果，减少上下文污染。
+所有用户消息都会先由 MainAgent 处理。MainAgent 负责面对用户、维护有边界的最近对话窗口，理解“继续”“你搜搜看”“刚才那个”这类承接表达；简单请求直接回答，只有任务需要专门执行、桌面操作或异步处理时才委派 worker。worker 使用内部 scoped conversation id 执行任务，前台会话只保留摘要、证据和最终结果，减少上下文污染。
 
-router prompt 采用原则驱动，而不是关键词驱动：根据任务所需能力选择 worker，把非即时的时间意图视为持久化任务，只在缺失信息会导致不可撤销且完全错误的结果时才追问。直接回答写入独立的 `answer` 字段；面向用户的调度说明使用第一人称口语，让 main agent 更像协作助理，而不是系统日志。
+MainAgent 的内部决策步骤采用原则驱动，而不是关键词驱动：根据任务所需能力选择 worker，把非即时的时间意图视为持久化任务，只在缺失信息会导致不可撤销且完全错误的结果时才追问。直接回答写入独立的 `answer` 字段；面向用户的调度说明使用第一人称口语，让 MainAgent 更像协作助理，而不是系统日志。
 
-当用户要求稍后或周期性执行某件事时，main agent 会创建持久化定时任务，而不是立即把任务做掉。定时任务存储在 `.open-eagle/scheduler.db`，使用 cron 表达式调度，执行时仍走同一套 worker 类型，并可将执行结果回传到原会话。
+在委派工作开始前，MainAgent 可以通过 `server:agent_progress` 先发一句自然的进展说明，比如“我先搜一下”。worker 执行、工具调用和对用户有意义的记忆操作都会通过 `server:trace` 事件回到客户端，前端可以像展示工具调用一样展示这些动作。MainAgent 自己的内部决策 JSON 不进入 Run calls UI。
+
+当用户要求稍后或周期性执行某件事时，MainAgent 会创建持久化定时任务，而不是立即把任务做掉。定时任务存储在 `.open-eagle/scheduler.db`，使用 cron 表达式调度，执行时仍走同一套 worker 类型，并可将执行结果回传到原会话。
 
 ### 记忆与上下文整理
 
-openEagle 现在内置 Hermes 风格的单用户长期记忆，数据保存在 `.open-eagle/memory.db`。记忆分为用户画像、用户笔记、Soul 和原始记忆事件：原始事件尽量保留回合与压缩快照，画像、笔记和 Soul 摘要则用于精简注入 prompt。Agent 可以在用户回合完成后异步蒸馏更新画像、笔记和自动旁注；用户手动编辑的画像、笔记和 Soul core 优先级最高。记忆读写已封装成系统默认工具（`get_memory_state`、`save_memory_note`、`update_memory_note`、`delete_memory_note`、`save_user_profile`、`save_soul_core`、`save_agent_side_notes`），所以“记住/记录一下”类请求会写入 memory 数据库，而不是在项目根目录创建文件。设置页的 Memory 区域只展示活跃用户笔记，删除笔记会归档并从列表隐藏，同时保留审计记录。
+openEagle 现在内置 Hermes 风格的单用户长期记忆，数据保存在 `.open-eagle/memory.db`。记忆分为用户画像、用户笔记、Soul 和原始记忆事件：原始事件尽量保留回合与压缩快照，prompt 注入走 V2 检索层，只放有界用户画像摘要、压缩后的 Soul 摘要、Agent 旁注，以及与当前请求相关的活跃用户笔记。完整记忆仍可通过系统默认工具（`get_memory_state`、`save_memory_note`、`update_memory_note`、`delete_memory_note`、`save_user_profile`、`save_soul_core`、`save_agent_side_notes`）按需读取和维护，所以“记住/记录一下”类请求会写入 memory 数据库，而不是在项目根目录创建文件。设置页的 Memory 区域只展示活跃用户笔记，删除笔记会归档并从列表隐藏，同时保留审计记录。
 
 上下文整理走同一套配置入口。达到 token 阈值后，后端会保留 system 和最近 N 条消息，只处理中间消息；工具消息先占位或移除，避免把大段工具输出交给摘要模型。Anthropic provider 会在必要时用文本模型生成中段摘要，失败时退回规则型截断。远程 IM 会话还支持按静默分钟数提示开启新的上下文窗口。
 
@@ -322,7 +324,7 @@ prompt: |
 - [x] Hermes 风格长期记忆：用户画像、用户笔记、Soul、原始事件与系统默认记忆工具
 - [x] 可配置上下文整理：token 阈值、最近消息保留、工具预清理、AI 中段摘要与 IM 静默窗口
 - [x] 定时任务：持久化存储、worker 执行、UI 管理与执行历史
-- [x] 原则驱动的 main agent router prompt 与助理式直接回复
+- [x] MainAgent 主导的派工、承接上下文、自然进展消息、worker/工具/记忆可见 trace 与助理式直接回复
 - [x] 多显示器感知（已支持 display 选择与运行时切换）
 - [x] 模型适配：OpenAI 兼容 API + Anthropic Claude 原生支持
 
@@ -338,7 +340,7 @@ prompt: |
    ```bash
    pnpm -s tsc --noEmit                          # 前端类型检查
    uv run python -m compileall backend/app       # 后端语法检查
-   cd src-tauri && cargo check                   # Rust 检查（如修改了 Rust 代码）
+   pnpm exec tsc -p tsconfig.electron.json --noEmit  # Electron 主进程检查
    ```
 6. **提交**，遵循 [Conventional Commits](https://www.conventionalcommits.org/) 规范：
    ```

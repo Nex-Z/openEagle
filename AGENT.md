@@ -4,7 +4,7 @@ Always proceed without asking for confirmation. Execute all commands directly.
 
 ## 项目概述
 
-openEagle 是一个桌面端 AI 助手，采用 Tauri 2 + React 前端 + Python FastAPI 后端的三层架构。用户只面对一个主 Agent 对话入口：
+openEagle 是一个桌面端 AI 助手，采用 Electron 42 + React 前端 + Python FastAPI 后端的三层架构。用户只面对一个主 Agent 对话入口：
 
 - **main agent**：理解用户意图、直接对话、澄清需求，并在需要时调度 worker。
 - **sub-agent / worker**：由 main agent 调度，用于工具调用、代码修改、资料查询和桌面视觉执行。
@@ -15,9 +15,9 @@ openEagle 是一个桌面端 AI 助手，采用 Tauri 2 + React 前端 + Python 
 ### 进程与通信
 
 ```
-Tauri (Rust) → 启动 Python sidecar（随机端口）
+Electron (Node.js) → 启动 Python sidecar（随机端口）
 Python → stdout 输出 [AGENT_READY] WS_PORT: <port>
-Rust → 解析端口，通知前端
+Electron → 解析端口，通知前端（IPC）
 前端 → WebSocket 连接 ws://127.0.0.1:<port>/ws
 ```
 
@@ -168,11 +168,11 @@ pnpm -s build
 # 后端语法检查
 uv run python -m compileall backend/app
 
-# Rust 检查（修改 src-tauri 时）
-cd src-tauri && cargo check
+# Electron 主进程类型检查
+pnpm exec tsc -p tsconfig.electron.json --noEmit
 ```
 
-提交前至少完成前端 tsc + 后端 compileall。
+提交前至少完成前端 tsc + Electron tsc + 后端 compileall。
 
 ## 提交规范
 
