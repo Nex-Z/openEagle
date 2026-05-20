@@ -163,3 +163,28 @@ export function loadSoloRunLog(requestId: string): unknown {
 function projectRoot(): string {
   return path.resolve(__dirname, "..");
 }
+
+// --- Settings file persistence ---
+
+const SETTINGS_FILE = "settings.json";
+
+function settingsFilePath(): string {
+  return path.join(conversationStoreRoot(), SETTINGS_FILE);
+}
+
+export function loadAppSettings(): unknown {
+  const filePath = settingsFilePath();
+  if (!fs.existsSync(filePath)) {
+    return null;
+  }
+  try {
+    return JSON.parse(fs.readFileSync(filePath, "utf-8"));
+  } catch {
+    return null;
+  }
+}
+
+export function saveAppSettings(settings: unknown): { ok: boolean } {
+  atomicWriteJson(settingsFilePath(), settings);
+  return { ok: true };
+}

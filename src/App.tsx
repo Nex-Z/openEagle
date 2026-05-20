@@ -13,6 +13,7 @@ import {
   loadActiveConversationId,
   loadPersistedConversations,
   loadSettings,
+  loadSettingsFromFile,
   saveActiveConversationId,
   savePersistedConversation,
   savePersistedConversationIndex,
@@ -106,6 +107,34 @@ export default function App() {
   const [conversationsHydrated, setConversationsHydrated] = useState(false);
   const [settings, setSettings] = useState<AppSettings>(() => loadSettings());
   const [settingsDrawerOpen, setSettingsDrawerOpen] = useState(false);
+
+  // Hydrate settings from Electron file on mount
+  useEffect(() => {
+    let cancelled = false;
+    void loadSettingsFromFile().then((fileSettings) => {
+      if (cancelled || !fileSettings) return;
+      setSettings((current) => {
+        // Only update if file has non-default values that current doesn't have
+        const fileKeys = Object.keys(fileSettings) as (keyof AppSettings)[];
+        let changed = false;
+        const next = { ...current };
+        for (const key of fileKeys) {
+          const fileVal = JSON.stringify(fileSettings[key]);
+          const curVal = JSON.stringify(current[key]);
+          if (fileVal !== curVal && fileVal !== JSON.stringify(({} as Record<string, unknown>)[key])) {
+            // File has a different (non-empty) value; prefer it
+            if (JSON.stringify(current[key]) === JSON.stringify(loadSettings()[key])) {
+              // Current is still default, use file value
+              (next as Record<string, unknown>)[key] = fileSettings[key];
+              changed = true;
+            }
+          }
+        }
+        return changed ? next : current;
+      });
+    });
+    return () => { cancelled = true; };
+  }, []);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);

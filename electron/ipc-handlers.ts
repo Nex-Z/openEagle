@@ -12,6 +12,8 @@ import {
   saveConversationFile,
   deleteConversationFile,
   loadSoloRunLog,
+  loadAppSettings,
+  saveAppSettings,
 } from "./conversations";
 import { captureScreenshot } from "./screenshot";
 import { performMouseAction, performKeyboardAction } from "./input";
@@ -162,6 +164,14 @@ export function registerIpcHandlers(isDev: boolean) {
     notification.show();
 
     return { ok: true, notified: true, requestId: payload.requestId };
+  });
+
+  ipcMain.handle("load_app_settings", () => {
+    return loadAppSettings();
+  });
+
+  ipcMain.handle("save_app_settings", (_event, args: { settings?: unknown }) => {
+    return saveAppSettings(args?.settings);
   });
 
   // Solo overlay → main process IPC (overlay emits "solo:user-dismissed")

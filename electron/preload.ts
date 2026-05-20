@@ -18,6 +18,8 @@ const ALLOWED_INVOKE_CHANNELS = [
   "hide_solo_overlay",
   "solo_overlay_ready",
   "notify_solo_result",
+  "load_app_settings",
+  "save_app_settings",
 ];
 
 const ALLOWED_LISTEN_CHANNELS = [

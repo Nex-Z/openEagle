@@ -316,6 +316,22 @@ export function loadSettings(): AppSettings {
 
 export function saveSettings(settings: AppSettings) {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  // Also persist to Electron file if available
+  if (isElectronRuntime()) {
+    void invoke("save_app_settings", { settings }).catch(() => {});
+  }
+}
+
+export async function loadSettingsFromFile(): Promise<AppSettings | null> {
+  if (!isElectronRuntime()) return null;
+  try {
+    const raw = await invoke<Partial<AppSettings> | null>("load_app_settings");
+    if (!raw || typeof raw !== "object") return null;
+    // Merge with defaults (same logic as loadSettings)
+    return { ...defaultSettings, ...raw } as AppSettings;
+  } catch {
+    return null;
+  }
 }
 
 export function loadActiveConversationId() {
