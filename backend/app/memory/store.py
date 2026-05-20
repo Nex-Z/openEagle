@@ -9,6 +9,7 @@ from uuid import uuid4
 from ..models import utc_now
 from .models import (
     AgentSoulPayload,
+    DEFAULT_AGENT_SOUL_CORE,
     MemoryAuditPayload,
     MemoryEventPayload,
     MemoryNotePayload,
@@ -26,6 +27,7 @@ def init_db(db_path: Path) -> None:
     _DB_PATH = db_path
     db_path.parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(str(db_path))
+    conn.row_factory = sqlite3.Row
     try:
         conn.executescript(
             """
@@ -92,13 +94,40 @@ def init_db(db_path: Path) -> None:
         conn.execute(
             """
             INSERT OR IGNORE INTO agent_soul (id, core, side_notes, updated_at)
-            VALUES (?, '', '', ?)
+            VALUES (?, ?, '', ?)
             """,
-            (DEFAULT_ID, now),
+            (DEFAULT_ID, DEFAULT_AGENT_SOUL_CORE, now),
         )
+        _migrate_empty_agent_soul_core(conn, now)
         conn.commit()
     finally:
         conn.close()
+
+
+def _migrate_empty_agent_soul_core(conn: sqlite3.Connection, now: str) -> None:
+    row = conn.execute("SELECT core FROM agent_soul WHERE id = ?", (DEFAULT_ID,)).fetchone()
+    if row is None or str(row["core"]).strip():
+        return
+    manual_count = conn.execute(
+        """
+        SELECT COUNT(*) AS count
+        FROM memory_audit
+        WHERE target_kind = 'agent_soul'
+            AND target_id = ?
+            AND source = 'manual'
+        """,
+        (DEFAULT_ID,),
+    ).fetchone()["count"]
+    if manual_count:
+        return
+    conn.execute(
+        """
+        UPDATE agent_soul
+        SET core = ?, updated_at = ?
+        WHERE id = ?
+        """,
+        (DEFAULT_AGENT_SOUL_CORE, now, DEFAULT_ID),
+    )
 
 
 def _conn() -> sqlite3.Connection:
@@ -332,7 +361,7 @@ def update_agent_soul(
                 "update",
                 "agent_soul",
                 DEFAULT_ID,
-                "Agent 个性灵魂已更新。",
+                "Soul 已更新。",
                 source,
                 now,
             ),

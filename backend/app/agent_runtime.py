@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import re
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
@@ -85,6 +86,15 @@ class AgentRuntime:
         prev_result = self._confirmed_tool_results.pop(conversation_id, None)
         if prev_result:
             enhanced_content = f"{prev_result}\n\n用户新消息：{enhanced_content}"
+
+        memory_note = self._extract_explicit_memory_note(content) if not prepared_attachments else None
+        if memory_note and self._memory_service is not None:
+            return await self._save_explicit_memory_note(
+                conversation_id=conversation_id,
+                request_id=request_id,
+                user_content=content,
+                note_text=memory_note,
+            )
 
         await self._send_status(request_id, conversation_id, "thinking", "main agent 正在调度任务")
         config = self._config_getter()
@@ -296,6 +306,7 @@ class AgentRuntime:
             attachment_store=self._attachment_store,
             attachments=attachments,
             memory_context=memory_context,
+            memory_service=self._memory_service,
             context_snapshot=(
                 self._record_context_snapshot if self._memory_service is not None else None
             ),
@@ -412,6 +423,76 @@ class AgentRuntime:
             return "stop"
         return "pause"
 
+    @staticmethod
+    def _extract_explicit_memory_note(content: str) -> str | None:
+        stripped = content.strip()
+        if not stripped:
+            return None
+        if re.search(r"(记录|保存|存).{0,4}(到|为).{0,4}(文件|文档|txt|md|json)", stripped, re.I):
+            return None
+        if re.search(r"(文件|导出|保存为|写到|写进|生成|创建).{0,8}(txt|md|json|文件|文档)", stripped, re.I):
+            return None
+        patterns = (
+            r"^(?:请|帮我|麻烦你)?(?:记住|记一下|记下|记录一下|记录下|记录|以后记得|加入用户笔记|保存到记忆|存到记忆)[：:，,\s]*(.+)$",
+            r"^(.+?)[，,\s]*(?:帮我)?(?:记住|记一下|记下|记录一下|记录下|加入用户笔记)[。.!！\s]*$",
+        )
+        for pattern in patterns:
+            match = re.match(pattern, stripped, re.I | re.S)
+            if match:
+                note = match.group(1).strip()
+                return note or None
+        return None
+
+    async def _save_explicit_memory_note(
+        self,
+        *,
+        conversation_id: str,
+        request_id: str,
+        user_content: str,
+        note_text: str,
+    ) -> str:
+        assert self._memory_service is not None
+        try:
+            note_id = self._memory_service.save_user_note(
+                note_text,
+                tags=["user-request"],
+                confidence=1.0,
+                source="manual",
+            )
+        except Exception as exc:  # noqa: BLE001
+            reply = f"这条记忆保存失败：{exc}"
+            await self._send_event(
+                "server:message",
+                request_id,
+                conversation_id,
+                {"content": reply},
+            )
+            return reply
+
+        await self._send_event(
+            "server:memory_updated",
+            request_id,
+            conversation_id,
+            self._memory_service.state_payload(),
+        )
+        reply = "已记到长期记忆。"
+        await self._send_event(
+            "server:message",
+            request_id,
+            conversation_id,
+            {"content": reply, "route": "memory_save", "memoryNoteId": note_id},
+        )
+        await self._record_memory_turn(
+            conversation_id=conversation_id,
+            request_id=request_id,
+            user_content=user_content,
+            assistant_content=reply,
+            route="memory_save",
+            metadata={"memoryNoteId": note_id},
+            distill=False,
+        )
+        return reply
+
     async def _record_memory_turn(
         self,
         *,
@@ -421,6 +502,7 @@ class AgentRuntime:
         assistant_content: str,
         route: str,
         metadata: dict[str, Any],
+        distill: bool = True,
     ) -> None:
         if self._memory_service is None:
             return
@@ -434,6 +516,8 @@ class AgentRuntime:
                 metadata=metadata,
             )
         except Exception:
+            return
+        if not distill:
             return
 
         async def _distill() -> None:

@@ -115,7 +115,7 @@ router prompt 采用原则驱动，而不是关键词驱动：根据任务所需
 
 ### 记忆与上下文整理
 
-openEagle 现在内置 Hermes 风格的单用户长期记忆，数据保存在 `.open-eagle/memory.db`。记忆分为用户画像、用户笔记、Agent 个性灵魂和原始记忆事件：原始事件尽量保留回合与压缩快照，画像、笔记和人格摘要则用于精简注入 prompt。Agent 可以在用户回合完成后异步蒸馏更新画像、笔记和自动旁注；用户手动编辑的画像、笔记和核心人格优先级最高。
+openEagle 现在内置 Hermes 风格的单用户长期记忆，数据保存在 `.open-eagle/memory.db`。记忆分为用户画像、用户笔记、Soul 和原始记忆事件：原始事件尽量保留回合与压缩快照，画像、笔记和 Soul 摘要则用于精简注入 prompt。Agent 可以在用户回合完成后异步蒸馏更新画像、笔记和自动旁注；用户手动编辑的画像、笔记和 Soul core 优先级最高。记忆读写已封装成系统默认工具（`get_memory_state`、`save_memory_note`、`update_memory_note`、`delete_memory_note`、`save_user_profile`、`save_soul_core`、`save_agent_side_notes`），所以“记住/记录一下”类请求会写入 memory 数据库，而不是在项目根目录创建文件。设置页的 Memory 区域只展示活跃用户笔记，删除笔记会归档并从列表隐藏，同时保留审计记录。
 
 上下文整理走同一套配置入口。达到 token 阈值后，后端会保留 system 和最近 N 条消息，只处理中间消息；工具消息先占位或移除，避免把大段工具输出交给摘要模型。Anthropic provider 会在必要时用文本模型生成中段摘要，失败时退回规则型截断。远程 IM 会话还支持按静默分钟数提示开启新的上下文窗口。
 
@@ -319,7 +319,7 @@ prompt: |
 - [ ] 社区插件系统
 - [ ] 会话回放与更完整的历史记录
 - [ ] 语音输入
-- [x] Hermes 风格长期记忆：用户画像、用户笔记、Agent 个性与原始事件
+- [x] Hermes 风格长期记忆：用户画像、用户笔记、Soul、原始事件与系统默认记忆工具
 - [x] 可配置上下文整理：token 阈值、最近消息保留、工具预清理、AI 中段摘要与 IM 静默窗口
 - [x] 定时任务：持久化存储、worker 执行、UI 管理与执行历史
 - [x] 原则驱动的 main agent router prompt 与助理式直接回复

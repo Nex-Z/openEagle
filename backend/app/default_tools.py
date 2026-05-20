@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import re
+import json
 import hashlib
 import os
 import shutil
 import time
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from agno.tools import Toolkit
 from agno.tools.function import Function
@@ -388,6 +389,7 @@ class OpenEagleDefaultTools(Toolkit):
         permission_mode: str = "default",
         builtin_tools: list[dict[str, object]] | None = None,
         attachment_store: AttachmentStore | None = None,
+        memory_service: Any | None = None,
     ):
         self.workspace_root = workspace_root.resolve()
         self.confirmation_store = confirmation_store
@@ -395,6 +397,7 @@ class OpenEagleDefaultTools(Toolkit):
         self.conversation_id = conversation_id
         self.permission_mode = permission_mode
         self.attachment_store = attachment_store
+        self.memory_service = memory_service
         self._read_cache = _ReadCache()
 
         enabled_builtins = {bt["id"]: bt.get("enabled", True) for bt in (builtin_tools or [])}
@@ -417,12 +420,31 @@ class OpenEagleDefaultTools(Toolkit):
             self.attach_file_to_reply,
             self.create_scheduled_task,
         ]
+        if self.memory_service is not None:
+            tools.extend(
+                [
+                    self.get_memory_state,
+                    self.save_memory_note,
+                    self.update_memory_note,
+                    self.delete_memory_note,
+                    self.save_user_profile,
+                    self.save_soul_core,
+                    self.save_agent_side_notes,
+                ]
+            )
         instructions_parts = [
             "你可以使用内置默认工具执行工作区内的常用操作：查看文件信息、浏览目录、"
             "读取文本文件、搜索文件名与文本、执行命令，以及在确认后创建目录、写入、"
             "复制、移动、删除或精确编辑文件。如需把生成的文件发回给用户，"
             "必须显式调用 attach_file_to_reply。"
         ]
+        if self.memory_service is not None:
+            instructions_parts.append(
+                "当用户要求记住、记一下、记下、记录、以后记得、加入用户笔记、更新用户画像、更新 Soul 或保存旁注时，"
+                "必须使用 get_memory_state/save_memory_note/update_memory_note/delete_memory_note/"
+                "save_user_profile/save_soul_core/save_agent_side_notes 写入 openEagle Memory；不要用 write_text_file "
+                "在项目根目录创建记忆文件。"
+            )
 
         if enabled_builtins.get("web_search", True):
             tools.append(self.web_search)
@@ -665,6 +687,9 @@ class OpenEagleDefaultTools(Toolkit):
 
     def write_text_file(self, path: str, content: str) -> str:
         """以 UTF-8 写入工作区内文本文件。
+
+        不要用本工具保存长期记忆、Soul、用户画像、旁注或用户笔记；
+        这些内容应写入 Memory 子系统，或在用户明确要求导出文件时才写文件。
 
         Args:
             path: 相对工作区根目录的文件路径。
@@ -1038,6 +1063,164 @@ class OpenEagleDefaultTools(Toolkit):
             conversation_id=self.conversation_id,
         )
 
+    def save_memory_note(
+        self,
+        text: str,
+        tags: list[str] | None = None,
+        confidence: float = 1.0,
+    ) -> str:
+        """把一条用户笔记保存到 openEagle 长期记忆。
+
+        当用户说“记住”“记一下”“记下”“记录一下”“以后记得”“加入用户笔记”等时使用。
+        这不会在工作区或项目根目录创建 txt/md/json 文件。
+
+        Args:
+            text: 要保存的笔记正文。
+            tags: 可选标签，如 ["preference"]、["anime"]。
+            confidence: 置信度，0 到 1。
+
+        Returns:
+            str: 保存结果。
+        """
+        if self.memory_service is None:
+            return "Error: Memory 子系统未初始化，无法保存用户笔记。"
+        clean_text = text.strip()
+        if not clean_text:
+            return "Error: 用户笔记不能为空。"
+        clean_tags = [
+            str(item).strip()
+            for item in (tags or ["user-request"])
+            if str(item).strip()
+        ]
+        note_id = self.memory_service.save_user_note(
+            clean_text,
+            tags=clean_tags or ["user-request"],
+            confidence=confidence,
+            source="manual",
+        )
+        return f"已保存到长期记忆用户笔记: {note_id}"
+
+    def get_memory_state(self, include_archived: bool = False) -> str:
+        """读取 openEagle 长期记忆状态，用于查找用户笔记 ID 后再更新或删除。
+
+        Args:
+            include_archived: 是否包含已归档/删除的用户笔记。
+
+        Returns:
+            str: JSON 格式的用户画像、用户笔记、Soul 和近期审计记录。
+        """
+        if self.memory_service is None:
+            return "Error: Memory 子系统未初始化，无法读取长期记忆。"
+        payload = self.memory_service.tool_state_payload(include_archived=include_archived)
+        return json.dumps(payload, ensure_ascii=False, indent=2)
+
+    def update_memory_note(
+        self,
+        note_id: str,
+        text: str | None = None,
+        tags: list[str] | None = None,
+        confidence: float | None = None,
+        status: str | None = None,
+    ) -> str:
+        """更新一条 openEagle 长期记忆用户笔记。
+
+        Args:
+            note_id: 要更新的笔记 ID。
+            text: 新正文；不传则保留原正文。
+            tags: 新标签；不传则保留原标签。
+            confidence: 新置信度；不传则保留原值。
+            status: active 或 archived；不传则保留原状态。
+
+        Returns:
+            str: 更新结果。
+        """
+        if self.memory_service is None:
+            return "Error: Memory 子系统未初始化，无法更新用户笔记。"
+        try:
+            updated_id = self.memory_service.update_user_note(
+                note_id,
+                text=text,
+                tags=tags,
+                confidence=confidence,
+                status=status,
+                source="manual",
+            )
+        except ValueError as exc:
+            return f"Error: {exc}"
+        return f"已更新长期记忆用户笔记: {updated_id}"
+
+    def delete_memory_note(self, note_id: str, reason: str = "") -> str:
+        """删除一条 openEagle 长期记忆用户笔记。
+
+        删除会归档笔记并保留审计记录，不会直接抹掉历史。
+
+        Args:
+            note_id: 要删除/归档的笔记 ID。
+            reason: 可选删除原因。
+
+        Returns:
+            str: 删除结果。
+        """
+        if self.memory_service is None:
+            return "Error: Memory 子系统未初始化，无法删除用户笔记。"
+        try:
+            deleted = self.memory_service.delete_user_note(
+                note_id,
+                reason=reason,
+                source="manual",
+            )
+        except ValueError as exc:
+            return f"Error: {exc}"
+        if not deleted:
+            return f"Error: 未找到用户笔记: {note_id}"
+        return f"已删除长期记忆用户笔记: {note_id}"
+
+    def save_user_profile(self, content: str) -> str:
+        """保存完整用户画像到 openEagle 长期记忆。
+
+        Args:
+            content: 完整用户画像 markdown 文本。
+
+        Returns:
+            str: 保存结果。
+        """
+        if self.memory_service is None:
+            return "Error: Memory 子系统未初始化，无法保存用户画像。"
+        self.memory_service.save_profile(content, source="manual")
+        return "已保存用户画像到长期记忆。"
+
+    def save_soul_core(self, core: str) -> str:
+        """保存 Soul core 到 openEagle 长期记忆。
+
+        仅当用户明确要求修改 Soul 时使用；普通用户偏好应保存为用户笔记或用户画像。
+
+        Args:
+            core: 完整 Soul core / SOUL.md 文本。
+
+        Returns:
+            str: 保存结果。
+        """
+        if self.memory_service is None:
+            return "Error: Memory 子系统未初始化，无法保存 Soul。"
+        self.memory_service.save_soul_core(core, source="manual")
+        return "已保存 Soul core 到长期记忆。"
+
+    def save_agent_side_notes(self, side_notes: str) -> str:
+        """保存 Agent 自动旁注到 openEagle 长期记忆。
+
+        用于记录 Agent 对相处方式、称呼、语气的自我旁注，不要覆盖 Soul core。
+
+        Args:
+            side_notes: 完整旁注文本。
+
+        Returns:
+            str: 保存结果。
+        """
+        if self.memory_service is None:
+            return "Error: Memory 子系统未初始化，无法保存 Agent 旁注。"
+        self.memory_service.save_agent_side_notes(side_notes, source="manual")
+        return "已保存 Agent 旁注到长期记忆。"
+
 
 def build_default_tools(
     workspace_root: Optional[Path] = None,
@@ -1047,6 +1230,7 @@ def build_default_tools(
     permission_mode: str = "default",
     builtin_tools: list[dict[str, object]] | None = None,
     attachment_store: AttachmentStore | None = None,
+    memory_service: Any | None = None,
 ) -> OpenEagleDefaultTools:
     root = workspace_root or Path(__file__).resolve().parents[2]
     return OpenEagleDefaultTools(
@@ -1057,6 +1241,7 @@ def build_default_tools(
         permission_mode=permission_mode,
         builtin_tools=builtin_tools,
         attachment_store=attachment_store,
+        memory_service=memory_service,
     )
 
 

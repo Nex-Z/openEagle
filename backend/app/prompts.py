@@ -8,6 +8,15 @@ from .solo_actions import allowed_actions_text
 from .subagent_models import AgentTaskRecord
 
 
+MEMORY_STORAGE_POLICY = (
+    "长期记忆写入规则：当用户说“记住”“记一下”“记下”“记录一下”“以后记得”“加入用户笔记”"
+    "或要求更新用户画像、Soul、旁注时，这是写入 openEagle Memory 子系统的请求。"
+    "不要在工作区或项目根目录创建 txt、md、json 等文件来充当记忆。"
+    "只有用户明确要求生成/导出文件、给出具体文件路径，或说明这是项目产物时，才写工作区文件。"
+    "运行时私有记忆只属于 `.open-eagle/` 和 memory 数据库。"
+)
+
+
 def current_datetime_hint() -> str:
     now = datetime.now().astimezone()
     return now.strftime("%Y-%m-%d %H:%M:%S %Z%z")
@@ -37,6 +46,7 @@ def build_chat_instructions(
             "如果前文已经讨论过定时任务细节，用户在确认或补充细节后，你仍然要调用 create_scheduled_task 完成创建，"
             "不要误以为用户是在让你现在执行。"
         ),
+        MEMORY_STORAGE_POLICY,
         (
             "视觉边界：main agent 不直接执行鼠标、键盘和截图类 computer-use；"
             "需要桌面视觉操作时，由 main agent 调度桌面执行 worker。"
@@ -114,6 +124,11 @@ def build_main_router_instructions() -> list[str]:
         "route 可选：answer_directly、delegate_new、delegate_existing、start_solo、control_solo、clarify。",
         "worker_kind 可选：general、coding、research、solo。",
         "普通寒暄、身份询问、轻量解释、无需工具即可完成的沟通，使用 answer_directly。",
+        MEMORY_STORAGE_POLICY,
+        (
+            "如果用户只是要求你记住、记录、以后记得某条偏好/事实/笔记，"
+            "优先 answer_directly，不要因为“记录”二字委派 coding worker 写文件。"
+        ),
         (
             "clarify 仅用于：执行后无法撤销、且缺少的信息会导致完全错误结果的情况。"
             "不确定但可以合理假设、或执行后可以修正的，直接交给 worker 处理，不要 clarify。"
@@ -213,6 +228,7 @@ def build_direct_answer_instructions() -> list[str]:
         "你是 openEagle 的 main agent。",
         "用户正在和你直接对话，不要启动 worker，不要执行工具，不要声称已经开始处理桌面任务。",
         "默认用简洁自然的中文回复，语气友好但不要模板化。",
+        MEMORY_STORAGE_POLICY,
         "如果用户只是寒暄，就自然回应并引导他继续说需求；如果用户问你是谁，说明你能聊天、理解任务，并可在需要时调度 worker。",
         "不要输出内部路由、命令、步骤编号或实现细节。",
     ]
@@ -241,6 +257,7 @@ def solo_decision_instructions(system_platform: str = "当前系统") -> list[st
             "  3. 每步都想：离目标还差什么？下一步最有用的动作是什么？\n"
             "  4. 看到对用户有用的信息就记下来（写入 findings）\n"
             "  5. 过程中适时在 agent_message 里告诉用户进展，不要等最后再说\n\n"
+            f"{MEMORY_STORAGE_POLICY}\n\n"
             "决策自检：\n"
             "  Q1: 这件事能用命令行做吗？如果能，优先 execute_command，不要用鼠标键盘绕路。\n"
             "  Q1b: 这件事是打开网页、搜索、查询资料吗？优先 open_url 直达目标 URL，"

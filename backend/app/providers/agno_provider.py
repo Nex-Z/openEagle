@@ -25,6 +25,7 @@ from .. import default_tools
 from ..config import AgentConfig, AppConfig, McpConfig, SkillConfig, ToolConfig
 from ..confirmations import ToolConfirmationStore
 from ..attachments import AttachmentStore
+from ..memory import MemoryService
 from ..models import AttachmentRef
 from ..prompts import build_chat_instructions
 from .base import ProviderStreamEvent, ReplyChunk, ReplyToolConfirmation, ReplyTrace
@@ -111,6 +112,7 @@ class AgnoAgentProvider:
         request_id: str | None = None,
         conversation_id: str | None = None,
         context_snapshot: Callable[[str, str, str, dict[str, Any]], Awaitable[None]] | None = None,
+        memory_service: MemoryService | None = None,
     ) -> None:
         self._config = config
         self._confirmation_store = confirmation_store
@@ -118,6 +120,7 @@ class AgnoAgentProvider:
         self._request_id = request_id
         self._conversation_id = conversation_id
         self._context_snapshot = context_snapshot
+        self._memory_service = memory_service
         self._agent_cache: dict[str, tuple[Agent, dict[str, str]]] = {}
 
     @property
@@ -166,6 +169,7 @@ class AgnoAgentProvider:
             permission_mode=self._config.permissions.mode,
             builtin_tools=[bt.model_dump() for bt in self._config.builtin_tools],
             attachment_store=self._attachment_store,
+            memory_service=self._memory_service,
         )
         configured_functions, configured_name_map = default_tools.build_configured_tool_functions(
             self._config.tools,

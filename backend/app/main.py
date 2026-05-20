@@ -198,6 +198,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     solo_default_tools = build_default_tools(
         workspace_root=workspace_root,
         builtin_tools=[bt.model_dump() for bt in config.builtin_tools],
+        memory_service=memory_service,
     )
     solo_executor = SoloExecutor(default_tools=solo_default_tools)
     solo_tools = SoloToolkit(solo_executor)
@@ -1181,6 +1182,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         solo_executor._default_tools = build_default_tools(
             workspace_root=workspace_root,
             builtin_tools=[bt.model_dump() for bt in next_config.builtin_tools],
+            memory_service=memory_service,
         )
         if im_bridge is not None:
             await im_bridge.update_config(next_config)
@@ -1236,6 +1238,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             workspace_root=workspace_root,
             request_id=request_id,
             conversation_id=conversation_id,
+            memory_service=memory_service,
         )
         solo_executor.set_preferred_display_index(current_config.solo.preferred_display_index)
         first_screenshot = await asyncio.to_thread(solo_tools.screenshot)

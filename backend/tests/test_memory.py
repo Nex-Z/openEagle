@@ -9,16 +9,34 @@ from unittest.mock import AsyncMock, patch
 
 from app.config import AgentConfig, AppConfig
 from app.memory import MemoryService, init_db
+from app.memory.models import DEFAULT_AGENT_SOUL_CORE
 
 
 class MemoryServiceTest(unittest.TestCase):
     def setUp(self) -> None:
         self._tmp = tempfile.TemporaryDirectory()
-        init_db(Path(self._tmp.name) / "memory.db")
+        self._db_path = Path(self._tmp.name) / "memory.db"
+        init_db(self._db_path)
         self.service = MemoryService()
 
     def tearDown(self) -> None:
         self._tmp.cleanup()
+
+    def test_default_soul_core_is_seeded(self) -> None:
+        state = self.service.state()
+        self.assertEqual(state.agent_soul.core, DEFAULT_AGENT_SOUL_CORE)
+
+        context = self.service.prompt_context(max_chars=8000)
+        self.assertIn("Soul:", context)
+        self.assertIn("# SOUL.md - Who You Are", context)
+
+    def test_manual_empty_soul_core_is_not_reseeded(self) -> None:
+        self.service.save_manual({"agentSoul": {"core": ""}})
+
+        init_db(self._db_path)
+
+        state = self.service.state()
+        self.assertEqual(state.agent_soul.core, "")
 
     def test_manual_save_updates_profile_notes_and_soul(self) -> None:
         self.service.save_manual(
@@ -53,7 +71,7 @@ class MemoryServiceTest(unittest.TestCase):
                     {"id": "note-a", "text": "活跃笔记", "status": "active"},
                     {"id": "note-b", "text": "归档笔记", "status": "archived"},
                 ],
-                "agentSoul": {"core": "核心人格", "sideNotes": "自动旁注"},
+                "agentSoul": {"core": "手动 Soul core", "sideNotes": "自动旁注"},
             }
         )
 

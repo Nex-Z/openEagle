@@ -420,6 +420,10 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
     }
   };
 
+  const visibleMemoryNotes = memoryDraft.notes.filter(
+    (note) => note.status !== "archived",
+  );
+
   const updateContextSettings = (patch: Partial<AppSettings["context"]>) => {
     onChange({
       ...settings,
@@ -1613,7 +1617,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                     />
                   </label>
                   <label className="form-field">
-                    <span>Agent 核心灵魂</span>
+                    <span>Soul</span>
                     <textarea
                       className="form-textarea lg"
                       onChange={(event) =>
@@ -1626,7 +1630,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                           },
                         }))
                       }
-                      placeholder="由用户手动维护的核心人格、边界和长期语气。"
+                      placeholder="默认 SOUL.md，可由用户手动维护。"
                       value={memoryDraft.agentSoul.core}
                     />
                   </label>
@@ -1661,15 +1665,18 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                     </button>
                   </div>
                   <div className="config-list">
-                    {memoryDraft.notes.length === 0 ? (
+                    {visibleMemoryNotes.length === 0 ? (
                       <div className="form-hint">暂无用户笔记。</div>
                     ) : null}
-                    {memoryDraft.notes.map((note) => (
+                    {visibleMemoryNotes.map((note) => (
                       <ConfigListItem
                         key={note.id}
                         enabled={note.status === "active"}
                         expanded={expandedMemoryNoteId === note.id}
-                        onDelete={() =>
+                        onDelete={() => {
+                          setExpandedMemoryNoteId((current) =>
+                            current === note.id ? null : current,
+                          );
                           updateMemoryDraft((memory) => ({
                             ...memory,
                             notes: updateListItem(memory.notes, note.id, (item) => ({
@@ -1677,8 +1684,8 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                               status: "archived",
                               updatedAt: new Date().toISOString(),
                             })),
-                          }))
-                        }
+                          }));
+                        }}
                         onToggleEnabled={(value) =>
                           updateMemoryDraft((memory) => ({
                             ...memory,

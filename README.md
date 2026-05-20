@@ -115,7 +115,7 @@ When users ask for work to happen later or on a cadence, the main agent creates 
 
 ### Memory & Context Management
 
-openEagle now includes Hermes-inspired single-user long-term memory stored in `.open-eagle/memory.db`. Memory has four layers: user profile, user notes, agent soul, and raw memory events. Raw events keep broader turn and compaction snapshots, while the distilled profile, active notes, and agent personality summary are the only parts injected into prompts. The agent can asynchronously distill completed turns into profile updates, notes, and side notes; user-edited profile, notes, and core agent soul always take priority.
+openEagle now includes Hermes-inspired single-user long-term memory stored in `.open-eagle/memory.db`. Memory has four layers: user profile, user notes, Soul, and raw memory events. Raw events keep broader turn and compaction snapshots, while the distilled profile, active notes, and Soul summary are the only parts injected into prompts. The agent can asynchronously distill completed turns into profile updates, notes, and side notes; user-edited profile, notes, and Soul core always take priority. Memory reads and writes are exposed as built-in tools (`get_memory_state`, `save_memory_note`, `update_memory_note`, `delete_memory_note`, `save_user_profile`, `save_soul_core`, `save_agent_side_notes`) so "remember this" requests go through the memory database instead of creating project-root files. In Settings -> Memory, deleting a user note archives it and removes it from the active note list while preserving audit history.
 
 Context cleanup uses the same settings channel. Once the estimated input token threshold is reached, the backend preserves system messages and the latest N messages, then processes only the middle of the conversation. Tool messages are removed or replaced with compact placeholders before any AI summary step, so the summarizer does not waste tokens on large tool outputs. The Anthropic provider can replace the middle segment with an AI summary and falls back to rule-based truncation if summarization fails. Remote IM sessions can also start a new context window after a configurable idle period.
 
@@ -320,7 +320,7 @@ All three compose. For example: an MCP server that provides database queries, a 
 - [ ] Community plugin system
 - [ ] Session replay and richer history
 - [ ] Voice input
-- [x] Hermes-style long-term memory: user profile, user notes, agent personality, and raw events
+- [x] Hermes-style long-term memory: user profile, user notes, Soul, raw events, and built-in memory tools
 - [x] Configurable context cleanup: token threshold, recent-message preservation, tool pre-cleaning, AI middle summaries, and IM idle windows
 - [x] Scheduled tasks with persistent storage, worker execution, UI management, and run history
 - [x] Principle-based main-agent router prompts and assistant-style direct answers

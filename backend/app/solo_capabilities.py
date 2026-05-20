@@ -19,6 +19,7 @@ from .default_tools import (
     build_default_tools,
     execute_confirmed_tool,
 )
+from .memory import MemoryService
 from .safety import RiskAssessment, assess_tool_action
 
 SOLO_CONFIRMATION_PREFIX = "SOLO_CONFIRMATION_REQUIRED "
@@ -53,6 +54,13 @@ class SoloDefaultCapabilityToolkit(Toolkit):
             self.read_text_file,
             self.search_files,
             self.search_text,
+            self.get_memory_state,
+            self.save_memory_note,
+            self.update_memory_note,
+            self.delete_memory_note,
+            self.save_user_profile,
+            self.save_soul_core,
+            self.save_agent_side_notes,
         ]
         if web_search_enabled:
             tools.append(self.web_search)
@@ -61,6 +69,8 @@ class SoloDefaultCapabilityToolkit(Toolkit):
             tools=tools,
             instructions=(
                 "桌面执行 worker 可主动使用这些只读默认工具收集信息、读取工作区文本、搜索文件和联网查询。"
+                "记忆类请求使用 get_memory_state/save_memory_note/update_memory_note/delete_memory_note 等工具读写 Memory，"
+                "不要在项目根目录创建记忆文件。"
             ),
             add_instructions=True,
         )
@@ -106,6 +116,52 @@ class SoloDefaultCapabilityToolkit(Toolkit):
         """联网搜索资料。"""
         return self._default_tools.web_search(query, max_results=max_results)
 
+    def save_memory_note(
+        self,
+        text: str,
+        tags: list[str] | None = None,
+        confidence: float = 1.0,
+    ) -> str:
+        """保存用户笔记到长期记忆，不创建项目文件。"""
+        return self._default_tools.save_memory_note(text, tags=tags, confidence=confidence)
+
+    def get_memory_state(self, include_archived: bool = False) -> str:
+        """读取长期记忆状态，用于查找用户笔记 ID。"""
+        return self._default_tools.get_memory_state(include_archived=include_archived)
+
+    def update_memory_note(
+        self,
+        note_id: str,
+        text: str | None = None,
+        tags: list[str] | None = None,
+        confidence: float | None = None,
+        status: str | None = None,
+    ) -> str:
+        """更新长期记忆用户笔记。"""
+        return self._default_tools.update_memory_note(
+            note_id,
+            text=text,
+            tags=tags,
+            confidence=confidence,
+            status=status,
+        )
+
+    def delete_memory_note(self, note_id: str, reason: str = "") -> str:
+        """删除/归档长期记忆用户笔记。"""
+        return self._default_tools.delete_memory_note(note_id, reason=reason)
+
+    def save_user_profile(self, content: str) -> str:
+        """保存完整用户画像到长期记忆。"""
+        return self._default_tools.save_user_profile(content)
+
+    def save_soul_core(self, core: str) -> str:
+        """保存 Soul core 到长期记忆。"""
+        return self._default_tools.save_soul_core(core)
+
+    def save_agent_side_notes(self, side_notes: str) -> str:
+        """保存 Agent 自动旁注到长期记忆。"""
+        return self._default_tools.save_agent_side_notes(side_notes)
+
 
 class SoloCapabilityRuntime:
     def __init__(
@@ -114,11 +170,13 @@ class SoloCapabilityRuntime:
         workspace_root: Path,
         request_id: str,
         conversation_id: str,
+        memory_service: MemoryService | None = None,
     ) -> None:
         self.config = config.model_copy(deep=True)
         self.workspace_root = workspace_root.resolve()
         self.request_id = request_id
         self.conversation_id = conversation_id
+        self.memory_service = memory_service
         self.permission_mode = self.config.permissions.mode
         self.default_tools = build_default_tools(
             workspace_root=self.workspace_root,
@@ -126,6 +184,7 @@ class SoloCapabilityRuntime:
             conversation_id=conversation_id,
             permission_mode=self.permission_mode,
             builtin_tools=[bt.model_dump() for bt in self.config.builtin_tools],
+            memory_service=self.memory_service,
         )
         enabled_builtins = {
             bt.id: bt.enabled
@@ -391,7 +450,7 @@ class SoloCapabilityRuntime:
 
     def _build_catalog(self) -> None:
         lines = [
-            "默认只读工具: get_current_time, get_file_info, list_directory, read_text_file, search_files, search_text, web_search(若启用)。"
+            "默认工具: get_current_time, get_file_info, list_directory, read_text_file, search_files, search_text, web_search(若启用)，以及 get_memory_state/save_memory_note/update_memory_note/delete_memory_note/save_user_profile/save_soul_core/save_agent_side_notes。"
         ]
         if self._configured_by_id:
             lines.append("自定义工具（可主动调用；默认权限下按命令风险确认）：")

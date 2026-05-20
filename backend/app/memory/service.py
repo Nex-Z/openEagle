@@ -147,6 +147,25 @@ class MemoryService:
     def state_payload(self) -> dict[str, Any]:
         return self.state().model_dump(by_alias=True, exclude_none=True)
 
+    def tool_state_payload(self, *, include_archived: bool = False) -> dict[str, Any]:
+        state = store.get_state(
+            include_archived=include_archived,
+            audit_limit=20,
+            event_limit=0,
+        )
+        return {
+            "profile": state.profile.model_dump(by_alias=True, exclude_none=True),
+            "notes": [
+                note.model_dump(by_alias=True, exclude_none=True)
+                for note in state.notes
+            ],
+            "agentSoul": state.agent_soul.model_dump(by_alias=True, exclude_none=True),
+            "audit": [
+                item.model_dump(by_alias=True, exclude_none=True)
+                for item in state.audit
+            ],
+        }
+
     def prompt_context(self, max_chars: int = PROMPT_CONTEXT_LIMIT) -> str:
         state = store.get_state(include_archived=False, audit_limit=0, event_limit=0)
         sections: list[str] = []
@@ -164,16 +183,16 @@ class MemoryService:
 
         soul_parts: list[str] = []
         if state.agent_soul.core.strip():
-            soul_parts.append("核心人格:\n" + state.agent_soul.core.strip())
+            soul_parts.append("Core:\n" + state.agent_soul.core.strip())
         if state.agent_soul.side_notes.strip():
-            soul_parts.append("Agent 自动旁注:\n" + state.agent_soul.side_notes.strip())
+            soul_parts.append("Side Notes:\n" + state.agent_soul.side_notes.strip())
         if soul_parts:
-            sections.append("Agent 个性灵魂:\n" + "\n\n".join(soul_parts))
+            sections.append("Soul:\n" + "\n\n".join(soul_parts))
 
         if not sections:
             return ""
         text = (
-            "长期记忆上下文。用于保持对用户、笔记和 Agent 个性的连续理解；"
+            "长期记忆上下文。用于保持对用户、笔记和 Soul 的连续理解；"
             "不要向用户暴露内部字段或审计细节。\n\n"
             + "\n\n".join(sections)
         )
@@ -235,6 +254,85 @@ class MemoryService:
                     ),
                     source="manual",
                 )
+
+    def save_user_note(
+        self,
+        text: str,
+        *,
+        tags: list[str] | None = None,
+        confidence: float = 1.0,
+        source: str = "manual",
+    ) -> str:
+        clean_text = text.strip()
+        if not clean_text:
+            raise ValueError("memory note text cannot be empty")
+        note = MemoryNotePayload.model_validate(
+            {
+                "text": sanitize_text(clean_text, limit=4_000),
+                "tags": tags or ["user-request"],
+                "confidence": self._safe_confidence(confidence),
+                "status": "active",
+                "source": source,
+            }
+        )
+        store.upsert_note(note, source=source)
+        return note.id
+
+    def update_user_note(
+        self,
+        note_id: str,
+        *,
+        text: str | None = None,
+        tags: list[str] | None = None,
+        confidence: float | None = None,
+        status: str | None = None,
+        source: str = "manual",
+    ) -> str:
+        target_id = note_id.strip()
+        if not target_id:
+            raise ValueError("memory note id cannot be empty")
+        existing = next((note for note in store.get_state().notes if note.id == target_id), None)
+        if existing is None:
+            raise ValueError(f"memory note not found: {target_id}")
+        next_text = sanitize_text((text if text is not None else existing.text).strip(), limit=4_000)
+        if not next_text:
+            raise ValueError("memory note text cannot be empty")
+        next_status = status if status in {"active", "archived"} else existing.status
+        note = MemoryNotePayload.model_validate(
+            {
+                "id": existing.id,
+                "text": next_text,
+                "tags": tags if tags is not None else existing.tags,
+                "confidence": (
+                    self._safe_confidence(confidence)
+                    if confidence is not None
+                    else existing.confidence
+                ),
+                "status": next_status,
+                "source": source,
+                "createdAt": existing.created_at,
+            }
+        )
+        store.upsert_note(note, source=source)
+        return note.id
+
+    def delete_user_note(self, note_id: str, *, reason: str = "", source: str = "manual") -> bool:
+        target_id = note_id.strip()
+        if not target_id:
+            raise ValueError("memory note id cannot be empty")
+        return store.archive_note(target_id, source=source, reason=reason or "用户笔记已删除。")
+
+    def save_profile(self, content: str, *, source: str = "manual") -> None:
+        store.update_profile(sanitize_text(content.strip(), limit=8_000), source=source, manual=True)
+
+    def save_soul_core(self, core: str, *, source: str = "manual") -> None:
+        store.update_agent_soul(core=sanitize_text(core.strip(), limit=12_000), source=source)
+
+    def save_agent_side_notes(self, side_notes: str, *, source: str = "manual") -> None:
+        store.update_agent_soul(
+            side_notes=sanitize_text(side_notes.strip(), limit=4_000),
+            source=source,
+        )
 
     def ingest_snapshot(
         self,
@@ -415,7 +513,7 @@ class MemoryService:
             "目标不是只挑最有价值的内容：原始事件已经保存；你的任务是把其中对未来对话有帮助的内容蒸馏进画像、笔记或 Agent 旁注。\n"
             "不要保存明显的一次性寒暄、临时验证码、密钥、token、密码或完整敏感凭据。\n"
             "用户画像应是完整改写后的 markdown 文本；没有变化则省略 profile。\n"
-            "Agent 核心人格由用户手动维护，你只能更新 agentSideNotes。\n"
+            "Soul 的 core 由用户手动维护，你只能更新 agentSideNotes。\n"
             "notes 里可输出 add/update/archive 动作；update/archive 必须带已有 note id。\n\n"
             "当前记忆:\n"
             f"{json.dumps(compact_state, ensure_ascii=False)}\n\n"
