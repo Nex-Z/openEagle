@@ -41,7 +41,6 @@ There is no mode switch to choose. The main agent decides whether the right resp
 - [Node.js](https://nodejs.org/) (with corepack)
 - [Python](https://python.org/) >= 3.12
 - [uv](https://docs.astral.sh/uv/) (Python package manager)
-- [Rust](https://rustup.rs/) (no longer required; migrated to Electron)
 
 ### Install & Run
 
@@ -60,14 +59,15 @@ uv sync --project ./backend
 pnpm electron:dev
 ```
 
-That's it. In development, Electron starts the Python backend for you; packaged builds use the Python sidecar. Either way, you do not need to start the server manually.
+That's it. `pnpm electron:dev` is the one-command dev launcher: it compiles the Electron main process, starts the Vite dev server, launches Electron, and then Electron starts the Python backend. Packaged builds use the Python sidecar. Either way, you do not need to start the server manually.
 
 ### What's happening under the hood
 
 ```
-Electron (Node.js)  →  starts uv/Python in dev, or the Python sidecar in packaged builds (random port)
+Dev launcher  →  compiles Electron, starts Vite, then launches the desktop shell
+Electron      →  starts uv/Python in dev, or the Python sidecar in packaged builds (random port)
 Python        →  prints [AGENT_READY] WS_PORT: <port> to stdout
-Rust          →  parses the port, notifies the frontend
+Electron      →  parses the port, notifies the frontend
 Frontend      →  connects via WebSocket to ws://127.0.0.1:<port>/ws
 ```
 

@@ -42,7 +42,6 @@ openEagle 填补了"理解你想做什么"和"在你的电脑上实际完成"之
 - [Node.js](https://nodejs.org/)（需启用 corepack）
 - [Python](https://python.org/) >= 3.12
 - [uv](https://docs.astral.sh/uv/)（Python 包管理器）
-- [Rust](https://rustup.rs/)（已迁移至 Electron，不再需要）
 
 ### 安装与运行
 
@@ -61,14 +60,15 @@ uv sync --project ./backend
 pnpm electron:dev
 ```
 
-搞定。开发模式下 Electron 会自动拉起 Python 后端；打包版本会通过 sidecar 启动，无需手动启动服务器。
+搞定。`pnpm electron:dev` 是一条命令启动器：它会编译 Electron 主进程、启动 Vite dev server、拉起 Electron，然后由 Electron 自动启动 Python 后端。打包版本会通过 Python sidecar 启动，无需手动启动服务器。
 
 ### 底层流程
 
 ```
-Electron (Node.js)  →  开发模式启动 uv/Python，打包版本启动 Python sidecar（随机端口）
+Dev launcher  →  编译 Electron，启动 Vite，再拉起桌面壳
+Electron      →  开发模式启动 uv/Python，打包版本启动 Python sidecar（随机端口）
 Python        →  向 stdout 输出 [AGENT_READY] WS_PORT: <端口>
-Rust          →  解析端口，通知前端
+Electron      →  解析端口，通知前端
 Frontend      →  通过 WebSocket 连接 ws://127.0.0.1:<端口>/ws
 ```
 
