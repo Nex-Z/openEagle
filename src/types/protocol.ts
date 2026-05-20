@@ -55,6 +55,7 @@ export interface AssistantTextBlock {
   kind: "text";
   content: string;
   status?: "pending" | "done";
+  purpose?: "progress" | "final";
 }
 
 export interface AssistantTraceBlock {

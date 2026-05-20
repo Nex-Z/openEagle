@@ -87,6 +87,7 @@ class AgentRouter:
         preferred_mode: str | None = None,
         recent_tasks: list[AgentTaskRecord] | None = None,
         memory_context: str | None = None,
+        conversation_context: str | None = None,
     ) -> AgentRouteDecision:
         recent_tasks = recent_tasks or []
         if self._can_use_model_router():
@@ -97,6 +98,7 @@ class AgentRouter:
                     preferred_mode=preferred_mode,
                     recent_tasks=recent_tasks,
                     memory_context=memory_context,
+                    conversation_context=conversation_context,
                 )
                 return self.parse(raw, content, preferred_mode, recent_tasks)
             except Exception:
@@ -115,6 +117,7 @@ class AgentRouter:
         preferred_mode: str | None,
         recent_tasks: list[AgentTaskRecord],
         memory_context: str | None = None,
+        conversation_context: str | None = None,
     ) -> str:
         agent_config = self._config.agent
         prompt = build_main_router_prompt(
@@ -123,6 +126,7 @@ class AgentRouter:
             preferred_mode=preferred_mode,
             recent_tasks=recent_tasks,
             memory_context=memory_context,
+            conversation_context=conversation_context,
         )
 
         if agent_config.provider == "anthropic":

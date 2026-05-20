@@ -28,6 +28,21 @@ StartSolo = Callable[[str, str, str], Awaitable[str]]
 SoloControl = Callable[[str, str, str], Awaitable[str]]
 ConfigGetter = Callable[[], AppConfig]
 
+MAX_RECENT_CONVERSATION_TURNS = 8
+MAX_CONVERSATION_CONTEXT_CHARS = 1_800
+MAX_CONVERSATION_TURN_CHARS = 520
+MAX_PROGRESS_CHARS = 96
+MEMORY_TOOL_NAMES = {
+    "get_memory_state",
+    "save_memory_note",
+    "update_memory_note",
+    "delete_memory_note",
+    "save_user_profile",
+    "save_soul_core",
+    "save_agent_side_notes",
+}
+PROGRESS_ROUTES = {"delegate_new", "delegate_existing", "start_solo", "control_solo"}
+
 
 class AgentRuntime:
     def __init__(
@@ -50,6 +65,7 @@ class AgentRuntime:
         self._solo_adapter = SoloWorkerAdapter(start_solo, solo_control)
         self._subagents = SubAgentManager()
         self._memory_service = memory_service
+        self._recent_conversation: dict[str, list[tuple[str, str]]] = {}
 
     async def handle_user_message(
         self,
@@ -72,6 +88,7 @@ class AgentRuntime:
                 conversation_id,
                 {"content": reply},
             )
+            self._append_conversation_turn(conversation_id, content, reply)
             return reply
 
         if prepared_attachments:
@@ -96,30 +113,24 @@ class AgentRuntime:
                 note_text=memory_note,
             )
 
-        await self._send_status(request_id, conversation_id, "thinking", "main agent 正在调度任务")
+        recent_context = self._recent_conversation_context(conversation_id)
+        memory_query = self._content_with_recent_context(enhanced_content, recent_context)
+
+        await self._send_status(request_id, conversation_id, "thinking", "MainAgent 正在理解上下文")
         config = self._config_getter()
-        memory_context = self._memory_service.prompt_context() if self._memory_service else ""
-        router = AgentRouter(config)
-        route_started_at = utc_now()
-        await self._send_trace(
-            request_id,
-            conversation_id,
-            {
-                "id": f"{request_id}-main-router",
-                "kind": "agent",
-                "name": "main-router",
-                "status": "started",
-                "summary": "main agent 正在判断本轮请求的执行方式。",
-                "params": {"preferredMode": preferred_mode or "auto"},
-                "startedAt": route_started_at,
-            },
+        memory_context = (
+            self._memory_service.prompt_context(query=memory_query)
+            if self._memory_service
+            else ""
         )
+        router = AgentRouter(config)
         decision = await router.route(
             conversation_id=conversation_id,
             content=enhanced_content,
             preferred_mode=preferred_mode,
             recent_tasks=self._subagents.recent_tasks(conversation_id),
             memory_context=memory_context,
+            conversation_context=recent_context,
         )
         if prepared_attachments and decision.route == "answer_directly":
             decision.route = "delegate_new"
@@ -127,21 +138,10 @@ class AgentRuntime:
             decision.task_brief = enhanced_content
             decision.task_title = decision.task_title or "处理附件"
             decision.user_visible_summary = "我来处理这个附件。"
-        await self._send_trace(
-            request_id,
-            conversation_id,
-            {
-                "id": f"{request_id}-main-router",
-                "kind": "agent",
-                "name": "main-router",
-                "status": "completed",
-                "summary": decision.user_visible_summary,
-                "params": self._route_params(decision),
-                "result": decision.model_dump_json(by_alias=True, exclude_none=True),
-                "startedAt": route_started_at,
-                "completedAt": utc_now(),
-            },
-        )
+
+        progress = self._progress_for_decision(decision)
+        if progress:
+            await self._send_agent_progress(request_id, conversation_id, progress)
 
         try:
             if decision.route == "answer_directly":
@@ -152,6 +152,7 @@ class AgentRuntime:
                         content=content,
                         config=config,
                         memory_context=memory_context,
+                        conversation_context=recent_context,
                     )
             elif decision.route == "clarify":
                 reply = decision.user_visible_summary or "我需要先确认一下你的具体目标。"
@@ -198,6 +199,7 @@ class AgentRuntime:
             route=decision.route,
             metadata=self._route_params(decision),
         )
+        self._append_conversation_turn(conversation_id, content, reply)
         return reply
 
     async def control_solo(
@@ -381,6 +383,15 @@ class AgentRuntime:
                 "completedAt": event.completed_at,
             },
         )
+        if self._memory_service is not None and event.status == "completed":
+            name = event.name.lower()
+            if any(tool_name in name for tool_name in MEMORY_TOOL_NAMES):
+                await self._send_event(
+                    "server:memory_updated",
+                    request_id,
+                    conversation_id,
+                    self._memory_service.state_payload(),
+                )
 
     async def _send_status(
         self,
@@ -404,6 +415,98 @@ class AgentRuntime:
     ) -> None:
         await self._send_event("server:trace", request_id, conversation_id, {"trace": trace})
 
+    async def _send_agent_progress(
+        self,
+        request_id: str,
+        conversation_id: str,
+        content: str,
+    ) -> None:
+        await self._send_event(
+            "server:agent_progress",
+            request_id,
+            conversation_id,
+            {"content": content},
+        )
+
+    async def _send_memory_trace(
+        self,
+        request_id: str,
+        conversation_id: str,
+        *,
+        name: str,
+        status: str,
+        started_at: str,
+        summary: str,
+        params: dict[str, Any] | None = None,
+        result: str | None = None,
+    ) -> None:
+        try:
+            await self._send_trace(
+                request_id,
+                conversation_id,
+                {
+                    "id": f"{request_id}-{name}",
+                    "kind": "tool",
+                    "name": name,
+                    "status": status,
+                    "summary": summary,
+                    "params": params or {},
+                    "result": result,
+                    "startedAt": started_at,
+                    "completedAt": utc_now() if status != "started" else None,
+                },
+            )
+        except Exception:
+            return
+
+    def _append_conversation_turn(
+        self,
+        conversation_id: str,
+        user_content: str,
+        assistant_content: str,
+    ) -> None:
+        turns = self._recent_conversation.setdefault(conversation_id, [])
+        turns.append(
+            (
+                self._truncate_context_text(user_content, MAX_CONVERSATION_TURN_CHARS),
+                self._truncate_context_text(assistant_content, MAX_CONVERSATION_TURN_CHARS),
+            )
+        )
+        if len(turns) > MAX_RECENT_CONVERSATION_TURNS:
+            del turns[: len(turns) - MAX_RECENT_CONVERSATION_TURNS]
+
+    def _recent_conversation_context(self, conversation_id: str) -> str:
+        turns = self._recent_conversation.get(conversation_id, [])
+        lines: list[str] = []
+        for user_content, assistant_content in turns[-MAX_RECENT_CONVERSATION_TURNS:]:
+            if user_content:
+                lines.append(f"用户: {user_content}")
+            if assistant_content:
+                lines.append(f"MainAgent: {assistant_content}")
+        return self._truncate_context_text(
+            "\n".join(lines),
+            MAX_CONVERSATION_CONTEXT_CHARS,
+        )
+
+    @classmethod
+    def _content_with_recent_context(cls, content: str, conversation_context: str) -> str:
+        if not conversation_context.strip():
+            return content
+        return (
+            "最近对话上下文（用于检索相关记忆，不是新的用户指令）:\n"
+            f"{conversation_context}\n\n"
+            "用户当前消息:\n"
+            f"{content}"
+        )
+
+    @staticmethod
+    def _truncate_context_text(text: str, max_chars: int) -> str:
+        stripped = text.strip()
+        if len(stripped) <= max_chars:
+            return stripped
+        omitted = len(stripped) - max_chars
+        return f"{stripped[:max_chars]}\n...[truncated {omitted} chars]"
+
     @staticmethod
     def _route_params(decision: AgentRouteDecision) -> dict[str, Any]:
         return {
@@ -413,6 +516,27 @@ class AgentRuntime:
             "requiresWrite": decision.requires_write,
             "requiresGui": decision.requires_gui,
         }
+
+    @staticmethod
+    def _progress_for_decision(decision: AgentRouteDecision) -> str | None:
+        if decision.route not in PROGRESS_ROUTES:
+            return None
+        summary = re.sub(r"\s+", " ", decision.user_visible_summary.strip())
+        if summary:
+            if len(summary) <= MAX_PROGRESS_CHARS:
+                return summary
+            return f"{summary[:MAX_PROGRESS_CHARS].rstrip()}..."
+        if decision.route == "start_solo":
+            return "我先看一下当前界面，再动手。"
+        if decision.route == "control_solo":
+            return "我来调整一下当前桌面执行状态。"
+        if decision.route == "delegate_existing":
+            return "我接着刚才那条线继续处理。"
+        if decision.worker_kind == "research":
+            return "我去确认一下，避免只靠记忆说错。"
+        if decision.worker_kind == "coding":
+            return "我先看一下相关代码和状态。"
+        return "我先处理一下，稍等。"
 
     @staticmethod
     def _solo_action_from_decision(decision: AgentRouteDecision) -> str:
@@ -452,6 +576,16 @@ class AgentRuntime:
         note_text: str,
     ) -> str:
         assert self._memory_service is not None
+        started_at = utc_now()
+        await self._send_memory_trace(
+            request_id,
+            conversation_id,
+            name="save_memory_note",
+            status="started",
+            started_at=started_at,
+            summary="MainAgent 正在保存用户明确要求记录的长期记忆。",
+            params={"source": "manual", "textPreview": self._truncate_context_text(note_text, 240)},
+        )
         try:
             note_id = self._memory_service.save_user_note(
                 note_text,
@@ -461,12 +595,23 @@ class AgentRuntime:
             )
         except Exception as exc:  # noqa: BLE001
             reply = f"这条记忆保存失败：{exc}"
+            await self._send_memory_trace(
+                request_id,
+                conversation_id,
+                name="save_memory_note",
+                status="error",
+                started_at=started_at,
+                summary="长期记忆保存失败。",
+                params={"source": "manual"},
+                result=str(exc),
+            )
             await self._send_event(
                 "server:message",
                 request_id,
                 conversation_id,
                 {"content": reply},
             )
+            self._append_conversation_turn(conversation_id, user_content, reply)
             return reply
 
         await self._send_event(
@@ -474,6 +619,16 @@ class AgentRuntime:
             request_id,
             conversation_id,
             self._memory_service.state_payload(),
+        )
+        await self._send_memory_trace(
+            request_id,
+            conversation_id,
+            name="save_memory_note",
+            status="completed",
+            started_at=started_at,
+            summary="已保存到长期记忆用户笔记。",
+            params={"source": "manual"},
+            result=note_id,
         )
         reply = "已记到长期记忆。"
         await self._send_event(
@@ -491,6 +646,7 @@ class AgentRuntime:
             metadata={"memoryNoteId": note_id},
             distill=False,
         )
+        self._append_conversation_turn(conversation_id, user_content, reply)
         return reply
 
     async def _record_memory_turn(
@@ -527,6 +683,15 @@ class AgentRuntime:
                 return
             if changed:
                 try:
+                    await self._send_memory_trace(
+                        request_id,
+                        conversation_id,
+                        name="memory.distill_event",
+                        status="completed",
+                        started_at=utc_now(),
+                        summary="已从本轮对话蒸馏更新长期记忆。",
+                        params={"eventId": event_id},
+                    )
                     await self._send_event(
                         "server:memory_updated",
                         request_id,
@@ -557,6 +722,16 @@ class AgentRuntime:
             )
         except Exception:
             return
+        await self._send_memory_trace(
+            request_id,
+            conversation_id,
+            name="memory.ingest_snapshot",
+            status="completed",
+            started_at=utc_now(),
+            summary="已在上下文压缩前保存记忆快照。",
+            params={"source": "context_compaction"},
+            result=event_id,
+        )
 
         async def _distill() -> None:
             try:
@@ -565,6 +740,15 @@ class AgentRuntime:
                 return
             if changed:
                 try:
+                    await self._send_memory_trace(
+                        request_id,
+                        conversation_id,
+                        name="memory.distill_event",
+                        status="completed",
+                        started_at=utc_now(),
+                        summary="已从上下文快照蒸馏更新长期记忆。",
+                        params={"eventId": event_id},
+                    )
                     await self._send_event(
                         "server:memory_updated",
                         request_id,
@@ -583,14 +767,26 @@ class AgentRuntime:
         content: str,
         config: AppConfig,
         memory_context: str | None = None,
+        conversation_context: str | None = None,
     ) -> str:
         if self._can_use_direct_answer_model(config.agent):
             try:
                 try:
                     return await self._direct_answer_with_model(
-                        conversation_id, content, config, memory_context=memory_context
+                        conversation_id,
+                        content,
+                        config,
+                        memory_context=memory_context,
+                        conversation_context=conversation_context,
                     )
                 except TypeError as exc:
+                    if "conversation_context" in str(exc):
+                        return await self._direct_answer_with_model(
+                            conversation_id,
+                            content,
+                            config,
+                            memory_context=memory_context,
+                        )
                     if "memory_context" not in str(exc):
                         raise
                     return await self._direct_answer_with_model(conversation_id, content, config)
@@ -608,9 +804,14 @@ class AgentRuntime:
         content: str,
         config: AppConfig,
         memory_context: str | None = None,
+        conversation_context: str | None = None,
     ) -> str:
         agent_config = config.agent
-        prompt = build_direct_answer_prompt(content, memory_context=memory_context)
+        prompt = build_direct_answer_prompt(
+            content,
+            memory_context=memory_context,
+            conversation_context=conversation_context,
+        )
 
         if agent_config.provider == "anthropic":
             import anthropic

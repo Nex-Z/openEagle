@@ -12,7 +12,7 @@ from .confirmations import ToolConfirmationStore
 from .memory import MemoryService
 from .models import AttachmentRef
 from .providers.base import ProviderStreamEvent, ReplyChunk, ReplyTrace
-from .prompts import MEMORY_STORAGE_POLICY
+from .prompts import MEMORY_STORAGE_POLICY, current_datetime_instruction
 from .subagent_models import AgentRouteDecision, AgentTaskRecord, WorkerReport
 
 
@@ -255,6 +255,7 @@ class SubAgentManager:
         return (
             f"你是 openEagle 的 {task.worker_kind} worker。"
             "请只处理 main agent 委派给你的任务，不要自行扩展到无关事项。\n\n"
+            f"{current_datetime_instruction()}\n\n"
             f"{MEMORY_STORAGE_POLICY}\n\n"
             f"任务: {task.task_brief}\n"
             f"{context_block}"
@@ -280,6 +281,7 @@ class SubAgentManager:
         return (
             f"这是第 {attempt} 次自动修复反馈。不要把下面的错误直接交给用户，"
             "把它当成工具/执行 observation，自己修正参数、路径、命令或方案后重新尝试。\n\n"
+            f"{current_datetime_instruction()}\n\n"
             f"{MEMORY_STORAGE_POLICY}\n\n"
             f"原任务: {task.task_brief}\n"
             f"{memory_block}"

@@ -24,7 +24,7 @@ from .store import (
 
 SendEvent = Callable[[str, str, str, dict[str, Any]], Awaitable[None]]
 ConfigGetter = Callable[[], AppConfig]
-MemoryContextGetter = Callable[[], str]
+MemoryContextGetter = Callable[[str | None], str]
 
 
 class SchedulerService:
@@ -125,7 +125,11 @@ class SchedulerService:
                 config=config,
                 confirmation_store=_AutoConfirmStore(),
                 request_id=execution.id,
-                memory_context=self._memory_context_getter() if self._memory_context_getter else None,
+                memory_context=(
+                    self._memory_context_getter(task.prompt)
+                    if self._memory_context_getter
+                    else None
+                ),
             ):
                 if isinstance(event, ReplyChunk):
                     result_parts.append(event.content)

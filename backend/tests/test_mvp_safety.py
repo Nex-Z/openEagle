@@ -18,6 +18,7 @@ from app.confirmations import ToolConfirmationStore
 from app.default_tools import build_configured_tool_functions, build_default_tools
 from app.prompts import (
     build_chat_instructions,
+    build_direct_answer_prompt,
     build_main_router_instructions,
     build_main_router_prompt,
     build_solo_decision_prompt,
@@ -1104,14 +1105,18 @@ class AgentRouterTest(unittest.TestCase):
         self.assertIn("时间意图优先级", instructions)
         self.assertIn("clarify 仅用于：执行后无法撤销", instructions)
         self.assertIn("不确定但可以合理假设", instructions)
+        self.assertIn("承接上下文", instructions)
         self.assertIn("preferred_mode=solo 时，如果任务涉及桌面状态感知或 GUI 操作", instructions)
         self.assertIn("按实际能力选 worker，忽略 preferred_mode", instructions)
-        self.assertIn("context_summary 只填写 router 层才知道", instructions)
+        self.assertIn("context_summary 只填写 MainAgent 层才知道", instructions)
         self.assertIn("success_criteria 只写对 worker 有实际约束意义", instructions)
         self.assertIn("requires_write 与 requires_gui 是意图 hint", instructions)
-        self.assertIn("user_visible_summary 使用第一人称口语", instructions)
+        self.assertIn("user_visible_summary 是委派或桌面执行前展示给用户的一句话进展", instructions)
+        self.assertIn("使用第一人称口语", instructions)
         self.assertIn("当 route=answer_directly 时，将回复写入 answer 字段", instructions)
         self.assertIn("非即时的时间安排", prompt)
+        self.assertIn("当前日期时间", prompt)
+        self.assertIn("不要反问用户今天是周几", prompt)
         self.assertIn('"answer": "route=answer_directly 时的直接回复；其他 route 为空字符串"', prompt)
         self.assertEqual(prompt.count("用户说\""), 4)
         self.assertNotIn("缺少关键执行信息且无法合理推进", instructions)
@@ -1137,6 +1142,15 @@ class SubAgentManagerTest(unittest.TestCase):
         second = manager.create_or_reuse("conv", AgentRouter.heuristic("查询天气"))
 
         self.assertNotEqual(first.worker_id, second.worker_id)
+
+    def test_worker_prompt_contains_current_datetime(self) -> None:
+        manager = SubAgentManager()
+        task = manager.create_or_reuse("conv", AgentRouter.heuristic("今天有什么动漫更新"))
+
+        prompt = SubAgentManager._build_worker_prompt(task)
+
+        self.assertIn("当前日期时间", prompt)
+        self.assertIn("不要反问用户今天是周几", prompt)
 
     def test_worker_detects_tool_errors_for_agent_feedback(self) -> None:
         trace = ReplyTrace(
@@ -1175,6 +1189,7 @@ class SubAgentManagerTest(unittest.TestCase):
 
         self.assertIn("不要把下面的错误直接交给用户", prompt)
         self.assertIn("自己修正", prompt)
+        self.assertIn("当前日期时间", prompt)
 
     def test_worker_provider_configuration_errors_are_not_self_retried(self) -> None:
         self.assertFalse(SubAgentManager._is_recoverable_worker_exception(ValueError("当前 provider 需要配置 API Key。")))
@@ -1213,9 +1228,15 @@ class AgentRuntimeTest(unittest.TestCase):
         reply = asyncio.run(runtime.handle_user_message("conv", "req", "修改 README"))
 
         self.assertIn("openEagle 已收到你的请求", reply)
+        event_types = [type_ for type_, _payload in events]
+        self.assertIn("server:agent_progress", event_types)
+        self.assertLess(
+            event_types.index("server:agent_progress"),
+            event_types.index("server:trace"),
+        )
         traces = [payload["trace"] for type_, payload in events if type_ == "server:trace"]
         self.assertTrue(any(trace["kind"] == "agent" for trace in traces))
-        self.assertTrue(any(trace["name"] == "main-router" for trace in traces))
+        self.assertFalse(any(trace["name"] == "MainAgent" for trace in traces))
         self.assertTrue(any(trace["name"] == "coding-worker" for trace in traces))
 
     def test_runtime_uses_model_for_direct_answer_when_configured(self) -> None:
@@ -1327,9 +1348,74 @@ class AgentRuntimeTest(unittest.TestCase):
             reply = asyncio.run(runtime.handle_user_message("conv", "req", "你是谁？"))
 
         self.assertEqual(reply, "我是 openEagle，可以直接聊，也能调度执行。")
+        self.assertFalse(any(type_ == "server:agent_progress" for type_, _payload in events))
         messages = [payload for type_, payload in events if type_ == "server:message"]
         self.assertEqual(messages[-1]["route"], "answer_directly")
         self.assertEqual(messages[-1]["answer"], "我是 openEagle，可以直接聊，也能调度执行。")
+
+    def test_runtime_passes_recent_conversation_to_main_agent_decision(self) -> None:
+        events: list[tuple[str, dict[str, object]]] = []
+        route_calls: list[dict[str, object]] = []
+
+        async def send_event(
+            type_: str,
+            request_id: str,
+            conversation_id: str,
+            payload: dict[str, object],
+        ) -> None:
+            _ = (request_id, conversation_id)
+            events.append((type_, payload))
+
+        async def start_solo(conversation_id: str, task: str, request_id: str) -> str:
+            _ = (conversation_id, task, request_id)
+            return "solo started"
+
+        async def solo_control(conversation_id: str, request_id: str, action: str) -> str:
+            _ = (conversation_id, request_id, action)
+            return "solo control"
+
+        runtime = AgentRuntime(
+            config_getter=AppConfig,
+            confirmation_store=ToolConfirmationStore(),
+            confirmed_tool_results={},
+            send_event=send_event,
+            start_solo=start_solo,
+            solo_control=solo_control,
+        )
+
+        async def fake_route(*args, **kwargs):
+            _ = args
+            route_calls.append(dict(kwargs))
+            answer = "据记录，遮天是每周三更新。" if len(route_calls) == 1 else "我去搜遮天更新频率。"
+            return AgentRouter.parse(
+                json.dumps(
+                    {
+                        "route": "answer_directly",
+                        "answer": answer,
+                        "task_title": "承接对话",
+                        "task_brief": "",
+                        "success_criteria": [],
+                        "worker_kind": "general",
+                        "target_worker_id": None,
+                        "requires_write": False,
+                        "requires_gui": False,
+                        "user_visible_summary": "",
+                        "context_summary": "",
+                    },
+                    ensure_ascii=False,
+                ),
+                str(kwargs["content"]),
+            )
+
+        with patch.object(AgentRouter, "route", fake_route):
+            asyncio.run(runtime.handle_user_message("conv", "req1", "遮天一周好像要更新几次吧"))
+            asyncio.run(runtime.handle_user_message("conv", "req2", "你搜搜看呢 我也忘了"))
+
+        self.assertEqual(len(route_calls), 2)
+        self.assertEqual(route_calls[0].get("conversation_context"), "")
+        second_context = str(route_calls[1].get("conversation_context"))
+        self.assertIn("遮天一周好像要更新几次吧", second_context)
+        self.assertIn("据记录，遮天是每周三更新。", second_context)
 
 
 class SoloStabilityTest(unittest.TestCase):
@@ -1498,6 +1584,8 @@ class PromptPolicyTest(unittest.TestCase):
     def test_chat_prompt_contains_command_first_and_visual_boundary(self) -> None:
         instructions = "\n".join(build_chat_instructions("conv", [], [], []))
         self.assertIn("优先使用 run_command", instructions)
+        self.assertIn("当前日期时间", instructions)
+        self.assertIn("不要反问用户今天是周几", instructions)
         self.assertIn("不要启动视觉桌面动作", instructions)
         self.assertIn("小步精确修改", instructions)
         self.assertIn("CONFIRMATION_REQUIRED", instructions)
@@ -1562,7 +1650,15 @@ class PromptPolicyTest(unittest.TestCase):
         hint = current_datetime_hint()
 
         self.assertRegex(hint, r"\d{4}-\d{2}-\d{2}")
+        self.assertRegex(hint, r"星期[一二三四五六日]")
         self.assertRegex(hint, r"[+-]\d{4}$")
+
+    def test_direct_answer_prompt_contains_current_datetime(self) -> None:
+        prompt = build_direct_answer_prompt("今天有什么动漫更新")
+
+        self.assertIn("当前日期时间", prompt)
+        self.assertIn("不要反问用户今天是周几", prompt)
+        self.assertIn("今天有什么动漫更新", prompt)
 
     def test_solo_repair_prompt_converts_natural_language_to_json_decision(self) -> None:
         prompt = build_solo_repair_prompt(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -25,10 +26,32 @@ class MemoryServiceTest(unittest.TestCase):
     def test_default_soul_core_is_seeded(self) -> None:
         state = self.service.state()
         self.assertEqual(state.agent_soul.core, DEFAULT_AGENT_SOUL_CORE)
+        self.assertIn("Be concise, but not sterile.", state.agent_soul.core)
 
         context = self.service.prompt_context(max_chars=8000)
-        self.assertIn("Soul:", context)
-        self.assertIn("# SOUL.md - Who You Are", context)
+        self.assertIn("Soul 摘要", context)
+        self.assertIn("concise but not sterile", context)
+        self.assertNotIn("# SOUL.md - Who You Are", context)
+
+    def test_legacy_default_soul_core_is_upgraded(self) -> None:
+        legacy_core = (
+            "# SOUL.md - Who You Are\n\n"
+            "_You're not a chatbot. You're an agent that acts._\n"
+        )
+        conn = sqlite3.connect(str(self._db_path))
+        try:
+            conn.execute(
+                "UPDATE agent_soul SET core = ? WHERE id = ?",
+                (legacy_core, "default"),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+
+        init_db(self._db_path)
+
+        state = self.service.state()
+        self.assertEqual(state.agent_soul.core, DEFAULT_AGENT_SOUL_CORE)
 
     def test_manual_empty_soul_core_is_not_reseeded(self) -> None:
         self.service.save_manual({"agentSoul": {"core": ""}})
@@ -75,11 +98,60 @@ class MemoryServiceTest(unittest.TestCase):
             }
         )
 
-        context = self.service.prompt_context(max_chars=800)
+        context = self.service.prompt_context(query="活跃笔记", max_chars=800)
         self.assertLessEqual(len(context), 800)
         self.assertIn("用户画像", context)
         self.assertIn("活跃笔记", context)
         self.assertNotIn("归档笔记", context)
+
+    def test_prompt_context_uses_relevant_notes(self) -> None:
+        self.service.save_manual(
+            {
+                "notes": [
+                    {
+                        "id": "note-anime-wed",
+                        "text": "遮天：每周三更新",
+                        "tags": ["anime"],
+                        "status": "active",
+                    },
+                    {
+                        "id": "note-project",
+                        "text": "openEagle 正在迁移记忆系统",
+                        "tags": ["project"],
+                        "status": "active",
+                    },
+                    {
+                        "id": "note-archived",
+                        "text": "归档动漫笔记",
+                        "tags": ["anime"],
+                        "status": "archived",
+                    },
+                ]
+            }
+        )
+
+        context = self.service.prompt_context(query="今天有什么动漫更新", max_notes=2)
+
+        self.assertIn("相关用户笔记", context)
+        self.assertIn("遮天：每周三更新", context)
+        self.assertNotIn("openEagle 正在迁移记忆系统", context)
+        self.assertNotIn("归档动漫笔记", context)
+
+    def test_prompt_context_filters_stale_side_notes(self) -> None:
+        self.service.apply_distillation(
+            {
+                "agentSideNotes": (
+                    "当用户询问今天有什么动漫更新时，需要先确认当前星期几，因为无法自动获取日期。\n"
+                    "回答要自然一点。"
+                )
+            }
+        )
+
+        context = self.service.prompt_context(query="今天有什么动漫更新")
+
+        self.assertIn("回答要自然一点", context)
+        self.assertNotIn("无法自动获取日期", context)
+        self.assertNotIn("需要先确认当前星期几", context)
 
     def test_record_turn_redacts_secrets_and_distill_without_model_is_noop(self) -> None:
         event_id = self.service.record_turn(

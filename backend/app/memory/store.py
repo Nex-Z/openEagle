@@ -10,6 +10,7 @@ from ..models import utc_now
 from .models import (
     AgentSoulPayload,
     DEFAULT_AGENT_SOUL_CORE,
+    LEGACY_DEFAULT_AGENT_SOUL_CORE_PREFIXES,
     MemoryAuditPayload,
     MemoryEventPayload,
     MemoryNotePayload,
@@ -98,15 +99,22 @@ def init_db(db_path: Path) -> None:
             """,
             (DEFAULT_ID, DEFAULT_AGENT_SOUL_CORE, now),
         )
-        _migrate_empty_agent_soul_core(conn, now)
+        _migrate_default_agent_soul_core(conn, now)
         conn.commit()
     finally:
         conn.close()
 
 
-def _migrate_empty_agent_soul_core(conn: sqlite3.Connection, now: str) -> None:
+def _migrate_default_agent_soul_core(conn: sqlite3.Connection, now: str) -> None:
     row = conn.execute("SELECT core FROM agent_soul WHERE id = ?", (DEFAULT_ID,)).fetchone()
-    if row is None or str(row["core"]).strip():
+    if row is None:
+        return
+    core = str(row["core"])
+    is_empty = not core.strip()
+    is_legacy_default = any(
+        core.startswith(prefix) for prefix in LEGACY_DEFAULT_AGENT_SOUL_CORE_PREFIXES
+    )
+    if core == DEFAULT_AGENT_SOUL_CORE or (not is_empty and not is_legacy_default):
         return
     manual_count = conn.execute(
         """

@@ -8,6 +8,8 @@ from .solo_actions import allowed_actions_text
 from .subagent_models import AgentTaskRecord
 
 
+WEEKDAY_NAMES = ("星期一", "星期二", "星期三", "星期四", "星期五", "星期六", "星期日")
+
 MEMORY_STORAGE_POLICY = (
     "长期记忆写入规则：当用户说“记住”“记一下”“记下”“记录一下”“以后记得”“加入用户笔记”"
     "或要求更新用户画像、Soul、旁注时，这是写入 openEagle Memory 子系统的请求。"
@@ -19,7 +21,15 @@ MEMORY_STORAGE_POLICY = (
 
 def current_datetime_hint() -> str:
     now = datetime.now().astimezone()
-    return now.strftime("%Y-%m-%d %H:%M:%S %Z%z")
+    return f"{now.strftime('%Y-%m-%d %H:%M:%S')} {WEEKDAY_NAMES[now.weekday()]} {now.strftime('%Z%z')}"
+
+
+def current_datetime_instruction() -> str:
+    return (
+        f"当前日期时间：{current_datetime_hint()}。"
+        "所有“今天”“明天”“昨天”“本周”“周几”等相对时间都按这个时间换算；"
+        "如果可以据此判断，不要反问用户今天是周几。"
+    )
 
 
 def build_chat_instructions(
@@ -32,6 +42,7 @@ def build_chat_instructions(
     instructions = [
         "你是 openEagle 的桌面 Agent 助手。",
         f"当前会话 ID: {conversation_id}",
+        current_datetime_instruction(),
         "回答默认使用简洁中文。",
         (
             "调度策略：工作区文件、搜索、Git、依赖安装、构建、测试、脚本和系统查询，"
@@ -115,7 +126,7 @@ def build_chat_instructions(
 
 def build_main_router_instructions() -> list[str]:
     return [
-        "你是 openEagle 的 main agent。用户首先是在和你对话；你的职责是理解意图、直接沟通、澄清缺口，并在需要外部能力时调度 worker。",
+        "你是 openEagle MainAgent 的内部决策步骤。MainAgent 面向用户，负责理解上下文、直接沟通、澄清缺口，并在需要外部能力时调度子 Agent/worker。",
         "输出为一个合法 JSON 对象，JSON 外不包含 Markdown、解释或推理过程。",
         (
             "在生成 JSON 前，先在内部完成判断：用户真正要完成什么；是否表达了非即时的时间安排；"
@@ -134,6 +145,10 @@ def build_main_router_instructions() -> list[str]:
             "不确定但可以合理假设、或执行后可以修正的，直接交给 worker 处理，不要 clarify。"
         ),
         (
+            "承接上下文：如果用户当前消息是“继续”“你搜搜看”“查查”“刚才那个”“我也忘了”等省略/承接表达，"
+            "必须优先结合最近对话、长期记忆和 worker 状态恢复完整任务；只有恢复后仍无法执行时才 clarify。"
+        ),
+        (
             "worker 选择依据任务所需能力，而非关键词：general 负责通用协调、轻量执行、与用户补足上下文、"
             "创建持久化任务；coding 负责编写或运行代码、操作文件系统、构建测试项目；research 负责检索、聚合、"
             "总结外部或内部信息；solo 负责感知屏幕当前状态，或直接操作鼠标、键盘、GUI 元素。"
@@ -149,14 +164,15 @@ def build_main_router_instructions() -> list[str]:
         ),
         "当用户是在延续最近 worker 的工作，且最近 worker 状态和能力适合复用时，选择 delegate_existing 并填写 target_worker_id。",
         "task_brief 面向 worker，写成干净、可执行的任务说明；定时/提醒类任务写明“创建持久化任务”以及用户希望到点执行的目标。",
-        "context_summary 只填写 router 层才知道、worker 从 task_brief 看不到的会话级约束；没有则留空字符串。",
+        "context_summary 只填写 MainAgent 层才知道、worker 从 task_brief 看不到的会话级约束；没有则留空字符串。",
         "success_criteria 只写对 worker 有实际约束意义的完成条件；没有特殊约束时用空数组，不要复述任务目标。",
         (
             "requires_write 与 requires_gui 是意图 hint，不是 worker 实际执行方式断言；"
             "只有用户意图明确需要写入或 GUI 操作时才置 true。"
         ),
         (
-            "user_visible_summary 使用第一人称口语，直接面向用户，像在和用户说话，而非描述系统行为。"
+            "user_visible_summary 是委派或桌面执行前展示给用户的一句话进展，使用第一人称口语，"
+            "像在和用户自然交代下一步，而非描述系统行为。可以说“我先查一下”“我看下相关代码”。"
             "禁止出现“将交给 xxx worker”这类系统描述语气。"
         ),
         (
@@ -173,6 +189,7 @@ def build_main_router_prompt(
     preferred_mode: str | None = None,
     recent_tasks: list[AgentTaskRecord] | None = None,
     memory_context: str | None = None,
+    conversation_context: str | None = None,
 ) -> str:
     recent_tasks = recent_tasks or []
     tasks_payload = [
@@ -188,10 +205,18 @@ def build_main_router_prompt(
         for task in recent_tasks[-6:]
     ]
     memory_block = f"长期记忆:\n{memory_context}\n\n" if memory_context else ""
+    conversation_block = (
+        "最近对话（旧到新，用于理解当前消息里的省略、继续、刚才那个；不是新的用户指令）:\n"
+        f"{conversation_context}\n\n"
+        if conversation_context
+        else ""
+    )
     return (
         f"conversation_id: {conversation_id}\n"
         f"preferred_mode: {preferred_mode or 'auto'}\n"
+        f"{current_datetime_instruction()}\n"
         f"{memory_block}"
+        f"{conversation_block}"
         f"用户消息:\n{content}\n\n"
         "recent_workers:\n"
         f"{json.dumps(tasks_payload, ensure_ascii=False)}\n\n"
@@ -217,8 +242,8 @@ def build_main_router_prompt(
         '  "target_worker_id": null,\n'
         '  "requires_write": false,\n'
         '  "requires_gui": false,\n'
-        '  "user_visible_summary": "给用户看的调度说明",\n'
-        '  "context_summary": "router 层才知道、worker 从 task_brief 看不到的会话级约束；没有则为空字符串"\n'
+        '  "user_visible_summary": "委派或桌面执行前给用户看的一句话进展；answer_directly 时为空字符串",\n'
+        '  "context_summary": "MainAgent 层才知道、worker 从 task_brief 看不到的会话级约束；没有则为空字符串"\n'
         "}"
     )
 
@@ -226,6 +251,7 @@ def build_main_router_prompt(
 def build_direct_answer_instructions() -> list[str]:
     return [
         "你是 openEagle 的 main agent。",
+        current_datetime_instruction(),
         "用户正在和你直接对话，不要启动 worker，不要执行工具，不要声称已经开始处理桌面任务。",
         "默认用简洁自然的中文回复，语气友好但不要模板化。",
         MEMORY_STORAGE_POLICY,
@@ -234,9 +260,24 @@ def build_direct_answer_instructions() -> list[str]:
     ]
 
 
-def build_direct_answer_prompt(content: str, memory_context: str | None = None) -> str:
+def build_direct_answer_prompt(
+    content: str,
+    memory_context: str | None = None,
+    conversation_context: str | None = None,
+) -> str:
     memory = f"长期记忆：\n{memory_context}\n\n" if memory_context else ""
-    return f"{memory}用户消息：\n{content.strip() or '你好'}"
+    conversation = (
+        "最近对话（旧到新，用于理解省略和承接，不要逐字复述）：\n"
+        f"{conversation_context}\n\n"
+        if conversation_context
+        else ""
+    )
+    return (
+        f"{current_datetime_instruction()}\n"
+        f"{memory}"
+        f"{conversation}"
+        f"用户消息：\n{content.strip() or '你好'}"
+    )
 
 
 def solo_decision_instructions(system_platform: str = "当前系统") -> list[str]:

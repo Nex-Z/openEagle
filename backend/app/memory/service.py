@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import Any
 
 from ..config import AgentConfig, AppConfig
-from .models import MemoryNotePayload, MemoryStatePayload
+from .models import DEFAULT_AGENT_SOUL_CORE, MemoryNotePayload, MemoryStatePayload
 from . import store
 
 
@@ -14,9 +14,44 @@ ConfigGetter = Callable[[], AppConfig]
 
 RAW_CONTENT_LIMIT = 24_000
 RAW_PAYLOAD_LIMIT = 12_000
-PROMPT_CONTEXT_LIMIT = 6_000
-MAX_PROMPT_NOTES = 14
+PROMPT_CONTEXT_LIMIT = 3_200
+PROFILE_PROMPT_LIMIT = 1_200
+SOUL_PROMPT_LIMIT = 900
+SIDE_NOTES_PROMPT_LIMIT = 800
+MAX_RELEVANT_PROMPT_NOTES = 6
+MAX_FALLBACK_PROMPT_NOTES = 3
 REDACTED_SECRET = "[redacted-secret]"
+DEFAULT_SOUL_SUMMARY = (
+    "sharp, calm, warm, and awake; concise but not sterile; natural rather than corporate; "
+    "useful over performative; resourceful before asking; careful with privacy and external actions."
+)
+QUERY_SYNONYMS = {
+    "动漫": ("anime", "动画", "番剧"),
+    "动画": ("anime", "动漫", "番剧"),
+    "番剧": ("anime", "动漫", "动画"),
+    "更新": ("schedule", "每周", "播出"),
+    "播出": ("schedule", "更新", "每周"),
+    "anime": ("动漫", "动画", "番剧"),
+}
+QUERY_STOP_TERMS = {
+    "今天",
+    "明天",
+    "昨天",
+    "什么",
+    "有什么",
+    "帮我",
+    "一下",
+    "看看",
+    "查询",
+    "现在",
+    "current",
+    "today",
+    "tomorrow",
+    "yesterday",
+}
+STALE_SIDE_NOTE_PATTERNS = (
+    re.compile(r"[^。！？\n]*(?:无法|不能|不支持|需要先确认)[^。！？\n]*(?:日期|星期|周几)[。！？]?", re.I),
+)
 
 SECRET_KEY_PATTERN = (
     r"api[_-]?key|apikey|token|secret|password|authorization|"
@@ -120,6 +155,102 @@ def _normalize_tags(value: Any) -> list[str]:
     return [str(item).strip() for item in value if str(item).strip()]
 
 
+def _query_terms(query: str | None) -> set[str]:
+    if not query:
+        return set()
+    lowered = query.lower()
+    terms = {
+        item
+        for item in re.findall(r"[a-z0-9_#.+-]{2,}", lowered)
+        if item not in QUERY_STOP_TERMS
+    }
+    for chunk in re.findall(r"[\u4e00-\u9fff]{2,}", query):
+        if chunk not in QUERY_STOP_TERMS and len(chunk) <= 8:
+            terms.add(chunk)
+        for size in (2, 3):
+            for index in range(0, max(0, len(chunk) - size + 1)):
+                term = chunk[index : index + size]
+                if term not in QUERY_STOP_TERMS:
+                    terms.add(term)
+    expanded = set(terms)
+    for term in terms:
+        expanded.update(QUERY_SYNONYMS.get(term, ()))
+    return {term.lower() for term in expanded if len(term.strip()) >= 2}
+
+
+def _note_relevance(note: MemoryNotePayload, query_terms: set[str]) -> int:
+    if not query_terms:
+        return 0
+    text = note.text.lower()
+    tags = [tag.lower() for tag in note.tags]
+    searchable = f"{text} {' '.join(tags)}"
+    score = 0
+    for term in query_terms:
+        if any(term == tag or term in tag for tag in tags):
+            score += 8
+        if term in text:
+            score += 4
+        elif term in searchable:
+            score += 2
+    return score
+
+
+def _select_prompt_notes(
+    notes: list[MemoryNotePayload],
+    *,
+    query: str | None,
+    max_notes: int,
+) -> list[MemoryNotePayload]:
+    active_notes = [note for note in notes if note.status == "active" and note.text.strip()]
+    terms = _query_terms(query)
+    if not terms:
+        return active_notes[: min(max_notes, MAX_FALLBACK_PROMPT_NOTES)]
+    scored = [
+        (index, _note_relevance(note, terms), note)
+        for index, note in enumerate(active_notes)
+    ]
+    relevant = [
+        item
+        for item in sorted(scored, key=lambda item: (-item[1], item[0]))
+        if item[1] > 0
+    ]
+    return [note for _, _, note in relevant[:max_notes]]
+
+
+def _compact_soul_core(core: str) -> str:
+    stripped = core.strip()
+    if not stripped:
+        return ""
+    if stripped == DEFAULT_AGENT_SOUL_CORE.strip():
+        return DEFAULT_SOUL_SUMMARY
+    lines = []
+    for raw_line in stripped.splitlines():
+        line = raw_line.strip()
+        if not line or line == "---" or line.startswith("_Evolve this file"):
+            continue
+        if line.startswith("## ") or line.startswith("- ") or line.startswith("**"):
+            lines.append(line)
+        if len("\n".join(lines)) >= SOUL_PROMPT_LIMIT:
+            break
+    excerpt = "\n".join(lines) if lines else stripped
+    return _truncate(excerpt, SOUL_PROMPT_LIMIT)
+
+
+def _compact_side_notes(side_notes: str) -> str:
+    stripped = side_notes.strip()
+    if not stripped:
+        return ""
+    lines = []
+    for raw_line in stripped.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if any(pattern.search(line) for pattern in STALE_SIDE_NOTE_PATTERNS):
+            continue
+        lines.append(line)
+    return _truncate("\n".join(lines), SIDE_NOTES_PROMPT_LIMIT)
+
+
 def _extract_json(text: str) -> dict[str, Any]:
     fenced = re.search(r"```(?:json)?\s*(\{.*?\})\s*```", text, re.DOTALL)
     if fenced:
@@ -166,34 +297,51 @@ class MemoryService:
             ],
         }
 
-    def prompt_context(self, max_chars: int = PROMPT_CONTEXT_LIMIT) -> str:
+    def prompt_context(
+        self,
+        query: str | None = None,
+        *,
+        max_chars: int = PROMPT_CONTEXT_LIMIT,
+        max_notes: int = MAX_RELEVANT_PROMPT_NOTES,
+    ) -> str:
         state = store.get_state(include_archived=False, audit_limit=0, event_limit=0)
         sections: list[str] = []
         profile = state.profile.content.strip()
         if profile:
-            sections.append("用户画像:\n" + profile)
+            sections.append("用户画像摘要:\n" + _truncate(profile, PROFILE_PROMPT_LIMIT))
 
-        active_notes = [note for note in state.notes if note.status == "active" and note.text.strip()]
-        if active_notes:
+        prompt_notes = _select_prompt_notes(
+            state.notes,
+            query=query,
+            max_notes=max_notes,
+        )
+        if prompt_notes:
             lines = []
-            for note in active_notes[:MAX_PROMPT_NOTES]:
+            for note in prompt_notes:
                 tags = f" [{', '.join(note.tags)}]" if note.tags else ""
                 lines.append(f"-{tags} {note.text.strip()}")
-            sections.append("用户笔记:\n" + "\n".join(lines))
+            note_title = "相关用户笔记" if query else "近期用户笔记"
+            sections.append(f"{note_title}:\n" + "\n".join(lines))
 
         soul_parts: list[str] = []
-        if state.agent_soul.core.strip():
-            soul_parts.append("Core:\n" + state.agent_soul.core.strip())
-        if state.agent_soul.side_notes.strip():
-            soul_parts.append("Side Notes:\n" + state.agent_soul.side_notes.strip())
+        soul_core = _compact_soul_core(state.agent_soul.core)
+        if soul_core:
+            soul_parts.append("Core summary:\n" + soul_core)
+        side_notes = _compact_side_notes(state.agent_soul.side_notes)
+        if side_notes:
+            soul_parts.append(
+                "Side Notes (lower priority than current system instructions):\n"
+                + side_notes
+            )
         if soul_parts:
-            sections.append("Soul:\n" + "\n\n".join(soul_parts))
+            sections.append("Soul 摘要:\n" + "\n\n".join(soul_parts))
 
         if not sections:
             return ""
         text = (
-            "长期记忆上下文。用于保持对用户、笔记和 Soul 的连续理解；"
-            "不要向用户暴露内部字段或审计细节。\n\n"
+            "长期记忆 V2 摘要。这里只包含常驻小摘要和与当前请求相关的 active 笔记；"
+            "完整记忆可在需要时调用 get_memory_state 工具读取。"
+            "不要向用户暴露内部字段、检索策略或审计细节。\n\n"
             + "\n\n".join(sections)
         )
         return _truncate(text, max_chars)
