@@ -14,6 +14,7 @@
   },
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.6",
+    "classic-level": "^3.0.0",
     "lucide-react": "^1.11.0",
     "qrcode": "^1.5.4",
     "react": "^18.3.1",

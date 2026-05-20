@@ -5,6 +5,8 @@ import { spawnBackend, killBackend, getBackendState, onBackendStateChange } from
 import { registerIpcHandlers } from "./ipc-handlers";
 import { initLogPath, emitPrefixedLog } from "./log";
 import { hideSoloOverlay } from "./overlay";
+import { loadAppSettings, saveAppSettings } from "./conversations";
+import { migrateTauriSettings } from "./migrate-tauri-settings";
 
 const isDev = !app.isPackaged;
 
@@ -100,12 +102,22 @@ function registerAssetProtocol() {
   });
 }
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   registerAssetProtocol();
   registerIpcHandlers(isDev);
 
   initLogPath(isDev);
   emitPrefixedLog(false, "[APP]", "Electron app starting");
+
+  // One-time migration: import Tauri settings if settings file doesn't exist
+  const existingSettings = loadAppSettings();
+  if (!existingSettings) {
+    const tauriSettings = await migrateTauriSettings();
+    if (tauriSettings) {
+      saveAppSettings(tauriSettings);
+      emitPrefixedLog(false, "[APP]", "Migrated settings from Tauri webview");
+    }
+  }
 
   const win = createMainWindow();
 
