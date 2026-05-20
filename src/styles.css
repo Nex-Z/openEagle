@@ -362,6 +362,7 @@ a {
 .asset-list,
 .slash-group-list,
 .settings-content-scroll,
+.settings-drawer-nav,
 .display-grid {
   scrollbar-width: thin;
   scrollbar-color: color-mix(in srgb, var(--accent) 72%, transparent) transparent;
@@ -374,6 +375,7 @@ a {
 .asset-list::-webkit-scrollbar,
 .slash-group-list::-webkit-scrollbar,
 .settings-content-scroll::-webkit-scrollbar,
+.settings-drawer-nav::-webkit-scrollbar,
 .display-grid::-webkit-scrollbar {
   width: 10px;
   height: 10px;
@@ -386,6 +388,7 @@ a {
 .asset-list::-webkit-scrollbar-track,
 .slash-group-list::-webkit-scrollbar-track,
 .settings-content-scroll::-webkit-scrollbar-track,
+.settings-drawer-nav::-webkit-scrollbar-track,
 .display-grid::-webkit-scrollbar-track {
   background: transparent;
 }
@@ -397,6 +400,7 @@ a {
 .asset-list::-webkit-scrollbar-thumb,
 .slash-group-list::-webkit-scrollbar-thumb,
 .settings-content-scroll::-webkit-scrollbar-thumb,
+.settings-drawer-nav::-webkit-scrollbar-thumb,
 .display-grid::-webkit-scrollbar-thumb {
   border-radius: 999px;
   border: 2px solid transparent;
