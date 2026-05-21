@@ -1,15 +1,20 @@
 import { useEffect, useState } from "react";
-import { invoke, emit, listen } from "../../lib/electron-bridge";
+import { invoke, listen } from "../../lib/electron-bridge";
+import type { SoloOverlayPlanItem } from "../../types/protocol";
 import { SoloOverlay } from "./SoloOverlay";
 
 interface OverlayState {
   title: string;
   detail: string;
   stepText: string;
-  historyText: string;
+  stepLabel?: string;
+  historyText?: string;
   state: string;
   stepCount: number;
   maxSteps: number;
+  planItems?: SoloOverlayPlanItem[];
+  confirmationAction?: string;
+  confirmationReason?: string;
 }
 
 declare global {
@@ -22,10 +27,14 @@ const FALLBACK: OverlayState = {
   title: "正在执行桌面任务",
   detail: "请保持桌面可见",
   stepText: "",
+  stepLabel: "",
   historyText: "",
   state: "running",
   stepCount: 0,
   maxSteps: 100,
+  planItems: [],
+  confirmationAction: "",
+  confirmationReason: "",
 };
 
 export function SoloOverlayWindow() {
@@ -40,7 +49,7 @@ export function SoloOverlayWindow() {
   }, []);
 
   useEffect(() => {
-    const unlisten = listen<OverlayState>("solo:overlay_state", (event) => {
+    const unlisten = listen<OverlayState>("solo://overlay_state", (event) => {
       setOverlay(event.payload);
     });
     return () => {
@@ -53,13 +62,13 @@ export function SoloOverlayWindow() {
       title={overlay.title}
       detail={overlay.detail}
       stepText={overlay.stepText}
-      historyText={overlay.historyText}
       state={overlay.state}
       stepCount={overlay.stepCount}
       maxSteps={overlay.maxSteps}
-      onDismiss={() => {
-        void emit("solo:user-dismissed");
-      }}
+      stepLabel={overlay.stepLabel ?? ""}
+      planItems={overlay.planItems ?? []}
+      confirmationAction={overlay.confirmationAction ?? ""}
+      confirmationReason={overlay.confirmationReason ?? ""}
     />
   );
 }

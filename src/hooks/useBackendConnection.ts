@@ -19,6 +19,7 @@ import type {
   SoloConfirmationPayload,
   SoloDisplayOption,
   SoloControlPayload,
+  SoloPlanItem,
   SoloPlanStatus,
   SoloRunState,
   SoloScreenshotPayload,
@@ -62,13 +63,101 @@ function isSoloFinishAction(action: string) {
   return action.trim().toLowerCase() === "finish";
 }
 
+function compactOverlayText(text?: string, fallback = "", maxLength = 140) {
+  const normalized = (text ?? "")
+    .replace(/\r?\n/g, " ")
+    .replace(/\s+/g, " ")
+    .replace(/([A-Za-z]:\\[^\s]+|\/[^\s]+)/g, "[路径]")
+    .trim();
+  const value = normalized || fallback;
+  if (value.length <= maxLength) {
+    return value;
+  }
+  return `${value.slice(0, Math.max(0, maxLength - 1))}…`;
+}
+
+const SOLO_ACTION_LABELS: Record<string, string> = {
+  observe: "观察屏幕",
+  screenshot: "观察屏幕",
+  click: "点击",
+  double_click: "双击",
+  type: "输入文本",
+  key: "按键",
+  hotkey: "快捷键",
+  scroll: "滚动",
+  wait: "等待",
+  finish: "完成",
+  navigate: "打开链接",
+  open: "打开",
+  drag: "拖拽",
+};
+
+function soloStepActionLabel(action?: string) {
+  const normalized = action?.trim().toLowerCase();
+  if (!normalized) {
+    return "当前步骤";
+  }
+  return SOLO_ACTION_LABELS[normalized] ?? "执行动作";
+}
+
 function soloStepVisibleText(step: SoloStepPayload) {
-  return (
-    step.agentMessage?.trim() ||
-    step.thoughtSummary ||
-    step.expectedOutcome ||
-    "步骤已更新。"
+  return compactOverlayText(
+    step.agentMessage || step.expectedOutcome,
+    "正在推进当前步骤。",
+    120,
   );
+}
+
+function buildOverlayPlanItems(
+  plan: SoloPlanStatus | null,
+): Array<{ index: number; status: SoloPlanItem["status"]; text: string }> {
+  const items = plan?.items ?? [];
+  if (items.length === 0) {
+    return [];
+  }
+
+  const inProgressIndex = items.findIndex((item) => item.status === "in_progress");
+  const pendingIndex = items.findIndex((item) => item.status === "pending");
+  const startIndex =
+    inProgressIndex >= 0
+      ? inProgressIndex
+      : pendingIndex >= 0
+        ? pendingIndex
+        : Math.max(0, items.length - 3);
+
+  return items.slice(startIndex, startIndex + 3).map((item) => ({
+    index: item.index,
+    status: item.status,
+    text: compactOverlayText(
+      item.description || soloStepActionLabel(item.action),
+      "待执行步骤",
+      86,
+    ),
+  }));
+}
+
+function overlayDetailForStatus(
+  status: SoloStatusPayload,
+  confirmation: SoloConfirmationPayload | null,
+) {
+  switch (status.state) {
+    case "running":
+      return "正在执行桌面任务，保持目标窗口可见。";
+    case "waiting_user_confirmation":
+      return confirmation
+        ? "需要你回到 openEagle 确认后继续。"
+        : "正在等待你的确认。";
+    case "paused":
+      return compactOverlayText(status.detail, "执行已暂停，可回到 openEagle 继续。");
+    case "completed":
+      return compactOverlayText(status.detail, "桌面执行已完成。");
+    case "aborted":
+      return compactOverlayText(status.detail, "桌面执行已结束。");
+    case "error":
+      return compactOverlayText(status.detail, "桌面执行失败，请回到 openEagle 查看原因。");
+    default:
+      return compactOverlayText(status.detail, "请保持桌面可见。");
+  }
 }
 
 function collectAssistantContent(blocks?: AssistantMessageBlock[]) {
@@ -284,8 +373,10 @@ export function useBackendConnection(
   soloStatusRef.current = soloStatus;
   const soloStepRef = useRef(soloStep);
   soloStepRef.current = soloStep;
-  const soloTimelineRef = useRef(soloTimeline);
-  soloTimelineRef.current = soloTimeline;
+  const soloPlanRef = useRef(soloPlan);
+  soloPlanRef.current = soloPlan;
+  const soloConfirmationRef = useRef(soloConfirmation);
+  soloConfirmationRef.current = soloConfirmation;
   messagesRef.current = messages;
 
   const syncSettings = () => {
@@ -1231,17 +1322,39 @@ export function useBackendConnection(
     });
   }, [backend.phase, backend.port, conversationId, settings]);
 
-  const buildOverlayPayload = () => ({
-    title: undefined as string | undefined,
-    detail: soloStatusRef.current.detail ?? undefined,
-    stepText: soloStepRef.current
-      ? soloStepVisibleText(soloStepRef.current)
-      : undefined,
-    historyText: soloTimelineRef.current.slice(-3).join("\n") || undefined,
-    state: soloStatusRef.current.state,
-    stepCount: soloStatusRef.current.stepCount,
-    maxSteps: soloStatusRef.current.maxSteps,
-  });
+  const buildOverlayPayload = () => {
+    const status = soloStatusRef.current;
+    const step = soloStepRef.current;
+    const confirmation = soloConfirmationRef.current;
+
+    return {
+      title: "正在执行桌面任务",
+      detail: overlayDetailForStatus(status, confirmation),
+      stepText:
+        status.state === "waiting_user_confirmation"
+          ? "等待你确认后继续。"
+          : step
+            ? soloStepVisibleText(step)
+            : undefined,
+      stepLabel:
+        status.state === "waiting_user_confirmation"
+          ? "等待确认"
+          : step
+            ? soloStepActionLabel(step.action)
+            : undefined,
+      historyText: undefined,
+      state: status.state,
+      stepCount: status.stepCount,
+      maxSteps: status.maxSteps,
+      planItems: buildOverlayPlanItems(soloPlanRef.current),
+      confirmationAction: confirmation
+        ? soloStepActionLabel(confirmation.action)
+        : undefined,
+      confirmationReason: confirmation
+        ? compactOverlayText(confirmation.reason, "请确认是否继续。", 120)
+        : undefined,
+    };
+  };
 
   useEffect(() => {
     if (!isElectronRuntime()) return;
@@ -1321,7 +1434,7 @@ export function useBackendConnection(
         }).catch((err) => console.error("[SOLO] notify_solo_result failed:", err));
       }
     }
-  }, [soloStatus, soloStep, soloTimeline]);
+  }, [soloStatus, soloStep, soloPlan, soloConfirmation]);
 
   useEffect(() => {
     return () => {

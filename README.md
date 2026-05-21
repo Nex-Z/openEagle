@@ -316,7 +316,7 @@ All three compose. For example: an MCP server that provides database queries, a 
 
 ## Roadmap
 
-- [ ] Clearer execution status when you leave the main window
+- [x] Clearer execution status when you leave the main window (structured overlay HUD)
 - [ ] Faster responses and actions (prompt caching, etc.)
 - [ ] macOS and Linux support
 - [ ] Community plugin system

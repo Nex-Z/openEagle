@@ -1,18 +1,28 @@
 import { BrowserWindow, screen } from "electron";
 import path from "node:path";
 
-const SOLO_OVERLAY_WIDTH = 400;
-const SOLO_OVERLAY_HEIGHT = 240;
+const SOLO_OVERLAY_WIDTH = 430;
+const SOLO_OVERLAY_HEIGHT = 320;
 const SOLO_OVERLAY_MARGIN = 18;
+
+interface OverlayPlanItem {
+  index: number;
+  status: string;
+  text: string;
+}
 
 export interface OverlayPayload {
   title?: string;
   detail?: string;
   stepText?: string;
+  stepLabel?: string;
   historyText?: string;
   state?: string;
   stepCount?: number;
   maxSteps?: number;
+  planItems?: OverlayPlanItem[];
+  confirmationAction?: string;
+  confirmationReason?: string;
 }
 
 let overlayWindow: BrowserWindow | null = null;
@@ -22,10 +32,14 @@ function normalizeOverlayPayload(payload: OverlayPayload): Required<OverlayPaylo
     title: payload.title ?? "正在执行桌面任务",
     detail: payload.detail ?? "请保持桌面可见，可随时暂停或结束。",
     stepText: payload.stepText ?? "",
+    stepLabel: payload.stepLabel ?? "",
     historyText: payload.historyText ?? "",
     state: payload.state ?? "running",
     stepCount: payload.stepCount ?? 0,
     maxSteps: payload.maxSteps ?? 100,
+    planItems: Array.isArray(payload.planItems) ? payload.planItems : [],
+    confirmationAction: payload.confirmationAction ?? "",
+    confirmationReason: payload.confirmationReason ?? "",
   };
 }
 
@@ -50,7 +64,7 @@ export function showSoloOverlay(payload: OverlayPayload, isDev: boolean): { ok: 
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     positionOverlay(overlayWindow);
     overlayWindow.show();
-    overlayWindow.webContents.send("solo:overlay-state", normalized);
+    overlayWindow.webContents.send("solo://overlay_state", normalized);
     return { ok: true };
   }
 
@@ -83,7 +97,7 @@ export function showSoloOverlay(payload: OverlayPayload, isDev: boolean): { ok: 
 
   // Inject initial state after page loads
   overlayWindow.webContents.on("did-finish-load", () => {
-    overlayWindow?.webContents.send("solo:overlay-state", normalized);
+    overlayWindow?.webContents.send("solo://overlay_state", normalized);
   });
 
   return { ok: true };
@@ -93,7 +107,7 @@ export function updateSoloOverlay(payload: OverlayPayload): { ok: boolean } {
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     const normalized = normalizeOverlayPayload(payload);
     positionOverlay(overlayWindow);
-    overlayWindow.webContents.send("solo:overlay-state", normalized);
+    overlayWindow.webContents.send("solo://overlay_state", normalized);
     overlayWindow.setIgnoreMouseEvents(true, { forward: true });
   }
   return { ok: true };

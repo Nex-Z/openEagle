@@ -377,6 +377,12 @@ export interface SoloPlanStatus {
   replanCount: number;
 }
 
+export interface SoloOverlayPlanItem {
+  index: number;
+  status: SoloPlanItem["status"];
+  text: string;
+}
+
 export type SoloOverlayControlAction =
   | "pause"
   | "resume"
@@ -395,9 +401,11 @@ export interface SoloOverlayState {
   title: string;
   detail: string;
   stepText: string;
+  stepLabel?: string;
   historyText: string;
   stepCount: number;
   maxSteps: number;
+  planItems?: SoloOverlayPlanItem[];
   lastAction?: string;
   confirmationAction?: string;
   confirmationReason?: string;
