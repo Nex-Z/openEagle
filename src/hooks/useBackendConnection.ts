@@ -19,6 +19,7 @@ import type {
   SoloConfirmationPayload,
   SoloDisplayOption,
   SoloControlPayload,
+  SoloOverlayControlPayload,
   SoloPlanItem,
   SoloPlanStatus,
   SoloRunState,
@@ -1392,6 +1393,41 @@ export function useBackendConnection(
       unlisten.then((fn) => fn());
     };
   }, []);
+
+  useEffect(() => {
+    if (!isElectronRuntime()) return;
+    const unlisten = listen<SoloOverlayControlPayload>(
+      "solo://overlay_control",
+      (event) => {
+        const action = event.payload?.action;
+        switch (action) {
+          case "pause":
+          case "resume":
+          case "stop":
+            sendSoloControl({ action });
+            break;
+          case "confirm_allow":
+            setSoloConfirmation(null);
+            sendSoloControl({ action: "confirm_allow" });
+            break;
+          case "confirm_reject":
+            setSoloConfirmation(null);
+            sendSoloControl({ action: "confirm_reject" });
+            break;
+          case "dismiss":
+            userDismissedOverlayRef.current = true;
+            setOverlayVisible(false);
+            void invoke("hide_solo_overlay").catch(() => {});
+            break;
+          default:
+            break;
+        }
+      },
+    );
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [conversationId]);
 
   useEffect(() => {
     if (!isElectronRuntime()) {

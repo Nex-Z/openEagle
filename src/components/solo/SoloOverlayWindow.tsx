@@ -1,6 +1,9 @@
 import { useEffect, useState } from "react";
-import { invoke, listen } from "../../lib/electron-bridge";
-import type { SoloOverlayPlanItem } from "../../types/protocol";
+import { emit, invoke, listen } from "../../lib/electron-bridge";
+import type {
+  SoloOverlayControlAction,
+  SoloOverlayPlanItem,
+} from "../../types/protocol";
 import { SoloOverlay } from "./SoloOverlay";
 
 interface OverlayState {
@@ -41,6 +44,7 @@ export function SoloOverlayWindow() {
   const [overlay, setOverlay] = useState<OverlayState>(
     () => window.__SOLO_OVERLAY__ ?? FALLBACK,
   );
+  const [collapsed, setCollapsed] = useState(false);
 
   useEffect(() => {
     void invoke("solo_overlay_ready").catch((err: unknown) =>
@@ -57,6 +61,18 @@ export function SoloOverlayWindow() {
     };
   }, []);
 
+  const toggleCollapsed = () => {
+    setCollapsed((current) => {
+      const next = !current;
+      emit("solo:overlay-layout", { collapsed: next });
+      return next;
+    });
+  };
+
+  const sendControl = (action: SoloOverlayControlAction) => {
+    emit("solo:overlay-control", { action });
+  };
+
   return (
     <SoloOverlay
       title={overlay.title}
@@ -69,6 +85,9 @@ export function SoloOverlayWindow() {
       planItems={overlay.planItems ?? []}
       confirmationAction={overlay.confirmationAction ?? ""}
       confirmationReason={overlay.confirmationReason ?? ""}
+      collapsed={collapsed}
+      onToggleCollapsed={toggleCollapsed}
+      onControl={sendControl}
     />
   );
 }

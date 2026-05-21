@@ -21,6 +21,7 @@ import {
   showSoloOverlay,
   updateSoloOverlay,
   hideSoloOverlay,
+  setSoloOverlayCollapsed,
   soloOverlayReady,
   type OverlayPayload,
 } from "./overlay";
@@ -172,6 +173,30 @@ export function registerIpcHandlers(isDev: boolean) {
 
   ipcMain.handle("save_app_settings", (_event, args: { settings?: unknown }) => {
     return saveAppSettings(args?.settings);
+  });
+
+  ipcMain.on("solo:overlay-layout", (_event, args: { collapsed?: boolean }) => {
+    return setSoloOverlayCollapsed(Boolean(args?.collapsed));
+  });
+
+  ipcMain.on("solo:overlay-control", (event, payload: { action?: string }) => {
+    const action = payload?.action ?? "";
+    const allWindows = BrowserWindow.getAllWindows();
+    if (action === "open_main") {
+      for (const win of allWindows) {
+        if (win.webContents.id !== event.sender.id && !win.isDestroyed()) {
+          win.show();
+          win.focus();
+        }
+      }
+      return;
+    }
+
+    for (const win of allWindows) {
+      if (win.webContents.id !== event.sender.id) {
+        win.webContents.send("solo://overlay_control", payload);
+      }
+    }
   });
 
   // Solo overlay → main process IPC (overlay emits "solo:user-dismissed")

@@ -26,11 +26,14 @@ const ALLOWED_LISTEN_CHANNELS = [
   "backend://status",
   "main://focus_changed",
   "solo://overlay_state",
+  "solo://overlay_control",
   "solo://user_dismissed",
 ];
 
 const ALLOWED_SEND_CHANNELS = [
   "solo:user-dismissed",
+  "solo:overlay-control",
+  "solo:overlay-layout",
 ];
 
 contextBridge.exposeInMainWorld("electronAPI", {

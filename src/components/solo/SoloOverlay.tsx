@@ -4,12 +4,25 @@ import {
   CheckCircle2,
   Circle,
   Clock3,
+  ExternalLink,
+  GripHorizontal,
   Loader2,
+  Maximize2,
+  Minimize2,
   PauseCircle,
+  Play,
+  Pause,
+  Square,
+  Check,
+  X,
   XCircle,
 } from "lucide-react";
+import type { LucideIcon } from "lucide-react";
 import { executionStateLabel } from "../../lib/runLabels";
-import type { SoloOverlayPlanItem } from "../../types/protocol";
+import type {
+  SoloOverlayControlAction,
+  SoloOverlayPlanItem,
+} from "../../types/protocol";
 
 interface SoloOverlayProps {
   title: string;
@@ -22,6 +35,9 @@ interface SoloOverlayProps {
   planItems: SoloOverlayPlanItem[];
   confirmationAction: string;
   confirmationReason: string;
+  collapsed: boolean;
+  onToggleCollapsed: () => void;
+  onControl: (action: SoloOverlayControlAction) => void;
 }
 
 const PLAN_STATUS_LABELS: Record<SoloOverlayPlanItem["status"], string> = {
@@ -63,6 +79,90 @@ function planIconFor(status: SoloOverlayPlanItem["status"]) {
   }
 }
 
+interface OverlayControlButton {
+  action: SoloOverlayControlAction;
+  label: string;
+  title: string;
+  icon: LucideIcon;
+  tone?: "primary" | "danger" | "warning";
+}
+
+function controlButtonsFor(state: string): OverlayControlButton[] {
+  if (state === "waiting_user_confirmation") {
+    return [
+      {
+        action: "confirm_allow",
+        label: "同意",
+        title: "同意当前待确认动作",
+        icon: Check,
+        tone: "primary",
+      },
+      {
+        action: "confirm_reject",
+        label: "拒绝",
+        title: "拒绝当前待确认动作",
+        icon: X,
+        tone: "danger",
+      },
+      {
+        action: "stop",
+        label: "结束",
+        title: "结束桌面执行",
+        icon: Square,
+        tone: "danger",
+      },
+    ];
+  }
+
+  if (state === "paused") {
+    return [
+      {
+        action: "resume",
+        label: "继续",
+        title: "继续桌面执行",
+        icon: Play,
+        tone: "primary",
+      },
+      {
+        action: "stop",
+        label: "结束",
+        title: "结束桌面执行",
+        icon: Square,
+        tone: "danger",
+      },
+    ];
+  }
+
+  if (state === "running") {
+    return [
+      {
+        action: "pause",
+        label: "暂停",
+        title: "暂停桌面执行",
+        icon: Pause,
+        tone: "warning",
+      },
+      {
+        action: "stop",
+        label: "结束",
+        title: "结束桌面执行",
+        icon: Square,
+        tone: "danger",
+      },
+    ];
+  }
+
+  return [
+    {
+      action: "open_main",
+      label: "主窗",
+      title: "打开主窗口",
+      icon: ExternalLink,
+      tone: "primary",
+    },
+  ];
+}
+
 export function SoloOverlay(props: SoloOverlayProps) {
   const {
     title,
@@ -75,6 +175,9 @@ export function SoloOverlay(props: SoloOverlayProps) {
     planItems,
     confirmationAction,
     confirmationReason,
+    collapsed,
+    onToggleCollapsed,
+    onControl,
   } = props;
 
   const progress = maxSteps > 0 ? Math.min((stepCount / maxSteps) * 100, 100) : 0;
@@ -85,29 +188,106 @@ export function SoloOverlay(props: SoloOverlayProps) {
   const StateIcon = stateIconFor(state);
   const showCurrent =
     state !== "waiting_user_confirmation" || (!confirmationAction && !confirmationReason);
+  const CollapseIcon = collapsed ? Maximize2 : Minimize2;
+  const controlButtons = controlButtonsFor(state);
 
   if (state === "idle") {
     return null;
+  }
+
+  const controls = (
+    <div className="solo-overlay-controls" aria-label="桌面执行控制">
+      {controlButtons.map((control) => {
+        const Icon = control.icon;
+        return (
+          <button
+            className={`solo-overlay-control-button tone-${control.tone ?? "neutral"}`}
+            key={control.action}
+            onClick={() => onControl(control.action)}
+            title={control.title}
+            type="button"
+          >
+            <Icon size={13} />
+            <span>{control.label}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+
+  if (collapsed) {
+    return (
+      <div className="solo-overlay-root is-collapsed">
+        <section className={`solo-overlay-card is-collapsed tone-${state}`}>
+          <header className="solo-overlay-compact-head solo-overlay-drag-region">
+            <div className="solo-overlay-compact-title">
+              <GripHorizontal size={12} />
+              <StateIcon
+                size={13}
+                className={state === "running" ? "spin" : undefined}
+              />
+              <strong>{executionStateLabel(state)}</strong>
+            </div>
+            <button
+              className="solo-overlay-icon-button"
+              onClick={onToggleCollapsed}
+              title="还原悬浮窗"
+              type="button"
+            >
+              <CollapseIcon size={13} />
+            </button>
+          </header>
+
+          <div className="solo-overlay-progress is-compact">
+            <div className="solo-overlay-progress-track">
+              <span style={{ width: `${progress}%` }} />
+            </div>
+            <small>{progressLabel}</small>
+          </div>
+
+          {controls}
+        </section>
+      </div>
+    );
   }
 
   return (
     <div className="solo-overlay-root">
       <section className={`solo-overlay-card tone-${state}`}>
         <header className="solo-overlay-header">
-          <div className="solo-overlay-title">
+          <div className="solo-overlay-title solo-overlay-drag-region">
             <p>
+              <GripHorizontal size={12} />
               <Activity size={12} />
               桌面执行
             </p>
             <strong>{title}</strong>
           </div>
-          <span className="solo-overlay-state">
-            <StateIcon
-              size={13}
-              className={state === "running" ? "spin" : undefined}
-            />
-            {executionStateLabel(state)}
-          </span>
+          <div className="solo-overlay-header-actions">
+            <span className="solo-overlay-state">
+              <StateIcon
+                size={13}
+                className={state === "running" ? "spin" : undefined}
+              />
+              {executionStateLabel(state)}
+            </span>
+            <button
+              className="solo-overlay-icon-button"
+              onClick={() => onControl("open_main")}
+              title="打开主窗口"
+              type="button"
+            >
+              <ExternalLink size={13} />
+            </button>
+            <button
+              className="solo-overlay-icon-button"
+              onClick={onToggleCollapsed}
+              title="缩小悬浮窗"
+              type="button"
+            >
+              <CollapseIcon size={13} />
+            </button>
+          </div>
         </header>
 
         <div className="solo-overlay-progress">
@@ -162,6 +342,8 @@ export function SoloOverlay(props: SoloOverlayProps) {
             </div>
           </div>
         ) : null}
+
+        {controls}
       </section>
     </div>
   );
