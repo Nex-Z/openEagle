@@ -198,6 +198,7 @@ class AgentRuntime:
             assistant_content=reply,
             route=decision.route,
             metadata=self._route_params(decision),
+            distill=False,
         )
         self._append_conversation_turn(conversation_id, content, reply)
         return reply

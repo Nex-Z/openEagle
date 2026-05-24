@@ -13,7 +13,23 @@
       "Bash(python -m py_compile app/prompts.py)",
       "Bash(python -m py_compile app/solo_service.py)",
       "Bash(python -m py_compile app/solo_executor.py)",
-      "Bash(git commit *)"
+      "Bash(git commit *)",
+      "Bash(pnpm *)",
+      "Bash(uv run *)",
+      "Bash(cargo check *)",
+      "Bash(uv sync *)",
+      "Bash(git diff *)",
+      "Bash(git checkout *)",
+      "Bash(curl -s -o /dev/null -w \"%{http_code}\" http://127.0.0.1:1420/)",
+      "Bash(pkill -f \"electron dist-electron\")",
+      "Bash(node -e \"require\\('fs'\\).writeFileSync\\('dist-electron/package.json','{\\\\\"type\\\\\":\\\\\"commonjs\\\\\"}\\\\n'\\)\")",
+      "Bash(ls \"C:/Users/17602/AppData/Roaming/\" | grep -i eagle 2>/dev/null; ls \"C:/Users/17602/AppData/Roaming/\" | grep -i open 2>/dev/null)",
+      "Bash(find \"C:/Users/17602/AppData/Local/com.openeagle.desktop\" -name \"*.log\" -o -name \"*.ldb\" 2>/dev/null | head -10)",
+      "Bash(rm -f \"C:/Users/17602/AppData/Roaming/com.openeagle.desktop/settings.json\" && pnpm exec tsc -p tsconfig.electron.json 2>&1 && pnpm exec electron dist-electron/main.js 2>&1)",
+      "Bash(sleep 20 && head -c 500 \"C:/Users/17602/AppData/Local/Temp/open-eagle-migrate-debug.txt\" 2>/dev/null)",
+      "Bash(dd if=\"C:/Users/17602/AppData/Local/Temp/open-eagle-migrate-debug.txt\" bs=1 skip=1230 count=100)",
+      "Bash(xxd)",
+      "Bash(node scripts/ensure-cjs-package.cjs)"
     ]
   }
 }

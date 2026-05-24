@@ -6,13 +6,16 @@ import tempfile
 import unittest
 from pathlib import Path
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
+from app.agent_router import AgentRouter
 from app.agent_runtime import AgentRuntime
 from app.attachments import AttachmentStore
 from app.config import AppConfig
 from app.confirmations import ToolConfirmationStore
 from app.default_tools import build_default_tools
 from app.memory import MemoryService, init_db
+from app.subagent_models import AgentRouteDecision
 
 
 class MemoryToolTest(unittest.TestCase):
@@ -128,6 +131,57 @@ class AgentRuntimeMemoryTest(unittest.TestCase):
         self.assertFalse((self.workspace / "anime_schedule.txt").exists())
         self.assertTrue(any(event[0] == "server:memory_updated" for event in events))
         self.assertTrue(any(event[0] == "server:message" for event in events))
+
+    def test_regular_turn_records_event_without_distilling_notes(self) -> None:
+        events: list[tuple[str, str, str, dict[str, Any]]] = []
+
+        async def send_event(
+            type_: str,
+            request_id: str,
+            conversation_id: str,
+            payload: dict[str, Any],
+        ) -> None:
+            events.append((type_, request_id, conversation_id, payload))
+
+        async def start_solo(conversation_id: str, request_id: str, task: str) -> str:
+            return "solo"
+
+        async def solo_control(conversation_id: str, request_id: str, action: str) -> str:
+            return "solo-control"
+
+        runtime = AgentRuntime(
+            config_getter=AppConfig,
+            confirmation_store=ToolConfirmationStore(),
+            attachment_store=AttachmentStore(self.workspace),
+            confirmed_tool_results={},
+            send_event=send_event,
+            start_solo=start_solo,
+            solo_control=solo_control,
+            memory_service=self.service,
+        )
+        distill_event = AsyncMock(return_value=True)
+        self.service.distill_event = distill_event  # type: ignore[method-assign]
+        decision = AgentRouteDecision(
+            route="answer_directly",
+            answer="你好。",
+            task_title="问候",
+            task_brief="你好",
+            worker_kind="general",
+        )
+
+        async def fake_route(self: AgentRouter, *args: Any, **kwargs: Any) -> AgentRouteDecision:
+            return decision
+
+        with patch.object(AgentRouter, "route", fake_route):
+            reply = asyncio.run(runtime.handle_user_message("conv", "req", "你好"))
+
+        state = self.service.state()
+        self.assertEqual(reply, "你好。")
+        self.assertEqual(len(state.events), 1)
+        self.assertEqual(state.events[0].source, "turn")
+        self.assertEqual(state.notes, [])
+        distill_event.assert_not_awaited()
+        self.assertFalse(any(event[0] == "server:memory_updated" for event in events))
 
 
 if __name__ == "__main__":

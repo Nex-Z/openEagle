@@ -1123,7 +1123,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                                   previewDataUrls[display.previewPath] ||
                                   (display.previewPath.startsWith("data:")
                                     ? display.previewPath
-                                    : convertFileSrc(display.previewPath.replace(/\//g, "\\")))
+                                    : convertFileSrc(display.previewPath))
                                 }
                                 style={previewStyle}
                                 onError={() => {
@@ -1635,11 +1635,21 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                     />
                   </label>
                   <label className="form-field">
-                    <span>Agent 自动旁注</span>
+                    <span>Agent 旁注</span>
                     <textarea
                       className="form-textarea"
-                      placeholder="Agent 自动维护的相处方式、称呼和表达习惯。"
-                      readOnly
+                      onChange={(event) =>
+                        updateMemoryDraft((memory) => ({
+                          ...memory,
+                          agentSoul: {
+                            ...memory.agentSoul,
+                            sideNotes: event.target.value,
+                            sideNotesUpdatedAt: new Date().toISOString(),
+                            updatedAt: new Date().toISOString(),
+                          },
+                        }))
+                      }
+                      placeholder="相处方式、称呼、语气和表达习惯，可由 Agent 或用户维护。"
                       value={memoryDraft.agentSoul.sideNotes}
                     />
                   </label>

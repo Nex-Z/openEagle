@@ -81,7 +81,7 @@ class MemoryServiceTest(unittest.TestCase):
         state = self.service.state()
         self.assertIn("简洁中文", state.profile.content)
         self.assertIn("温暖", state.agent_soul.core)
-        self.assertEqual(state.agent_soul.side_notes, "")
+        self.assertEqual(state.agent_soul.side_notes, "少说套话。")
         self.assertEqual(state.notes[0].id, "note-1")
         self.assertEqual(state.notes[0].tags, ["project"])
         self.assertGreaterEqual(len(state.audit), 3)
@@ -136,6 +136,24 @@ class MemoryServiceTest(unittest.TestCase):
         self.assertIn("遮天：每周三更新", context)
         self.assertNotIn("openEagle 正在迁移记忆系统", context)
         self.assertNotIn("归档动漫笔记", context)
+
+    def test_prompt_context_does_not_fallback_to_recent_notes_without_query(self) -> None:
+        self.service.save_manual(
+            {
+                "notes": [
+                    {
+                        "id": "note-recent",
+                        "text": "最近但不相关的用户笔记",
+                        "status": "active",
+                    }
+                ]
+            }
+        )
+
+        context = self.service.prompt_context()
+
+        self.assertNotIn("近期用户笔记", context)
+        self.assertNotIn("最近但不相关的用户笔记", context)
 
     def test_prompt_context_filters_stale_side_notes(self) -> None:
         self.service.apply_distillation(

@@ -75,7 +75,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   convertFileSrc: (filePath: string) => {
     // Encode file path for use as asset:// protocol URL
     const normalized = filePath.replace(/\\/g, "/");
-    return `asset://${normalized}`;
+    return `asset:///${encodeURI(normalized)}`;
   },
 
   onCloseRequested: (callback: () => void) => {

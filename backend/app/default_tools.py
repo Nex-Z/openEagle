@@ -1206,9 +1206,9 @@ class OpenEagleDefaultTools(Toolkit):
         return "已保存 Soul core 到长期记忆。"
 
     def save_agent_side_notes(self, side_notes: str) -> str:
-        """保存 Agent 自动旁注到 openEagle 长期记忆。
+        """保存 Agent 旁注到 openEagle 长期记忆。
 
-        用于记录 Agent 对相处方式、称呼、语气的自我旁注，不要覆盖 Soul core。
+        用于记录或更新 Agent 对相处方式、称呼、语气的旁注，不要覆盖 Soul core。
 
         Args:
             side_notes: 完整旁注文本。

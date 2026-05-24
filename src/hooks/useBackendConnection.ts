@@ -109,6 +109,20 @@ function soloStepVisibleText(step: SoloStepPayload) {
   );
 }
 
+function summarizeSoloDisplaysForLog(displays: unknown[]) {
+  const formatNumber = (value: unknown) =>
+    typeof value === "number" && Number.isFinite(value) ? value : "?";
+  return displays
+    .map((display) => {
+      const item = display as Partial<SoloDisplayOption>;
+      const selected = item.isSelected ? " selected" : "";
+      return `#${formatNumber(item.index)} ${formatNumber(item.width)}x${formatNumber(
+        item.height,
+      )}@${formatNumber(item.left)},${formatNumber(item.top)}${selected}`;
+    })
+    .join("; ");
+}
+
 function buildOverlayPlanItems(
   plan: SoloPlanStatus | null,
 ): Array<{ index: number; status: SoloPlanItem["status"]; text: string }> {
@@ -1045,7 +1059,11 @@ export function useBackendConnection(
 
       if (envelope.type === "server:solo_displays") {
         const displays = Array.isArray(envelope.payload.displays) ? envelope.payload.displays : [];
-        console.log("[ws] received server:solo_displays, count:", displays.length, displays);
+        console.log(
+          "[ws] received server:solo_displays",
+          `count=${displays.length}`,
+          summarizeSoloDisplaysForLog(displays),
+        );
         setSoloDisplays(displays);
         return;
       }

@@ -203,7 +203,7 @@ async def send_envelope(
                 "payload": payload,
                 "timestamp": utc_now(),
             },
-            ensure_ascii=False,
+            ensure_ascii=True,
         )
     )
 

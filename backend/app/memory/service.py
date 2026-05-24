@@ -19,7 +19,6 @@ PROFILE_PROMPT_LIMIT = 1_200
 SOUL_PROMPT_LIMIT = 900
 SIDE_NOTES_PROMPT_LIMIT = 800
 MAX_RELEVANT_PROMPT_NOTES = 6
-MAX_FALLBACK_PROMPT_NOTES = 3
 REDACTED_SECRET = "[redacted-secret]"
 DEFAULT_SOUL_SUMMARY = (
     "sharp, calm, warm, and awake; concise but not sterile; natural rather than corporate; "
@@ -204,7 +203,7 @@ def _select_prompt_notes(
     active_notes = [note for note in notes if note.status == "active" and note.text.strip()]
     terms = _query_terms(query)
     if not terms:
-        return active_notes[: min(max_notes, MAX_FALLBACK_PROMPT_NOTES)]
+        return []
     scored = [
         (index, _note_relevance(note, terms), note)
         for index, note in enumerate(active_notes)
@@ -354,8 +353,19 @@ class MemoryService:
         agent_soul = payload.get("agentSoul") or payload.get("agent_soul")
         if isinstance(agent_soul, dict):
             core = agent_soul.get("core")
-            if isinstance(core, str):
-                store.update_agent_soul(core=core, source="manual")
+            side_notes = (
+                agent_soul.get("sideNotes")
+                if "sideNotes" in agent_soul
+                else agent_soul.get("side_notes")
+            )
+            next_core = core if isinstance(core, str) else None
+            next_side_notes = side_notes if isinstance(side_notes, str) else None
+            if next_core is not None or next_side_notes is not None:
+                store.update_agent_soul(
+                    core=next_core,
+                    side_notes=next_side_notes,
+                    source="manual",
+                )
 
         notes = payload.get("notes")
         if isinstance(notes, list):
