@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import inspect
 import json
 import hashlib
 import os
@@ -10,8 +11,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-from agno.tools import Toolkit
-from agno.tools.function import Function
+from langchain_core.tools import BaseTool, StructuredTool
 
 from .attachments import AttachmentError, AttachmentStore
 from .command_runner import DEFAULT_COMMAND_TAIL, DEFAULT_COMMAND_TIMEOUT_MS
@@ -379,7 +379,15 @@ class _ReadCache:
         self._store[key] = (time.time(), value)
 
 
-class OpenEagleDefaultTools(Toolkit):
+def _tool_from_callable(fn: Any, *, name: str | None = None, description: str | None = None) -> BaseTool:
+    return StructuredTool.from_function(
+        func=fn,
+        name=name or fn.__name__,
+        description=description or inspect.getdoc(fn) or fn.__name__,
+    )
+
+
+class OpenEagleDefaultTools:
     def __init__(
         self,
         workspace_root: Path,
@@ -399,6 +407,7 @@ class OpenEagleDefaultTools(Toolkit):
         self.attachment_store = attachment_store
         self.memory_service = memory_service
         self._read_cache = _ReadCache()
+        self._agent_tools: list[BaseTool] = []
 
         enabled_builtins = {bt["id"]: bt.get("enabled", True) for bt in (builtin_tools or [])}
 
@@ -450,12 +459,13 @@ class OpenEagleDefaultTools(Toolkit):
             tools.append(self.web_search)
             instructions_parts.append("你还可以使用 web_search 在互联网上搜索信息。")
 
-        super().__init__(
-            name="open_eagle_default_tools",
-            tools=tools,
-            instructions="".join(instructions_parts),
-            add_instructions=True,
-        )
+        self.name = "open_eagle_default_tools"
+        self.instructions = "".join(instructions_parts)
+        self._agent_tools = [_tool_from_callable(tool) for tool in tools]
+
+    @property
+    def agent_tools(self) -> list[BaseTool]:
+        return list(self._agent_tools)
 
     def _resolve_path(self, path: str = ".") -> Path:
         return resolve_workspace_path(self.workspace_root, path)
@@ -1254,16 +1264,16 @@ def _build_configured_tool_name(tool: ToolConfig) -> str:
     return f"tool_{truncated_name}_{suffix}"
 
 
-def build_configured_tool_functions(
+def build_configured_tools(
     tool_configs: list[ToolConfig],
     workspace_root: Optional[Path] = None,
     confirmation_store: ToolConfirmationStore | None = None,
     request_id: str | None = None,
     conversation_id: str | None = None,
     permission_mode: str = "default",
-) -> tuple[list[Function], dict[str, str]]:
+) -> tuple[list[BaseTool], dict[str, str]]:
     root = (workspace_root or Path(__file__).resolve().parents[2]).resolve()
-    functions: list[Function] = []
+    tools: list[BaseTool] = []
     name_map: dict[str, str] = {}
 
     for tool in tool_configs:
@@ -1392,17 +1402,25 @@ def build_configured_tool_functions(
             param_names=placeholders,
         )
         if has_params:
-            import inspect
-            sig = inspect.signature(entrypoint)
             entrypoint.__doc__ = f"执行命令: {tool.command}"
 
-        functions.append(
-            Function(
+        tools.append(
+            StructuredTool.from_function(
+                func=entrypoint,
                 name=function_name,
                 description=" ".join(description_parts),
-                entrypoint=entrypoint,
+                args_schema={
+                    "type": "object",
+                    "properties": {
+                        name: {"type": "string", "description": f"填入 {{{name}}} 的字符串参数。"}
+                        for name in placeholders
+                    },
+                    "required": placeholders,
+                    "additionalProperties": False,
+                } if has_params else None,
+                infer_schema=not has_params,
             )
         )
         name_map[function_name] = display_name
 
-    return functions, name_map
+    return tools, name_map

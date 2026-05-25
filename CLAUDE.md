@@ -84,7 +84,7 @@ backend/                Python FastAPI server
   app/solo_service.py   Desktop execution session state (internal solo naming)
   app/solo_executor.py  Desktop action execution
   app/solo_kernel.py    Desktop execution agent kernel
-  app/providers/        LLM providers (agno, mock, base)
+  app/providers/        LLM providers (LangGraph, Anthropic, mock, base)
 ```
 
 ## Conventions

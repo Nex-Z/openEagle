@@ -128,7 +128,7 @@ class MockAgentProvider:
             f"echo: {content}\n"
             f"本轮显式选择: {trace_names}\n\n"
             f"附件:\n{attachment_text}\n\n"
-            "当前回复来自 mock provider。你可以在设置中切换到 openai 或 openai-like，并通过 Agno 驱动真实模型。"
+            "当前回复来自 mock provider。你可以在设置中切换到 openai 或 openai-like，并通过 LangGraph 驱动真实模型。"
         )
 
     async def stream_reply(

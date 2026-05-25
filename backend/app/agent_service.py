@@ -8,9 +8,9 @@ from .confirmations import ToolConfirmationStore
 from .attachments import AttachmentStore
 from .models import AttachmentRef
 from .memory import MemoryService
-from .providers.agno_provider import AgnoAgentProvider
 from .providers.anthropic_provider import AnthropicAgentProvider
 from .providers.base import AgentProvider, ProviderStreamEvent
+from .providers.langgraph_provider import LangGraphAgentProvider
 from .providers.mock import MockAgentProvider
 
 ContextSnapshotCallback = Callable[
@@ -55,7 +55,7 @@ def build_agent_service(
     memory_service: MemoryService | None = None,
 ) -> AgentService:
     if config.agent.provider in {"openai", "openai-like"}:
-        provider = AgnoAgentProvider(
+        provider = LangGraphAgentProvider(
             config,
             confirmation_store=confirmation_store,
             attachment_store=attachment_store,

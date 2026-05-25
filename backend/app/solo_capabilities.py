@@ -3,14 +3,16 @@ from __future__ import annotations
 import inspect
 import asyncio
 import json
+import os
 import re
+import shlex
+from contextlib import AsyncExitStack
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
-from agno.tools import Toolkit
-from agno.tools.function import Function
+from langchain_core.tools import BaseTool, StructuredTool
 
 from .config import AppConfig, McpConfig, SkillConfig, ToolConfig
 from .confirmations import PendingToolConfirmation
@@ -44,7 +46,44 @@ class SoloConfirmationRequest:
     kind: str
 
 
-class SoloDefaultCapabilityToolkit(Toolkit):
+@dataclass
+class McpConnection:
+    session: Any
+    stack: AsyncExitStack
+
+    async def aclose(self) -> None:
+        await self.stack.aclose()
+
+
+def _tool_from_callable(fn: Any, *, name: str | None = None, description: str | None = None) -> BaseTool:
+    return StructuredTool.from_function(
+        func=fn,
+        name=name or fn.__name__,
+        description=description or inspect.getdoc(fn) or fn.__name__,
+    )
+
+
+def _split_stdio_endpoint(endpoint: str) -> list[str]:
+    if os.name != "nt":
+        return shlex.split(endpoint)
+
+    import ctypes
+    from ctypes import wintypes
+
+    argc = ctypes.c_int()
+    command_line_to_argv = ctypes.windll.shell32.CommandLineToArgvW
+    command_line_to_argv.argtypes = [wintypes.LPCWSTR, ctypes.POINTER(ctypes.c_int)]
+    command_line_to_argv.restype = ctypes.POINTER(wintypes.LPWSTR)
+    argv = command_line_to_argv(endpoint, ctypes.byref(argc))
+    if not argv:
+        raise ValueError("无法解析 MCP stdio endpoint。")
+    try:
+        return [argv[index] for index in range(argc.value)]
+    finally:
+        ctypes.windll.kernel32.LocalFree(argv)
+
+
+class SoloDefaultCapabilities:
     def __init__(self, default_tools: Any, web_search_enabled: bool = True) -> None:
         self._default_tools = default_tools
         tools = [
@@ -64,16 +103,17 @@ class SoloDefaultCapabilityToolkit(Toolkit):
         ]
         if web_search_enabled:
             tools.append(self.web_search)
-        super().__init__(
-            name="solo_default_capabilities",
-            tools=tools,
-            instructions=(
-                "桌面执行 worker 可主动使用这些只读默认工具收集信息、读取工作区文本、搜索文件和联网查询。"
-                "记忆类请求使用 get_memory_state/save_memory_note/update_memory_note/delete_memory_note 等工具读写 Memory，"
-                "不要在项目根目录创建记忆文件。"
-            ),
-            add_instructions=True,
+        self.name = "solo_default_capabilities"
+        self.instructions = (
+            "桌面执行 worker 可主动使用这些只读默认工具收集信息、读取工作区文本、搜索文件和联网查询。"
+            "记忆类请求使用 get_memory_state/save_memory_note/update_memory_note/delete_memory_note 等工具读写 Memory，"
+            "不要在项目根目录创建记忆文件。"
         )
+        self._agent_tools = [_tool_from_callable(tool) for tool in tools]
+
+    @property
+    def agent_tools(self) -> list[BaseTool]:
+        return list(self._agent_tools)
 
     def get_current_time(self) -> str:
         """获取当前系统日期时间。"""
@@ -190,7 +230,7 @@ class SoloCapabilityRuntime:
             bt.id: bt.enabled
             for bt in self.config.builtin_tools
         }
-        self.default_toolkit = SoloDefaultCapabilityToolkit(
+        self.default_capabilities = SoloDefaultCapabilities(
             self.default_tools,
             web_search_enabled=enabled_builtins.get("web_search", True),
         )
@@ -199,18 +239,17 @@ class SoloCapabilityRuntime:
             for tool in self.config.tools
             if tool.enabled and tool.command.strip()
         }
-        self._configured_function_to_tool_id: dict[str, str] = {}
+        self._configured_agent_tool_to_tool_id: dict[str, str] = {}
         self._mcp_toolkits: dict[str, Any] = {}
-        self._mcp_functions: dict[tuple[str, str], Function] = {}
-        self._mcp_function_to_call: dict[str, tuple[str, str]] = {}
-        self._toolkits: list[Any] = [self.default_toolkit]
-        self._functions: list[Function] = []
+        self._mcp_tools: dict[tuple[str, str], BaseTool] = {}
+        self._mcp_agent_tool_to_call: dict[str, tuple[str, str]] = {}
+        self._agent_tools: list[BaseTool] = []
         self._catalog_lines: list[str] = []
         self._confirmation_token = uuid4().hex
 
     @property
-    def agent_tools(self) -> list[Any]:
-        return [*self._toolkits, *self._functions]
+    def agent_tools(self) -> list[BaseTool]:
+        return [*self.default_capabilities.agent_tools, *self._agent_tools]
 
     @property
     def has_agent_tools(self) -> bool:
@@ -236,7 +275,7 @@ class SoloCapabilityRuntime:
 
     async def initialize(self) -> list[SoloCapabilityTrace]:
         traces: list[SoloCapabilityTrace] = []
-        self._build_configured_tool_functions()
+        self._build_configured_tools()
         traces.extend(await self._connect_mcp_servers())
         self._build_catalog()
         for skill in self.enabled_skills:
@@ -266,8 +305,17 @@ class SoloCapabilityRuntime:
             except Exception:
                 pass
 
-        # Agno close() returns early before initialized=True, but failed connects
-        # can still have entered these contexts.
+        aclose = getattr(toolkit, "aclose", None)
+        if aclose is not None:
+            try:
+                result = aclose()
+                if inspect.isawaitable(result):
+                    await result
+            except Exception:
+                pass
+            return
+
+        # Failed MCP connects can still have entered these contexts.
         for attr in ("_session_context", "_context"):
             context = getattr(toolkit, attr, None)
             if context is None:
@@ -322,10 +370,10 @@ class SoloCapabilityRuntime:
             return {"ok": True, "action": action, "output": output}
         return await asyncio.to_thread(self.execute_action, action, action_args)
 
-    def _build_configured_tool_functions(self) -> None:
+    def _build_configured_tools(self) -> None:
         for tool in self._configured_by_id.values():
-            function_name = _build_configured_tool_name(tool)
-            self._configured_function_to_tool_id[function_name] = tool.id
+            agent_tool_name = _build_configured_tool_name(tool)
+            self._configured_agent_tool_to_tool_id[agent_tool_name] = tool.id
             placeholders = list(dict.fromkeys(re.findall(r"\{(\w+)\}", tool.command)))
             properties = {
                 name: {
@@ -348,13 +396,13 @@ class SoloCapabilityRuntime:
             def entrypoint(_tool_id: str = tool.id, **kwargs: str) -> str:
                 return self._execute_configured_tool_from_agent(_tool_id, kwargs)
 
-            self._functions.append(
-                Function(
-                    name=function_name,
+            self._agent_tools.append(
+                StructuredTool.from_function(
+                    func=entrypoint,
+                    name=agent_tool_name,
                     description=description,
-                    parameters=parameters,
-                    entrypoint=entrypoint,
-                    skip_entrypoint_processing=True,
+                    args_schema=parameters,
+                    infer_schema=False,
                 )
             )
 
@@ -363,35 +411,16 @@ class SoloCapabilityRuntime:
         enabled = [server for server in self.config.mcp if server.enabled and server.endpoint.strip()]
         if not enabled:
             return traces
-        try:
-            from agno.tools.mcp import MCPTools
-        except ImportError as exc:
-            return [
-                SoloCapabilityTrace(
-                    kind="mcp",
-                    name="MCP",
-                    status="error",
-                    summary="MCP 依赖未安装，已跳过 MCP 能力。",
-                    result=str(exc),
-                )
-            ]
 
         for server in enabled:
-            toolkit = None
+            connection: McpConnection | None = None
             try:
                 transport = server.transport or "stdio"
-                if transport == "stdio":
-                    toolkit = MCPTools(command=server.endpoint, transport="stdio")
-                elif transport in {"http", "sse", "streamable-http"}:
-                    mcp_transport = "streamable-http" if transport == "http" else transport
-                    toolkit = MCPTools(url=server.endpoint, transport=mcp_transport)
-                else:
-                    raise ValueError(f"不支持的 MCP transport: {transport}")
-                await toolkit.connect()
-                if not getattr(toolkit, "initialized", False):
-                    raise RuntimeError("MCP toolkit 未能初始化。")
-                self._register_mcp_functions(server, toolkit)
-                self._mcp_toolkits[server.id] = toolkit
+                connection = await self._open_mcp_connection(server, transport)
+                tools_result = await connection.session.list_tools()
+                tools = list(getattr(tools_result, "tools", []) or [])
+                self._register_mcp_tools(server, connection, tools)
+                self._mcp_toolkits[server.id] = connection
                 traces.append(
                     SoloCapabilityTrace(
                         kind="mcp",
@@ -399,12 +428,12 @@ class SoloCapabilityRuntime:
                         status="completed",
                         summary="桌面执行已连接并加载 MCP 工具。",
                         params={"transport": transport, "endpoint": server.endpoint},
-                        result={"toolCount": len(getattr(toolkit, "functions", {}))},
+                        result={"toolCount": len(tools)},
                     )
                 )
             except Exception as exc:  # noqa: BLE001
-                if toolkit is not None:
-                    await self._close_mcp_toolkit(toolkit)
+                if connection is not None:
+                    await self._close_mcp_toolkit(connection)
                     self._mcp_toolkits.pop(server.id, None)
                 traces.append(
                     SoloCapabilityTrace(
@@ -418,15 +447,77 @@ class SoloCapabilityRuntime:
                 )
         return traces
 
-    def _register_mcp_functions(self, server: McpConfig, toolkit: Any) -> None:
-        for raw_name, function in getattr(toolkit, "functions", {}).items():
+    async def _open_mcp_connection(self, server: McpConfig, transport: str) -> McpConnection:
+        from mcp import ClientSession
+
+        stack = AsyncExitStack()
+        try:
+            if transport == "stdio":
+                from mcp.client.stdio import StdioServerParameters, stdio_client
+
+                parts = _split_stdio_endpoint(server.endpoint)
+                if not parts:
+                    raise ValueError("MCP stdio endpoint 不能为空。")
+                params = StdioServerParameters(command=parts[0], args=parts[1:])
+                read_stream, write_stream = await stack.enter_async_context(stdio_client(params))
+            elif transport == "sse":
+                from mcp.client.sse import sse_client
+
+                read_stream, write_stream = await stack.enter_async_context(
+                    sse_client(server.endpoint)
+                )
+            elif transport in {"http", "streamable-http"}:
+                from mcp.client.streamable_http import streamablehttp_client
+
+                read_stream, write_stream, _ = await stack.enter_async_context(
+                    streamablehttp_client(server.endpoint)
+                )
+            else:
+                raise ValueError(f"不支持的 MCP transport: {transport}")
+
+            session = await stack.enter_async_context(ClientSession(read_stream, write_stream))
+            await session.initialize()
+            return McpConnection(session=session, stack=stack)
+        except Exception:
+            await stack.aclose()
+            raise
+
+    def _register_mcp_tools(
+        self,
+        server: McpConfig,
+        connection: McpConnection,
+        tools: list[Any],
+    ) -> None:
+        for tool in tools:
+            raw_name = str(getattr(tool, "name", "") or "").strip()
+            if not raw_name:
+                continue
+            description = str(getattr(tool, "description", "") or server.description or "")
+            parameters = getattr(tool, "inputSchema", None)
+            if not isinstance(parameters, dict):
+                parameters = {"type": "object", "properties": {}, "required": []}
             safe_server = re.sub(r"[^0-9A-Za-z]+", "_", server.name).strip("_").lower() or "mcp"
             safe_tool = re.sub(r"[^0-9A-Za-z_]+", "_", raw_name).strip("_").lower() or "tool"
-            function_name = f"mcp_{safe_server}_{safe_tool}"[:64].strip("_")
-            if function_name in self._mcp_function_to_call:
-                function_name = f"{function_name[:55]}_{server.id[:8]}"
-            self._mcp_functions[(server.id, raw_name)] = function
-            self._mcp_function_to_call[function_name] = (server.id, raw_name)
+            agent_tool_name = f"mcp_{safe_server}_{safe_tool}"[:64].strip("_")
+            if agent_tool_name in self._mcp_agent_tool_to_call:
+                agent_tool_name = f"{agent_tool_name[:55]}_{server.id[:8]}"
+
+            async def raw_entrypoint(
+                _connection: McpConnection = connection,
+                _tool_name: str = raw_name,
+                **kwargs: Any,
+            ) -> str:
+                result = await _connection.session.call_tool(_tool_name, kwargs)
+                return stringify_tool_result(result)
+
+            self._mcp_tools[(server.id, raw_name)] = StructuredTool.from_function(
+                coroutine=raw_entrypoint,
+                name=raw_name,
+                description=description or raw_name,
+                args_schema=parameters,
+                infer_schema=False,
+            )
+            self._mcp_agent_tool_to_call[agent_tool_name] = (server.id, raw_name)
 
             async def entrypoint(
                 _server_id: str = server.id,
@@ -435,16 +526,16 @@ class SoloCapabilityRuntime:
             ) -> str:
                 return await self._execute_mcp_tool_from_agent(_server_id, _tool_name, kwargs)
 
-            self._functions.append(
-                Function(
-                    name=function_name,
+            self._agent_tools.append(
+                StructuredTool.from_function(
+                    coroutine=entrypoint,
+                    name=agent_tool_name,
                     description=(
                         f"MCP 工具「{raw_name}」，来自 server「{server.name}」。"
-                        f"{function.description or server.description or ''}"
+                        f"{description}"
                     ),
-                    parameters=function.parameters,
-                    entrypoint=entrypoint,
-                    skip_entrypoint_processing=True,
+                    args_schema=parameters,
+                    infer_schema=False,
                 )
             )
 
@@ -454,19 +545,19 @@ class SoloCapabilityRuntime:
         ]
         if self._configured_by_id:
             lines.append("自定义工具（可主动调用；默认权限下按命令风险确认）：")
-            for function_name, tool_id in self._configured_function_to_tool_id.items():
+            for agent_tool_name, tool_id in self._configured_agent_tool_to_tool_id.items():
                 tool = self._configured_by_id[tool_id]
                 lines.append(
-                    f"- {function_name}: id={tool.id}, name={tool.name}, cwd={tool.cwd or '.'}, "
+                    f"- {agent_tool_name}: id={tool.id}, name={tool.name}, cwd={tool.cwd or '.'}, "
                     f"description={tool.description or '无'}, command={tool.command}"
                 )
-        if self._mcp_function_to_call:
+        if self._mcp_agent_tool_to_call:
             lines.append("MCP 工具（可主动调用；default 权限下调用前确认）：")
             server_by_id = {server.id: server for server in self.config.mcp}
-            for function_name, (server_id, raw_name) in self._mcp_function_to_call.items():
+            for agent_tool_name, (server_id, raw_name) in self._mcp_agent_tool_to_call.items():
                 server = server_by_id.get(server_id)
                 server_name = server.name if server else server_id
-                lines.append(f"- {function_name}: server_id={server_id}, server={server_name}, tool={raw_name}")
+                lines.append(f"- {agent_tool_name}: server_id={server_id}, server={server_name}, tool={raw_name}")
         if self.enabled_skills:
             lines.append("启用的 Skills（必须自动遵循，不需要用户点名）：")
             for skill in self.enabled_skills:
@@ -537,15 +628,15 @@ class SoloCapabilityRuntime:
             ),
         )
 
-    def _mcp_lookup(self, action_args: dict[str, Any]) -> tuple[str, str, Function]:
+    def _mcp_lookup(self, action_args: dict[str, Any]) -> tuple[str, str, BaseTool]:
         server_id = str(action_args.get("server_id") or action_args.get("serverId") or "").strip()
         tool_name = str(action_args.get("tool_name") or action_args.get("toolName") or "").strip()
         if not server_id or not tool_name:
             raise ValueError("MCP 调用缺少 server_id 或 tool_name。")
-        function = self._mcp_functions.get((server_id, tool_name))
-        if function is None:
+        tool = self._mcp_tools.get((server_id, tool_name))
+        if tool is None:
             raise ValueError("未找到已加载的 MCP 工具。")
-        return server_id, tool_name, function
+        return server_id, tool_name, tool
 
     async def _execute_mcp_tool_from_agent(
         self,
@@ -570,15 +661,11 @@ class SoloCapabilityRuntime:
         return await self._execute_mcp_tool(action_args)
 
     async def _execute_mcp_tool(self, action_args: dict[str, Any]) -> str:
-        _, _, function = self._mcp_lookup(action_args)
+        _, _, tool = self._mcp_lookup(action_args)
         arguments = action_args.get("arguments")
         if not isinstance(arguments, dict):
             arguments = {}
-        if function.entrypoint is None:
-            raise ValueError("MCP 工具缺少 entrypoint。")
-        result = function.entrypoint(**arguments)
-        if inspect.isawaitable(result):
-            result = await result
+        result = await tool.ainvoke(arguments)
         return stringify_tool_result(result)
 
     def _confirmation_payload(
@@ -606,6 +693,19 @@ def stringify_tool_result(value: Any) -> str:
     content = getattr(value, "content", None)
     if isinstance(content, str):
         return content
+    if isinstance(content, list):
+        parts = []
+        for item in content:
+            text = getattr(item, "text", None)
+            if isinstance(text, str):
+                parts.append(text)
+            else:
+                parts.append(str(item))
+        if parts:
+            return "\n".join(parts)
+    structured = getattr(value, "structuredContent", None)
+    if structured is not None:
+        return stringify_tool_result(structured)
     try:
         return json.dumps(value, ensure_ascii=False, default=str)
     except TypeError:

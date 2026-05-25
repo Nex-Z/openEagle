@@ -6,14 +6,11 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
-from agno.models.openai.like import OpenAILike
-
 from .agent_router import AgentRouter
 from .attachments import AttachmentError, AttachmentStore, append_attachment_context
 from .config import AgentConfig, AppConfig
 from .confirmations import ToolConfirmationStore
+from .langgraph_agent import run_text_model
 from .models import AttachmentRef, StatusPayload, utc_now
 from .memory import MemoryService
 from .prompts import build_direct_answer_instructions, build_direct_answer_prompt
@@ -830,31 +827,13 @@ class AgentRuntime:
                 return answer
             return str(response)
 
-        model_id = agent_config.model_id or "gpt-5-mini"
-        if agent_config.provider == "openai-like":
-            if not agent_config.base_url:
-                raise ValueError("openai-like 模式需要配置 Base URL。")
-            model = OpenAILike(
-                id=model_id,
-                api_key=agent_config.api_key,
-                base_url=agent_config.base_url,
+        return (
+            await run_text_model(
+                agent_config=agent_config,
+                instructions=build_direct_answer_instructions(),
+                prompt=prompt,
             )
-        else:
-            model = OpenAIResponses(
-                id=model_id,
-                api_key=agent_config.api_key,
-            )
-
-        agent = Agent(
-            model=model,
-            markdown=False,
-            instructions=build_direct_answer_instructions(),
-        )
-        result = await agent.arun(prompt)
-        answer = getattr(result, "content", None)
-        if isinstance(answer, str) and answer.strip():
-            return answer.strip()
-        return str(result).strip()
+        ).strip()
 
     @staticmethod
     def _fallback_direct_answer(content: str) -> str:

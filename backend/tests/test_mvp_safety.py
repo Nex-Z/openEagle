@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import inspect
 import json
 import os
 import sys
@@ -15,7 +14,7 @@ from app.agent_router import AgentRouter
 from app.agent_runtime import AgentRuntime
 from app.config import AgentConfig, AppConfig, McpConfig, SkillConfig, ToolConfig
 from app.confirmations import ToolConfirmationStore
-from app.default_tools import build_configured_tool_functions, build_default_tools
+from app.default_tools import build_configured_tools, build_default_tools
 from app.prompts import (
     build_chat_instructions,
     build_direct_answer_prompt,
@@ -38,6 +37,7 @@ from app.solo_kernel import SoloAgentKernel, action_signature
 from app.solo_capabilities import (
     SOLO_CONFIRMATION_PREFIX,
     SoloCapabilityRuntime,
+    _split_stdio_endpoint,
     parse_confirmation_request,
 )
 from app.solo_service import (
@@ -364,9 +364,9 @@ class ConfirmationStoreTest(unittest.TestCase):
             self.assertFalse((root / "moved.txt").exists())
 
 
-class ConfiguredToolFunctionTest(unittest.TestCase):
-    def test_build_configured_tool_functions_filters_and_names_are_unique(self) -> None:
-        tools, name_map = build_configured_tool_functions(
+class ConfiguredToolTest(unittest.TestCase):
+    def test_build_configured_tools_filters_and_names_are_unique(self) -> None:
+        tools, name_map = build_configured_tools(
             [
                 ToolConfig(id="one", name="Git Status", command="git status", enabled=True),
                 ToolConfig(id="two", name="Git Status", command="git status", enabled=True),
@@ -380,7 +380,7 @@ class ConfiguredToolFunctionTest(unittest.TestCase):
         self.assertEqual(len(name_map), 2)
         self.assertEqual(len({tool.name for tool in tools}), 2)
         for tool in tools:
-            self.assertEqual(len(inspect.signature(tool.entrypoint).parameters), 0)
+            self.assertEqual(tool.args, {})
 
     def test_configured_tool_confirmation_and_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -394,7 +394,7 @@ class ConfiguredToolFunctionTest(unittest.TestCase):
                 enabled=True,
             )
 
-            guarded_tools, _ = build_configured_tool_functions(
+            guarded_tools, _ = build_configured_tools(
                 [tool_config],
                 workspace_root=root,
                 confirmation_store=store,
@@ -402,10 +402,10 @@ class ConfiguredToolFunctionTest(unittest.TestCase):
                 conversation_id="conv",
                 permission_mode="default",
             )
-            guarded_result = guarded_tools[0].entrypoint()
+            guarded_result = guarded_tools[0].invoke({})
             self.assertTrue(guarded_result.startswith("CONFIRMATION_REQUIRED"))
 
-            direct_tools, name_map = build_configured_tool_functions(
+            direct_tools, name_map = build_configured_tools(
                 [tool_config],
                 workspace_root=root,
                 confirmation_store=store,
@@ -414,13 +414,13 @@ class ConfiguredToolFunctionTest(unittest.TestCase):
                 permission_mode="all",
             )
             self.assertEqual(name_map[direct_tools[0].name], "Python Tool")
-            direct_result = direct_tools[0].entrypoint()
+            direct_result = direct_tools[0].invoke({})
             self.assertEqual(direct_result.strip(), "tool ok")
 
     def test_configured_tool_blocks_invalid_cwd(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
-            tools, _ = build_configured_tool_functions(
+            tools, _ = build_configured_tools(
                 [
                     ToolConfig(
                         id="tool-2",
@@ -434,11 +434,30 @@ class ConfiguredToolFunctionTest(unittest.TestCase):
                 permission_mode="all",
             )
 
-            result = tools[0].entrypoint()
+            result = tools[0].invoke({})
             self.assertIn("路径超出工作区范围", result)
 
 
 class SoloCapabilityRuntimeTest(unittest.TestCase):
+    def test_stdio_endpoint_parser_preserves_windows_paths(self) -> None:
+        if os.name != "nt":
+            self.skipTest("Windows command-line parsing is only used on Windows.")
+
+        self.assertEqual(
+            _split_stdio_endpoint(r"C:\Users\me\mcp.exe --stdio"),
+            [r"C:\Users\me\mcp.exe", "--stdio"],
+        )
+        self.assertEqual(
+            _split_stdio_endpoint(
+                r'"C:\Program Files\nodejs\node.exe" "C:\Users\me\server.js" --stdio'
+            ),
+            [
+                r"C:\Program Files\nodejs\node.exe",
+                r"C:\Users\me\server.js",
+                "--stdio",
+            ],
+        )
+
     def test_solo_toolkit_dispatches_default_tool_actions(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)

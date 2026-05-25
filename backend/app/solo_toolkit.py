@@ -2,34 +2,16 @@ from __future__ import annotations
 
 from typing import Any
 
-from agno.tools import Toolkit
-
 from .solo_executor import SoloExecutor
 
 
-class SoloToolkit(Toolkit):
+class SoloToolkit:
     def __init__(self, executor: SoloExecutor) -> None:
         self._executor = executor
-        super().__init__(
-            name="solo_toolkit",
-            tools=[
-                self.screenshot,
-                self.click,
-                self.double_click,
-                self.right_click,
-                self.move_mouse,
-                self.scroll,
-                self.type_text,
-                self.press_keys,
-                self.wait,
-                self.execute_command,
-                self.open_url,
-            ],
-            instructions=(
-                "这些是桌面动作工具定义，执行前必须确认参数合法。"
-                "鼠标坐标支持像素值，或 0~1 的归一化比例坐标。"
-            ),
-            add_instructions=True,
+        self.name = "solo_toolkit"
+        self.instructions = (
+            "这些是桌面动作工具定义，执行前必须确认参数合法。"
+            "鼠标坐标支持像素值，或 0~1 的归一化比例坐标。"
         )
 
     def screenshot(self) -> dict[str, Any]:

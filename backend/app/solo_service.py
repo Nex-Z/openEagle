@@ -11,20 +11,10 @@ from tempfile import gettempdir
 from typing import Any
 from uuid import uuid4
 
-from agno.agent import Agent
-from agno.media import Image as AgnoImage
-from agno.models.openai import OpenAIResponses
-from agno.models.openai.like import OpenAILike
-from agno.run.agent import (
-    IntermediateRunContentEvent,
-    RunContentEvent,
-    ToolCallCompletedEvent,
-    ToolCallErrorEvent,
-    ToolCallStartedEvent,
-)
 from pydantic import BaseModel, Field, ValidationError
 
 from .config import AgentConfig
+from .langgraph_agent import LangGraphToolAgent, image_user_content
 from .prompts import (
     build_solo_decision_prompt,
     build_solo_repair_prompt,
@@ -280,45 +270,31 @@ class SoloService:
     ) -> None:
         self._agent_config = agent_config
         self._capability_runtime = capability_runtime
-        self._agent: Agent | None = None
+        self._agent: LangGraphToolAgent | None = None
 
-    def _build_agent(self) -> Agent:
+    def _build_agent(self) -> LangGraphToolAgent:
         if self._agent is not None:
             return self._agent
         api_key = self._agent_config.vl_api_key
         if not api_key:
             raise ValueError("桌面执行需要配置视觉模型 API Key。")
 
-        if self._agent_config.vl_provider == "openai-like":
-            if not self._agent_config.vl_base_url:
-                raise ValueError("VL provider 为 openai-like 时需要配置 vlBaseUrl。")
-            model = OpenAILike(
-                id=self.model_id,
-                api_key=api_key,
-                base_url=self._agent_config.vl_base_url,
-            )
-        else:
-            model = OpenAIResponses(
-                id=self.model_id,
-                api_key=api_key,
-            )
-
         instructions = solo_decision_instructions(current_system_platform())
-        tools: list[Any] = []
+        tools = []
         if self._capability_runtime is not None:
             instructions.extend(self._capability_runtime.skill_instructions())
             instructions.append(
-                "你可以主动调用已启用的 Agno 工具和 MCP 工具，不需要用户显式点名。"
+                "你可以主动调用已启用的 LangGraph 工具和 MCP 工具，不需要用户显式点名。"
                 "工具结果是观察信息，最终仍必须输出桌面执行决策 JSON。"
                 "如果工具返回 SOLO_CONFIRMATION_REQUIRED，停止继续调用工具，按该请求等待用户确认。"
             )
             tools = self._capability_runtime.agent_tools
 
-        self._agent = Agent(
-            model=model,
-            markdown=False,
+        self._agent = LangGraphToolAgent(
+            agent_config=self._agent_config,
             instructions=instructions,
             tools=tools,
+            vision=True,
         )
         return self._agent
 
@@ -408,58 +384,29 @@ class SoloService:
 
     async def _run_agent(
         self,
-        agent: Agent,
+        agent: LangGraphToolAgent,
         prompt: str,
         image_url: str,
     ) -> SoloAgentRunOutput:
-        if self._capability_runtime is None or not self._capability_runtime.has_agent_tools:
-            result = await agent.arun(
-                prompt,
-                images=[AgnoImage(url=image_url, detail="auto")],
-            )
-            return SoloAgentRunOutput(text=self._result_text(result))
-
-        chunks: list[str] = []
+        result = await agent.run(image_user_content(prompt, image_url))
         traces: list[dict[str, Any]] = []
-        stream = agent.arun(
-            prompt,
-            images=[AgnoImage(url=image_url, detail="auto")],
-            stream=True,
-            stream_events=True,
-        )
-        async for event in stream:
-            if isinstance(event, (RunContentEvent, IntermediateRunContentEvent)):
-                content = getattr(event, "content", None)
-                if isinstance(content, str) and content:
-                    chunks.append(content)
-                continue
-
-            if isinstance(event, ToolCallStartedEvent):
-                traces.append(
-                    {
-                        "kind": self._trace_kind_for_tool(self._tool_name_from_event(event)),
-                        "name": self._tool_name_from_event(event),
-                        "status": "started",
-                        "summary": "桌面执行 worker 正在主动调用能力。",
-                        "params": {},
-                    }
-                )
-                continue
-
-            if isinstance(event, ToolCallCompletedEvent):
-                tool = getattr(event, "tool", None)
-                tool_name = self._tool_name_from_event(event)
-                result_text = stringify_tool_result(getattr(tool, "result", None) if tool else None)
-                traces.append(
-                    {
-                        "kind": self._trace_kind_for_tool(tool_name),
-                        "name": tool_name,
-                        "status": "completed",
-                        "summary": "桌面执行 worker 能力调用完成。",
-                        "params": getattr(tool, "tool_args", {}) if tool else {},
-                        "result": result_text,
-                    }
-                )
+        for trace in result.traces:
+            result_text = trace.result or ""
+            traces.append(
+                {
+                    "kind": trace.kind,
+                    "name": trace.name,
+                    "status": trace.status,
+                    "summary": (
+                        "桌面执行 worker 能力调用完成。"
+                        if trace.status == "completed"
+                        else trace.summary
+                    ),
+                    "params": trace.params,
+                    "result": result_text,
+                }
+            )
+            if trace.status == "completed" and self._capability_runtime is not None:
                 confirmation = parse_confirmation_request(
                     result_text,
                     expected_token=self._capability_runtime.confirmation_token,
@@ -470,22 +417,8 @@ class SoloService:
                         confirmation=confirmation,
                         tool_traces=traces,
                     )
-                continue
 
-            if isinstance(event, ToolCallErrorEvent):
-                tool_name = self._tool_name_from_event(event)
-                traces.append(
-                    {
-                        "kind": self._trace_kind_for_tool(tool_name),
-                        "name": tool_name,
-                        "status": "error",
-                        "summary": "桌面执行 worker 能力调用失败。",
-                        "params": {},
-                        "result": stringify_tool_result(getattr(event, "tool", None)),
-                    }
-                )
-
-        return SoloAgentRunOutput(text="".join(chunks).strip(), tool_traces=traces)
+        return SoloAgentRunOutput(text=result.content.strip(), tool_traces=traces)
 
     @staticmethod
     def _trace_kind_for_tool(tool_name: str) -> str:
@@ -512,7 +445,7 @@ class SoloService:
     @staticmethod
     def _fallback_decision_from_text(raw_text: str, error: Exception) -> SoloDecision:
         raw_preview = trim_model_output(raw_text, 500)
-        if raw_preview.startswith("RunResponse("):
+        if raw_preview.startswith("LangGraphRunResult("):
             visible = "让我重新看一下屏幕，确认当前状态。"
         else:
             visible = raw_preview or "让我重新看一下屏幕，确认当前状态。"

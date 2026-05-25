@@ -4,11 +4,8 @@ import json
 import re
 from typing import Any
 
-from agno.agent import Agent
-from agno.models.openai import OpenAIResponses
-from agno.models.openai.like import OpenAILike
-
 from .config import AppConfig
+from .langgraph_agent import run_text_model
 from .prompts import build_main_router_instructions, build_main_router_prompt
 from .subagent_models import AgentRouteDecision, AgentTaskRecord
 
@@ -142,28 +139,11 @@ class AgentRouter:
             text_parts = [block.text for block in response.content if block.type == "text"]
             return "".join(text_parts)
 
-        if agent_config.provider == "openai-like":
-            if not agent_config.base_url:
-                raise ValueError("openai-like 模式需要配置 Base URL。")
-            model = OpenAILike(
-                id=agent_config.model_id or "gpt-5-mini",
-                api_key=agent_config.api_key,
-                base_url=agent_config.base_url,
-            )
-        else:
-            model = OpenAIResponses(
-                id=agent_config.model_id or "gpt-5-mini",
-                api_key=agent_config.api_key,
-            )
-
-        agent = Agent(
-            model=model,
-            markdown=False,
+        return await run_text_model(
+            agent_config=agent_config,
             instructions=build_main_router_instructions(),
+            prompt=prompt,
         )
-        result = await agent.arun(prompt)
-        raw = getattr(result, "content", None)
-        return raw if isinstance(raw, str) else str(result)
 
     @classmethod
     def parse(

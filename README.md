@@ -100,7 +100,7 @@ Frontend      →  connects via WebSocket to ws://127.0.0.1:<port>/ws
 | LLM | OpenAI-compatible API (configurable) |
 | Vision | VL model via OpenAI-compatible endpoint |
 | Automation | mss (screenshots), pyautogui (input) |
-| Agent framework | agno |
+| Agent framework | LangGraph |
 | Search | baidusearch (free, no API key) |
 | Scheduling | APScheduler + SQLite |
 | Remote IM | Feishu long connection, Telegram Bot polling, WeChat ClawBot QR binding |
@@ -119,7 +119,7 @@ When users ask for work to happen later or on a cadence, MainAgent creates a per
 
 openEagle now includes Hermes-inspired single-user long-term memory stored in `.open-eagle/memory.db`. Memory has four layers: user profile, user notes, Soul, and raw memory events. Raw events keep broader turn and compaction snapshots, while prompt injection uses a V2 retrieval layer: a bounded profile summary, a compact Soul summary, Agent side notes, and only active user notes relevant to the current request. Full memory remains available through built-in tools (`get_memory_state`, `save_memory_note`, `update_memory_note`, `delete_memory_note`, `save_user_profile`, `save_soul_core`, `save_agent_side_notes`), so "remember this" requests go through the memory database instead of creating project-root files. In Settings -> Memory, deleting a user note archives it and removes it from the active note list while preserving audit history.
 
-Context cleanup uses the same settings channel. Once the estimated input token threshold is reached, the backend preserves system messages and the latest N messages, then processes only the middle of the conversation. Tool messages are removed or replaced with compact placeholders before any AI summary step, so the summarizer does not waste tokens on large tool outputs. The Anthropic provider can replace the middle segment with an AI summary and falls back to rule-based truncation if summarization fails. Remote IM sessions can also start a new context window after a configurable idle period.
+Context cleanup uses the same settings channel. Once the estimated input token threshold is reached, the backend preserves system messages and the latest N messages, then processes only the middle of the conversation. Tool messages are removed or replaced with compact placeholders before any AI summary step, so the summarizer does not waste tokens on large tool outputs. LangGraph/OpenAI-compatible and Anthropic providers can replace the middle segment with an AI summary and fall back to rule-based truncation if summarization fails. Remote IM sessions can also start a new context window after a configurable idle period.
 
 Built-in worker kinds:
 

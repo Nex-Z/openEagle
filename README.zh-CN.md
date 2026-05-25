@@ -100,7 +100,7 @@ Frontend      →  通过 WebSocket 连接 ws://127.0.0.1:<端口>/ws
 | LLM        | OpenAI 兼容 API（可配置）                              |
 | 视觉模型   | VL 模型，通过 OpenAI 兼容接口接入                      |
 | 自动化     | mss（截图）, pyautogui（输入）                         |
-| Agent 框架 | agno                                                   |
+| Agent 框架 | LangGraph                                              |
 | 搜索       | baidusearch（免费，无需 API Key）                      |
 | 定时调度   | APScheduler + SQLite                                  |
 | 远程 IM    | 飞书长连接、Telegram Bot 长轮询、微信 ClawBot 扫码绑定 |
@@ -119,7 +119,7 @@ MainAgent 的内部决策步骤采用原则驱动，而不是关键词驱动：�
 
 openEagle 现在内置 Hermes 风格的单用户长期记忆，数据保存在 `.open-eagle/memory.db`。记忆分为用户画像、用户笔记、Soul 和原始记忆事件：原始事件尽量保留回合与压缩快照，prompt 注入走 V2 检索层，只放有界用户画像摘要、压缩后的 Soul 摘要、Agent 旁注，以及与当前请求相关的活跃用户笔记。完整记忆仍可通过系统默认工具（`get_memory_state`、`save_memory_note`、`update_memory_note`、`delete_memory_note`、`save_user_profile`、`save_soul_core`、`save_agent_side_notes`）按需读取和维护，所以“记住/记录一下”类请求会写入 memory 数据库，而不是在项目根目录创建文件。设置页的 Memory 区域只展示活跃用户笔记，删除笔记会归档并从列表隐藏，同时保留审计记录。
 
-上下文整理走同一套配置入口。达到 token 阈值后，后端会保留 system 和最近 N 条消息，只处理中间消息；工具消息先占位或移除，避免把大段工具输出交给摘要模型。Anthropic provider 会在必要时用文本模型生成中段摘要，失败时退回规则型截断。远程 IM 会话还支持按静默分钟数提示开启新的上下文窗口。
+上下文整理走同一套配置入口。达到 token 阈值后，后端会保留 system 和最近 N 条消息，只处理中间消息；工具消息先占位或移除，避免把大段工具输出交给摘要模型。LangGraph/OpenAI 兼容 provider 与 Anthropic provider 都会在必要时用文本模型生成中段摘要，失败时退回规则型截断。远程 IM 会话还支持按静默分钟数提示开启新的上下文窗口。
 
 内置 worker 类型：
 

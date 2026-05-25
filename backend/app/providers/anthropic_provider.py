@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any, AsyncIterator
 
 import anthropic
+from langchain_core.tools import BaseTool
 
 from .. import default_tools
 from ..attachments import AttachmentStore
@@ -114,7 +115,7 @@ class AnthropicAgentProvider:
         )
 
     # ------------------------------------------------------------------
-    # Capability extraction (same logic as agno_provider)
+    # Capability extraction
     # ------------------------------------------------------------------
 
     @staticmethod
@@ -205,7 +206,7 @@ class AnthropicAgentProvider:
         selected_tools: list[ToolConfig],
         selected_mcp: list[McpConfig],
         selected_skills: list[SkillConfig],
-    ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, str]]:
+    ) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, str], list[str]]:
         instructions = build_chat_instructions(
             conversation_id=conversation_id,
             selected_tools=selected_tools,
@@ -213,7 +214,7 @@ class AnthropicAgentProvider:
             selected_skills=selected_skills,
         )
 
-        default_toolkit = default_tools.build_default_tools(
+        default_tool_set = default_tools.build_default_tools(
             workspace_root=workspace_root(),
             confirmation_store=self._confirmation_store,
             request_id=self._request_id,
@@ -223,7 +224,9 @@ class AnthropicAgentProvider:
             attachment_store=self._attachment_store,
             memory_service=self._memory_service,
         )
-        configured_functions, configured_name_map = default_tools.build_configured_tool_functions(
+        if default_tool_set.instructions:
+            instructions.append(default_tool_set.instructions)
+        configured_tools, configured_name_map = default_tools.build_configured_tools(
             self._config.tools,
             workspace_root=workspace_root(),
             confirmation_store=self._confirmation_store,
@@ -235,24 +238,27 @@ class AnthropicAgentProvider:
         function_map: dict[str, Any] = {}
         anthropic_tools: list[dict[str, Any]] = []
 
-        for name, fn in default_toolkit.get_async_functions().items():
-            function_map[name] = fn
-            anthropic_tools.append(self._convert_tool(fn))
+        for tool in default_tool_set.agent_tools:
+            function_map[tool.name] = tool
+            anthropic_tools.append(self._convert_tool(tool))
 
-        for fn in configured_functions:
-            function_map[fn.name] = fn
-            anthropic_tools.append(self._convert_tool(fn))
+        for tool in configured_tools:
+            function_map[tool.name] = tool
+            anthropic_tools.append(self._convert_tool(tool))
 
-        return anthropic_tools, function_map, configured_name_map
+        return anthropic_tools, function_map, configured_name_map, instructions
 
     @staticmethod
-    def _convert_tool(fn: Any) -> dict[str, Any]:
-        parameters = fn.parameters
-        if not isinstance(parameters, dict):
+    def _convert_tool(tool: BaseTool) -> dict[str, Any]:
+        if isinstance(tool.args_schema, dict):
+            parameters = tool.args_schema
+        elif tool.args_schema is not None:
+            parameters = tool.args_schema.model_json_schema()
+        else:
             parameters = {"type": "object", "properties": {}, "required": []}
         return {
-            "name": fn.name,
-            "description": fn.description or "",
+            "name": tool.name,
+            "description": tool.description or "",
             "input_schema": parameters,
         }
 
@@ -262,11 +268,11 @@ class AnthropicAgentProvider:
         tool_name: str,
         tool_input: dict[str, Any],
     ) -> str:
-        fn = function_map.get(tool_name)
-        if fn is None or fn.entrypoint is None:
+        tool = function_map.get(tool_name)
+        if tool is None:
             return f"Error: tool '{tool_name}' not found"
         try:
-            result = fn.entrypoint(**tool_input)
+            result = tool.invoke(tool_input)
             return str(result) if result is not None else ""
         except Exception as exc:
             return f"Error: {exc}"
@@ -315,14 +321,8 @@ class AnthropicAgentProvider:
         cleaned_prompt, selected_tools, selected_mcp, selected_skills, _ = (
             self._extract_selected_capabilities(prompt)
         )
-        anthropic_tools, function_map, _ = self._build_tools(
+        anthropic_tools, function_map, _, instructions = self._build_tools(
             conversation_id, selected_tools, selected_mcp, selected_skills,
-        )
-        instructions = build_chat_instructions(
-            conversation_id=conversation_id,
-            selected_tools=selected_tools,
-            selected_mcp=selected_mcp,
-            selected_skills=selected_skills,
         )
         system_prompt = "\n\n".join(instructions)
 
@@ -412,14 +412,8 @@ class AnthropicAgentProvider:
         for trace in selection_traces:
             yield trace
 
-        anthropic_tools, function_map, configured_name_map = self._build_tools(
+        anthropic_tools, function_map, configured_name_map, instructions = self._build_tools(
             conversation_id, selected_tools, selected_mcp, selected_skills,
-        )
-        instructions = build_chat_instructions(
-            conversation_id=conversation_id,
-            selected_tools=selected_tools,
-            selected_mcp=selected_mcp,
-            selected_skills=selected_skills,
         )
         system_prompt = "\n\n".join(instructions)
 
