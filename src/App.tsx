@@ -573,6 +573,7 @@ export default function App() {
             soloConfirmation={soloConfirmation}
             soloLastError={soloLastError}
             soloStatus={soloStatus}
+            soloStep={soloStep}
             soloTimeline={soloTimeline}
             soloPlan={soloPlan}
             toolConfirmation={toolConfirmation}

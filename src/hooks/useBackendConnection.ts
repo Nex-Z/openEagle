@@ -83,14 +83,21 @@ const SOLO_ACTION_LABELS: Record<string, string> = {
   click: "点击",
   double_click: "双击",
   type: "输入文本",
+  type_text: "输入文本",
   key: "按键",
   hotkey: "快捷键",
+  press_keys: "按键",
   scroll: "滚动",
   wait: "等待",
   finish: "完成",
   navigate: "打开链接",
+  open_url: "打开链接",
   open: "打开",
   drag: "拖拽",
+  move_mouse: "移动鼠标",
+  execute_command: "运行命令",
+  run_configured_tool: "运行工具",
+  call_mcp_tool: "调用 MCP",
 };
 
 function soloStepActionLabel(action?: string) {
@@ -103,9 +110,23 @@ function soloStepActionLabel(action?: string) {
 
 function soloStepVisibleText(step: SoloStepPayload) {
   return compactOverlayText(
-    step.agentMessage || step.expectedOutcome,
+    step.agentMessage ||
+      step.expectedOutcome ||
+      step.screenState ||
+      step.visual?.displayText,
     "正在推进当前步骤。",
     120,
+  );
+}
+
+function hasRenderablePointVisual(step: SoloStepPayload | null) {
+  const visual = step?.visual;
+  return (
+    visual?.kind === "point" &&
+    typeof visual.x === "number" &&
+    Number.isFinite(visual.x) &&
+    typeof visual.y === "number" &&
+    Number.isFinite(visual.y)
   );
 }
 
@@ -1250,7 +1271,7 @@ export function useBackendConnection(
           appendChatMessage(current, createChatMessage({
             role: "system",
             label: "危险动作确认",
-            content: `${confirmation.thoughtSummary}\n\n动作: \`${confirmation.action}\`\n\n原因: ${confirmation.reason}`,
+            content: `动作: \`${confirmation.action}\`\n\n原因: ${confirmation.reason}`,
             createdAt: new Date().toISOString(),
             requestId: envelope.requestId,
             mode: "solo",
@@ -1491,7 +1512,34 @@ export function useBackendConnection(
   }, [soloStatus, soloStep, soloPlan, soloConfirmation]);
 
   useEffect(() => {
+    if (!isElectronRuntime()) {
+      return;
+    }
+
+    if (soloStatus.state === "running" && hasRenderablePointVisual(soloStep)) {
+      const visual = soloStep!.visual!;
+      void invoke("show_solo_target_highlight", {
+        payload: {
+          x: visual.x,
+          y: visual.y,
+          label:
+            visual.targetLabel ||
+            visual.displayText ||
+            soloStepActionLabel(soloStep!.action),
+          displayIndex: visual.displayIndex,
+        },
+      }).catch((err) => console.error("[SOLO] show_solo_target_highlight failed:", err));
+      return;
+    }
+
+    void invoke("hide_solo_target_highlight").catch(() => {});
+  }, [soloStatus.state, soloStep]);
+
+  useEffect(() => {
     return () => {
+      if (isElectronRuntime()) {
+        void invoke("hide_solo_target_highlight").catch(() => {});
+      }
       if (reconnectTimerRef.current) {
         window.clearTimeout(reconnectTimerRef.current);
       }

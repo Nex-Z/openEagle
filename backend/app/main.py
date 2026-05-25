@@ -51,6 +51,7 @@ from .solo_kernel import SoloAgentKernel, action_signature
 from .solo_run_logger import SoloRunLogger
 from .solo_service import SoloService, SoloSessionState, summarize_solo_step_result
 from .solo_toolkit import SoloToolkit
+from .solo_visual import build_solo_step_visual, should_delay_for_visual
 
 app = FastAPI(title="openEagle Agent Backend")
 config = load_config()
@@ -453,6 +454,14 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         confidence: float | None = None,
         screen_state: str | None = None,
     ) -> None:
+        visual = build_solo_step_visual(
+            action,
+            action_args,
+            display_text=agent_message or expected_outcome or screen_state,
+            screenshot_path=screenshot_path,
+            capture_region=solo_executor.last_capture_region(),
+            display_index=session.display_index,
+        )
         payload = SoloStepPayload(
             stepIndex=step_index,
             action=action,
@@ -464,6 +473,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             confidence=confidence,
             screenState=screen_state,
             screenshotPath=screenshot_path,
+            visual=visual,
             timestamp=utc_now(),
         ).model_dump(by_alias=True)
         await safe_send(
@@ -473,7 +483,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             {"step": payload},
         )
         if im_bridge is not None and session.conversation_id.startswith("im_"):
-            visible_text = (agent_message or expected_outcome or thought_summary).strip()
+            visible_text = (agent_message or expected_outcome or screen_state or action).strip()
             if visible_text:
                 await im_bridge.send_text(session.conversation_id, visible_text)
 
@@ -485,12 +495,21 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         action_args: dict[str, Any],
         thought_summary: str,
     ) -> None:
+        visual = build_solo_step_visual(
+            action,
+            action_args,
+            display_text=reason,
+            screenshot_path=session.last_screenshot_path,
+            capture_region=solo_executor.last_capture_region(),
+            display_index=session.display_index,
+        )
         payload = SoloConfirmationPayload(
             stepIndex=step_index,
             reason=reason,
             action=action,
             actionArgs=action_args,
             thoughtSummary=thought_summary,
+            visual=visual,
         ).model_dump(by_alias=True)
         await safe_send(
             "server:solo_confirmation_required",
@@ -1127,6 +1146,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     confidence=decision.confidence,
                     screen_state=decision.screen_state,
                 )
+                if should_delay_for_visual(current_action, current_args):
+                    await asyncio.sleep(0.12)
 
                 result = await execute_solo_step(
                     session,
@@ -1473,6 +1494,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             agent_message=str(pending.get("agent_message") or "") or None,
             screenshot_path=active_solo.last_screenshot_path,
         )
+        if should_delay_for_visual(str(pending["action"]), dict(pending["action_args"])):
+            await asyncio.sleep(0.12)
 
         async def _execute_confirmed_and_continue() -> None:
             if active_solo is None:
@@ -2005,6 +2028,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         agent_message=str(pending.get("agent_message") or "") or None,
                         screenshot_path=active_solo.last_screenshot_path,
                     )
+                    if should_delay_for_visual(str(pending["action"]), dict(pending["action_args"])):
+                        await asyncio.sleep(0.12)
 
                     async def _execute_confirmed_and_continue() -> None:
                         result = await execute_solo_step(

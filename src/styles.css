@@ -924,6 +924,7 @@ a {
 
 .trace-row-body pre,
 .decision-card pre,
+.current-action-card pre,
 .trace-stack pre {
   margin: 0;
   padding: 12px;
@@ -1450,6 +1451,31 @@ a {
   color: var(--accent);
 }
 
+.current-action-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.current-action-card p {
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.current-action-target {
+  max-width: 42%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  border-radius: 999px;
+  padding: 4px 8px;
+  color: var(--accent);
+  background: var(--accent-soft);
+  font-size: 11px;
+}
+
 .timeline-list,
 .asset-list {
   max-height: 520px;
@@ -1499,6 +1525,7 @@ a {
 }
 
 .asset-card img {
+  width: 100%;
   aspect-ratio: auto;
   object-fit: contain;
   cursor: pointer;
@@ -1518,6 +1545,50 @@ a {
   border: 1px dashed var(--border-strong);
   color: var(--text-muted);
   font-size: 13px;
+}
+
+.asset-image-wrap {
+  position: relative;
+  overflow: hidden;
+  border-radius: 6px;
+}
+
+.asset-target-marker {
+  position: absolute;
+  z-index: 2;
+  transform: translate(-50%, -50%);
+  width: 22px;
+  height: 22px;
+  border-radius: 999px;
+  border: 2px solid var(--accent);
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  box-shadow: 0 0 0 7px color-mix(in srgb, var(--accent) 16%, transparent);
+  pointer-events: none;
+}
+
+.asset-target-marker::after {
+  content: "";
+  position: absolute;
+  inset: 6px;
+  border-radius: inherit;
+  background: var(--accent);
+}
+
+.asset-target-marker span {
+  position: absolute;
+  left: 18px;
+  top: 50%;
+  max-width: 160px;
+  transform: translateY(-50%);
+  padding: 3px 7px;
+  border-radius: 999px;
+  color: var(--bg-surface);
+  background: var(--accent);
+  font-size: 11px;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .asset-card figcaption {

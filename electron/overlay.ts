@@ -27,8 +27,17 @@ export interface OverlayPayload {
   confirmationReason?: string;
 }
 
+export interface TargetHighlightPayload {
+  x?: number;
+  y?: number;
+  label?: string;
+  displayIndex?: number;
+}
+
 let overlayWindow: BrowserWindow | null = null;
 let overlayCollapsed = false;
+let targetHighlightWindow: BrowserWindow | null = null;
+let targetHighlightTimer: ReturnType<typeof setTimeout> | null = null;
 
 function normalizeOverlayPayload(payload: OverlayPayload): Required<OverlayPayload> {
   return {
@@ -96,6 +105,105 @@ function getOverlayHtmlPath(isDev: boolean): string {
   return `file://${path.resolve(__dirname, "../dist/solo-overlay.html")}`;
 }
 
+function targetHighlightHtml(): string {
+  return `<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    html, body {
+      width: 100%;
+      height: 100%;
+      margin: 0;
+      overflow: hidden;
+      background: transparent;
+      pointer-events: none;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    #marker {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 34px;
+      height: 34px;
+      border-radius: 999px;
+      border: 3px solid #5b8cff;
+      background: rgba(91, 140, 255, 0.18);
+      box-shadow: 0 0 0 12px rgba(91, 140, 255, 0.14), 0 0 28px rgba(91, 140, 255, 0.7);
+      transform: translate(-50%, -50%) scale(0.86);
+      opacity: 0;
+      transition: opacity 120ms ease, transform 180ms ease;
+    }
+    #marker.is-visible {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+      animation: pulse 900ms ease-out infinite;
+    }
+    #marker::after {
+      content: "";
+      position: absolute;
+      inset: 10px;
+      border-radius: inherit;
+      background: #5b8cff;
+    }
+    #label {
+      position: absolute;
+      left: 28px;
+      top: 50%;
+      max-width: 260px;
+      transform: translateY(-50%);
+      padding: 6px 10px;
+      border-radius: 999px;
+      color: #ffffff;
+      background: rgba(20, 24, 36, 0.86);
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      font-size: 12px;
+      line-height: 1.3;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    #label:empty {
+      display: none;
+    }
+    @keyframes pulse {
+      0% { box-shadow: 0 0 0 8px rgba(91, 140, 255, 0.2), 0 0 28px rgba(91, 140, 255, 0.7); }
+      100% { box-shadow: 0 0 0 24px rgba(91, 140, 255, 0), 0 0 28px rgba(91, 140, 255, 0.25); }
+    }
+  </style>
+</head>
+<body>
+  <div id="marker"><span id="label"></span></div>
+  <script>
+    window.__setTargetHighlight = function(payload) {
+      const marker = document.getElementById("marker");
+      const label = document.getElementById("label");
+      marker.style.left = payload.x + "px";
+      marker.style.top = payload.y + "px";
+      label.textContent = payload.label || "";
+      marker.classList.add("is-visible");
+    };
+  </script>
+</body>
+</html>`;
+}
+
+function sendTargetHighlightPayload(
+  win: BrowserWindow,
+  payload: Required<Pick<TargetHighlightPayload, "x" | "y">> & TargetHighlightPayload,
+  bounds: Rectangle,
+) {
+  const label = String(payload.label ?? "").replace(/\s+/g, " ").trim().slice(0, 80);
+  const relativePayload = {
+    x: Math.round(payload.x - bounds.x),
+    y: Math.round(payload.y - bounds.y),
+    label,
+  };
+  void win.webContents
+    .executeJavaScript(`window.__setTargetHighlight(${JSON.stringify(relativePayload)})`)
+    .catch((err) => console.error("[SOLO/ELECTRON] target highlight render failed:", err));
+}
+
 export function showSoloOverlay(payload: OverlayPayload, isDev: boolean): { ok: boolean } {
   const normalized = normalizeOverlayPayload(payload);
 
@@ -159,12 +267,85 @@ export function hideSoloOverlay(): { ok: boolean } {
     overlayWindow.close();
   }
   overlayWindow = null;
+  hideSoloTargetHighlight();
   return { ok: true };
 }
 
 export function soloOverlayReady(): { ok: boolean } {
   if (overlayWindow && !overlayWindow.isDestroyed()) {
     overlayWindow.showInactive();
+  }
+  return { ok: true };
+}
+
+export function showSoloTargetHighlight(payload: TargetHighlightPayload): { ok: boolean } {
+  const x = Number(payload.x);
+  const y = Number(payload.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) {
+    hideSoloTargetHighlight();
+    return { ok: false };
+  }
+
+  const display = screen.getDisplayNearestPoint({ x: Math.round(x), y: Math.round(y) });
+  const bounds = display.bounds;
+  const normalized = { ...payload, x, y };
+
+  if (targetHighlightTimer) {
+    clearTimeout(targetHighlightTimer);
+    targetHighlightTimer = null;
+  }
+
+  if (!targetHighlightWindow || targetHighlightWindow.isDestroyed()) {
+    targetHighlightWindow = new BrowserWindow({
+      x: bounds.x,
+      y: bounds.y,
+      width: bounds.width,
+      height: bounds.height,
+      alwaysOnTop: true,
+      frame: false,
+      focusable: false,
+      skipTaskbar: true,
+      resizable: false,
+      movable: false,
+      transparent: true,
+      hasShadow: false,
+      show: false,
+      webPreferences: {
+        contextIsolation: true,
+        nodeIntegration: false,
+      },
+    });
+    targetHighlightWindow.setIgnoreMouseEvents(true, { forward: true });
+    targetHighlightWindow.setAlwaysOnTop(true, "screen-saver");
+    targetHighlightWindow.loadURL(`data:text/html;charset=utf-8,${encodeURIComponent(targetHighlightHtml())}`);
+    targetHighlightWindow.webContents.on("did-finish-load", () => {
+      if (!targetHighlightWindow || targetHighlightWindow.isDestroyed()) {
+        return;
+      }
+      targetHighlightWindow.setBounds(bounds);
+      targetHighlightWindow.showInactive();
+      sendTargetHighlightPayload(targetHighlightWindow, normalized, bounds);
+    });
+  } else {
+    targetHighlightWindow.setBounds(bounds);
+    targetHighlightWindow.showInactive();
+    sendTargetHighlightPayload(targetHighlightWindow, normalized, bounds);
+  }
+
+  targetHighlightTimer = setTimeout(() => {
+    hideSoloTargetHighlight();
+  }, 1800);
+
+  return { ok: true };
+}
+
+export function hideSoloTargetHighlight(): { ok: boolean } {
+  if (targetHighlightTimer) {
+    clearTimeout(targetHighlightTimer);
+    targetHighlightTimer = null;
+  }
+  if (targetHighlightWindow && !targetHighlightWindow.isDestroyed()) {
+    targetHighlightWindow.hide();
   }
   return { ok: true };
 }

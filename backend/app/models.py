@@ -102,6 +102,29 @@ class SoloStatusPayload(BaseModel):
     }
 
 
+class SoloStepVisualPayload(BaseModel):
+    kind: Literal["point", "scroll", "keyboard", "command", "navigation", "wait", "none"] = "none"
+    x: int | None = None
+    y: int | None = None
+    display_index: int | None = Field(default=None, alias="displayIndex")
+    coordinate_space: Literal["screen", "screenshot", "unknown"] | None = Field(
+        default=None,
+        alias="coordinateSpace",
+    )
+    screenshot_path: str | None = Field(default=None, alias="screenshotPath")
+    screenshot_x: int | None = Field(default=None, alias="screenshotX")
+    screenshot_y: int | None = Field(default=None, alias="screenshotY")
+    screenshot_width: int | None = Field(default=None, alias="screenshotWidth")
+    screenshot_height: int | None = Field(default=None, alias="screenshotHeight")
+    display_text: str | None = Field(default=None, alias="displayText")
+    target_label: str | None = Field(default=None, alias="targetLabel")
+    safe_args_preview: dict[str, Any] | None = Field(default=None, alias="safeArgsPreview")
+
+    model_config = {
+        "populate_by_name": True,
+    }
+
+
 class SoloStepPayload(BaseModel):
     step_index: int = Field(alias="stepIndex")
     action: str
@@ -113,6 +136,7 @@ class SoloStepPayload(BaseModel):
     confidence: float | None = None
     screen_state: str | None = Field(default=None, alias="screenState")
     screenshot_path: str | None = Field(default=None, alias="screenshotPath")
+    visual: SoloStepVisualPayload | None = None
     timestamp: str
 
     model_config = {
@@ -146,6 +170,7 @@ class SoloConfirmationPayload(BaseModel):
     action: str
     action_args: dict[str, Any] = Field(default_factory=dict, alias="actionArgs")
     thought_summary: str = Field(alias="thoughtSummary")
+    visual: SoloStepVisualPayload | None = None
 
     model_config = {
         "populate_by_name": True,

@@ -125,6 +125,9 @@ class SoloExecutor:
     def set_capture_all_displays(self, enabled: bool) -> None:
         self._capture_all_displays = enabled
 
+    def last_capture_region(self) -> dict[str, int] | None:
+        return dict(self._last_capture_region) if self._last_capture_region else None
+
     def _pick_monitor(
         self,
         monitors: list[dict[str, Any]],
@@ -243,6 +246,7 @@ class SoloExecutor:
                 "top": int(screenshot["top"]),
                 "width": int(screenshot["width"]),
                 "height": int(screenshot["height"]),
+                "displayIndex": int(display_index),
             }
             screenshot["displayIndex"] = display_index
             return screenshot

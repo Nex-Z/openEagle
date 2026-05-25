@@ -23,6 +23,9 @@ import {
   hideSoloOverlay,
   setSoloOverlayCollapsed,
   soloOverlayReady,
+  showSoloTargetHighlight,
+  hideSoloTargetHighlight,
+  type TargetHighlightPayload,
   type OverlayPayload,
 } from "./overlay";
 import { emitPrefixedLog } from "./log";
@@ -153,6 +156,14 @@ export function registerIpcHandlers(isDev: boolean) {
 
   ipcMain.handle("solo_overlay_ready", () => {
     return soloOverlayReady();
+  });
+
+  ipcMain.handle("show_solo_target_highlight", (_event, args: { payload?: TargetHighlightPayload }) => {
+    return showSoloTargetHighlight(args?.payload ?? {});
+  });
+
+  ipcMain.handle("hide_solo_target_highlight", () => {
+    return hideSoloTargetHighlight();
   });
 
   ipcMain.handle("notify_solo_result", (_event, args: { payload?: { requestId?: string; state: string; detail?: string } }) => {

@@ -16,7 +16,9 @@ import type {
   AgentExecutionTrace,
   SoloConfirmationPayload,
   SoloPlanStatus,
+  SoloStepPayload,
   SoloStatusPayload,
+  SoloStepVisualPayload,
   ToolConfirmationPayload,
 } from "../../types/protocol";
 import { SoloPlanChecklist } from "./SoloPlanChecklist";
@@ -33,6 +35,7 @@ interface ActivityInspectorProps {
   assets: AssetMessage[];
   soloStatus: SoloStatusPayload;
   soloConfirmation: SoloConfirmationPayload | null;
+  soloStep: SoloStepPayload | null;
   toolConfirmation: ToolConfirmationPayload | null;
   soloTimeline: string[];
   soloLastError: string | null;
@@ -83,12 +86,76 @@ function formatTraceValue(value: unknown) {
   }
 }
 
+function normalizeImagePath(path: string) {
+  return path.replace(/\\/g, "/");
+}
+
+function currentStepText(step: SoloStepPayload | null) {
+  if (!step) {
+    return "";
+  }
+  return (
+    step.agentMessage ||
+    step.expectedOutcome ||
+    step.screenState ||
+    step.visual?.displayText ||
+    step.action
+  ).trim();
+}
+
+function markerForAsset(asset: AssetMessage, step: SoloStepPayload | null) {
+  const visual = step?.visual;
+  const visualPath = visual?.screenshotPath || step?.screenshotPath;
+  if (
+    !visual ||
+    visual.kind !== "point" ||
+    !visualPath ||
+    normalizeImagePath(visualPath) !== normalizeImagePath(asset.imagePath) ||
+    typeof visual.screenshotX !== "number" ||
+    typeof visual.screenshotY !== "number" ||
+    typeof visual.screenshotWidth !== "number" ||
+    typeof visual.screenshotHeight !== "number" ||
+    visual.screenshotWidth <= 0 ||
+    visual.screenshotHeight <= 0
+  ) {
+    return null;
+  }
+
+  const left = Math.min(Math.max((visual.screenshotX / visual.screenshotWidth) * 100, 0), 100);
+  const top = Math.min(Math.max((visual.screenshotY / visual.screenshotHeight) * 100, 0), 100);
+  return {
+    left,
+    top,
+    label: visual.targetLabel || visual.displayText || step?.action || "target",
+  };
+}
+
+function visualKindLabel(visual?: SoloStepVisualPayload) {
+  switch (visual?.kind) {
+    case "point":
+      return "目标位置";
+    case "scroll":
+      return "滚动";
+    case "keyboard":
+      return "键盘输入";
+    case "command":
+      return "工具/命令";
+    case "navigation":
+      return "导航";
+    case "wait":
+      return "等待";
+    default:
+      return "动作";
+  }
+}
+
 export function ActivityInspector(props: ActivityInspectorProps) {
   const {
     traces,
     assets,
     soloStatus,
     soloConfirmation,
+    soloStep,
     toolConfirmation,
     soloTimeline,
     soloLastError,
@@ -106,6 +173,7 @@ export function ActivityInspector(props: ActivityInspectorProps) {
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const attemptedPathsRef = useRef<Set<string>>(new Set());
   const prevAssetsRef = useRef<typeof assets>([]);
+  const stepText = currentStepText(soloStep);
 
   useEffect(() => {
     const imagePaths = Array.from(
@@ -241,6 +309,24 @@ export function ActivityInspector(props: ActivityInspectorProps) {
                   </div>
                 </section>
 
+                {soloStep ? (
+                  <section className="inspector-card current-action-card">
+                    <div className="inspector-card-head">
+                      <div>
+                        <span className="card-kicker">当前动作</span>
+                        <strong>{visualKindLabel(soloStep.visual)}</strong>
+                      </div>
+                      {soloStep.visual?.targetLabel ? (
+                        <span className="current-action-target">{soloStep.visual.targetLabel}</span>
+                      ) : null}
+                    </div>
+                    {stepText ? <p>{stepText}</p> : null}
+                    {soloStep.visual?.safeArgsPreview ? (
+                      <pre>{formatTraceValue(soloStep.visual.safeArgsPreview)}</pre>
+                    ) : null}
+                  </section>
+                ) : null}
+
                 {soloPlan && <SoloPlanChecklist plan={soloPlan} />}
 
                 <section className="inspector-card">
@@ -283,9 +369,13 @@ export function ActivityInspector(props: ActivityInspectorProps) {
                         <strong>{soloConfirmation.action}</strong>
                       </div>
                       <p>{soloConfirmation.reason}</p>
-                      <small>{soloConfirmation.thoughtSummary}</small>
-                      {soloConfirmation.actionArgs ? (
-                        <pre>{formatTraceValue(soloConfirmation.actionArgs)}</pre>
+                      {soloConfirmation.visual?.safeArgsPreview || soloConfirmation.actionArgs ? (
+                        <pre>
+                          {formatTraceValue(
+                            soloConfirmation.visual?.safeArgsPreview ??
+                              soloConfirmation.actionArgs,
+                          )}
+                        </pre>
                       ) : null}
                       <div className="decision-actions">
                         <button className="ghost-button" onClick={onAllowDangerousStep} type="button">
@@ -416,9 +506,21 @@ export function ActivityInspector(props: ActivityInspectorProps) {
                       const nativePath = asset.imagePath.replace(/\//g, "\\");
                       const fileSrc = convertFileSrc(nativePath);
                       const src = dataUrl || fileSrc;
+                      const marker = markerForAsset(asset, soloStep);
                       return (
                         <figure key={asset.id} className="asset-card">
-                          <AssetImage src={src} label={asset.label} onClick={() => src && setPreviewImage(src)} />
+                          <div className="asset-image-wrap">
+                            <AssetImage src={src} label={asset.label} onClick={() => src && setPreviewImage(src)} />
+                            {marker ? (
+                              <span
+                                className="asset-target-marker"
+                                style={{ left: `${marker.left}%`, top: `${marker.top}%` }}
+                                title={marker.label}
+                              >
+                                <span>{marker.label}</span>
+                              </span>
+                            ) : null}
+                          </div>
                           <figcaption>
                             <strong>{asset.label}</strong>
                             <span>{new Date(asset.createdAt).toLocaleTimeString()}</span>

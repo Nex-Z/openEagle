@@ -317,6 +317,22 @@ export interface SoloStatusPayload {
   completedAt?: string;
 }
 
+export interface SoloStepVisualPayload {
+  kind: "point" | "scroll" | "keyboard" | "command" | "navigation" | "wait" | "none";
+  x?: number;
+  y?: number;
+  displayIndex?: number;
+  coordinateSpace?: "screen" | "screenshot" | "unknown";
+  screenshotPath?: string;
+  screenshotX?: number;
+  screenshotY?: number;
+  screenshotWidth?: number;
+  screenshotHeight?: number;
+  displayText?: string;
+  targetLabel?: string;
+  safeArgsPreview?: Record<string, unknown>;
+}
+
 export interface SoloStepPayload {
   stepIndex: number;
   action: string;
@@ -329,6 +345,7 @@ export interface SoloStepPayload {
   findings?: string[];
   confidence?: number;
   screenState?: string;
+  visual?: SoloStepVisualPayload;
 }
 
 export interface SoloConfirmationPayload {
@@ -338,6 +355,7 @@ export interface SoloConfirmationPayload {
   action: string;
   actionArgs?: Record<string, unknown>;
   thoughtSummary: string;
+  visual?: SoloStepVisualPayload;
 }
 
 export interface ToolConfirmationPayload {
