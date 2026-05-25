@@ -58,6 +58,18 @@ function backendPython(): string {
   return path.join(backendRoot(), ".venv", "Scripts", "python.exe");
 }
 
+function packagedSidecarPath(): string {
+  const base = path.join(
+    process.resourcesPath || projectRoot(),
+    "backend",
+    "binaries",
+    "open-eagle-agent"
+  );
+  if (process.platform !== "win32") return base;
+  const exe = `${base}.exe`;
+  return fs.existsSync(exe) ? exe : base;
+}
+
 function cleanupStaleDebugBackends() {
   if (!process.env.NODE_ENV?.includes("dev") && !process.argv.includes("--dev")) return;
   try {
@@ -100,12 +112,7 @@ export function spawnBackend(mainWindow: BrowserWindow | null, isDev: boolean) {
       cwd = backendRoot();
     }
   } else {
-    const sidecarPath = path.join(
-      process.resourcesPath || projectRoot(),
-      "backend",
-      "binaries",
-      "open-eagle-agent"
-    );
+    const sidecarPath = packagedSidecarPath();
     cmd = sidecarPath;
     args = ["--host", "127.0.0.1", "--port", "0"];
     cwd = path.dirname(sidecarPath);

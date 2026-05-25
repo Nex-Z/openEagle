@@ -61,6 +61,14 @@ pnpm electron:dev
 
 That's it. `pnpm electron:dev` is the one-command dev launcher: it compiles the Electron main process, starts the Vite dev server, launches Electron, and then Electron starts the Python backend. Packaged builds use the Python sidecar. Either way, you do not need to start the server manually.
 
+### Package & Release
+
+```bash
+pnpm package:windows
+```
+
+This builds the Python sidecar first, then creates the Windows installer under `release/`. The GitHub Actions workflow `Package Desktop` runs the same checks and packaging flow on `workflow_dispatch`; pushing a `v*` tag also uploads the generated installer to a GitHub Release.
+
 ### What's happening under the hood
 
 ```

@@ -62,6 +62,14 @@ pnpm electron:dev
 
 搞定。`pnpm electron:dev` 是一条命令启动器：它会编译 Electron 主进程、启动 Vite dev server、拉起 Electron，然后由 Electron 自动启动 Python 后端。打包版本会通过 Python sidecar 启动，无需手动启动服务器。
 
+### 打包与发布
+
+```bash
+pnpm package:windows
+```
+
+该命令会先构建 Python sidecar，再在 `release/` 下生成 Windows 安装包。GitHub Actions 里的 `Package Desktop` workflow 支持手动触发同一套检查与打包流程；推送 `v*` tag 时还会把安装包上传到 GitHub Release。
+
 ### 底层流程
 
 ```
