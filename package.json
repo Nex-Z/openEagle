@@ -10,9 +10,15 @@
     "build": "tsc && vite build",
     "preview": "vite preview",
     "electron:dev": "node scripts/electron-dev.cjs",
-    "backend:sidecar": "powershell -NoProfile -ExecutionPolicy Bypass -File backend/scripts/build-sidecar.ps1",
+    "backend:sidecar": "node scripts/build-sidecar.cjs",
     "electron:build": "tsc -p tsconfig.electron.json && node scripts/ensure-cjs-package.cjs && vite build && electron-builder",
-    "package:windows": "pnpm backend:sidecar && pnpm electron:build"
+    "electron:build:win": "tsc -p tsconfig.electron.json && node scripts/ensure-cjs-package.cjs && vite build && electron-builder --win",
+    "electron:build:mac": "tsc -p tsconfig.electron.json && node scripts/ensure-cjs-package.cjs && vite build && electron-builder --mac",
+    "electron:build:linux": "tsc -p tsconfig.electron.json && node scripts/ensure-cjs-package.cjs && vite build && electron-builder --linux",
+    "package:desktop": "pnpm backend:sidecar && pnpm electron:build",
+    "package:windows": "pnpm backend:sidecar && pnpm electron:build:win",
+    "package:mac": "pnpm backend:sidecar && pnpm electron:build:mac",
+    "package:linux": "pnpm backend:sidecar && pnpm electron:build:linux"
   },
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.6",

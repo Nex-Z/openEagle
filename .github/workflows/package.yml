@@ -2,6 +2,15 @@ name: Package Desktop
 
 on:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: "Optional release tag to create/update, for example v0.1.0. Leave empty for artifact-only packaging."
+        required: false
+        type: string
+      release_name:
+        description: "Optional release title. Defaults to release_tag."
+        required: false
+        type: string
   push:
     tags:
       - "v*"
@@ -10,10 +19,23 @@ permissions:
   contents: write
 
 jobs:
-  package-windows:
-    name: Windows package
-    runs-on: windows-latest
-    timeout-minutes: 60
+  package:
+    name: Package ${{ matrix.platform }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 75
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: windows
+            os: windows-latest
+            package_script: package:windows
+          - platform: mac
+            os: macos-latest
+            package_script: package:mac
+          - platform: linux
+            os: ubuntu-latest
+            package_script: package:linux
 
     steps:
       - name: Checkout
@@ -35,6 +57,12 @@ jobs:
         uses: actions/setup-python@v5
         with:
           python-version: "3.12"
+
+      - name: Install Linux packaging dependencies
+        if: matrix.platform == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libarchive-tools rpm
 
       - name: Install uv
         run: python -m pip install uv
@@ -59,26 +87,77 @@ jobs:
       - name: Typecheck Electron
         run: pnpm exec tsc -p tsconfig.electron.json --noEmit
 
-      - name: Build Windows package
-        run: pnpm package:windows
+      - name: Build desktop package
+        run: pnpm ${{ matrix.package_script }}
         env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
 
       - name: Upload package artifact
         uses: actions/upload-artifact@v4
         with:
-          name: openEagle-windows-${{ github.ref_name }}
+          name: openEagle-${{ matrix.platform }}-${{ github.ref_name }}
           path: |
-            release/**/*.exe
-            release/**/*.blockmap
-            release/**/*.yml
+            release/*.exe
+            release/*.blockmap
+            release/*.yml
+            release/*.dmg
+            release/*.zip
+            release/*.AppImage
+            release/*.deb
+            release/*.rpm
+            release/*.tar.gz
           if-no-files-found: error
 
+  publish-release:
+    name: Publish release
+    needs: package
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Download package artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+
+      - name: Resolve release metadata
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${{ inputs.release_tag }}"
+            name="${{ inputs.release_name }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+            name="${GITHUB_REF_NAME}"
+          fi
+          if [[ -z "${name}" ]]; then
+            name="${tag}"
+          fi
+          echo "RELEASE_TAG=${tag}" >> "${GITHUB_ENV}"
+          echo "RELEASE_NAME=${name}" >> "${GITHUB_ENV}"
+
+      - name: Create manual release tag
+        if: github.event_name == 'workflow_dispatch'
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          if git ls-remote --exit-code --tags origin "refs/tags/${RELEASE_TAG}" >/dev/null 2>&1; then
+            echo "Tag ${RELEASE_TAG} already exists."
+          else
+            git tag "${RELEASE_TAG}" "${GITHUB_SHA}"
+            git push origin "refs/tags/${RELEASE_TAG}"
+          fi
+
       - name: Publish GitHub Release
-        if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
-          files: |
-            release/**/*.exe
-            release/**/*.blockmap
-            release/**/*.yml
+          tag_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_NAME }}
+          files: release-assets/*

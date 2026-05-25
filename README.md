@@ -67,7 +67,7 @@ That's it. `pnpm electron:dev` is the one-command dev launcher: it compiles the 
 pnpm package:windows
 ```
 
-This builds the Python sidecar first, then creates the Windows installer under `release/`. The GitHub Actions workflow `Package Desktop` runs the same checks and packaging flow on `workflow_dispatch`; pushing a `v*` tag also uploads the generated installer to a GitHub Release.
+This builds the Python sidecar first, then creates a versioned Windows installer under `release/`, for example `openEagle-0.1.0-win-x64.exe`. The GitHub Actions workflow `Package Desktop` builds Windows, macOS, and Linux artifacts. Manual runs can fill `release_tag` such as `v0.1.0` to create or update a GitHub Release; leaving it empty creates downloadable workflow artifacts only. Pushing a `v*` tag also publishes the generated artifacts to the matching GitHub Release.
 
 ### What's happening under the hood
 

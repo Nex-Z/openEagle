@@ -1,5 +1,6 @@
 appId: com.openeagle.desktop
 productName: openEagle
+artifactName: ${productName}-${version}-${os}-${arch}.${ext}
 directories:
   output: release
   buildResources: build
@@ -19,6 +20,11 @@ extraResources:
 win:
   target: nsis
   icon: build/icon.ico
+mac:
+  target: dmg
+linux:
+  target: AppImage
+  icon: build/icon.png
 nsis:
   oneClick: false
   allowToChangeInstallationDirectory: true

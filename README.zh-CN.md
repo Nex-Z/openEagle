@@ -68,7 +68,7 @@ pnpm electron:dev
 pnpm package:windows
 ```
 
-该命令会先构建 Python sidecar，再在 `release/` 下生成 Windows 安装包。GitHub Actions 里的 `Package Desktop` workflow 支持手动触发同一套检查与打包流程；推送 `v*` tag 时还会把安装包上传到 GitHub Release。
+该命令会先构建 Python sidecar，再在 `release/` 下生成带版本号的 Windows 安装包，例如 `openEagle-0.1.0-win-x64.exe`。GitHub Actions 里的 `Package Desktop` workflow 会构建 Windows、macOS、Linux 三个平台产物。手动触发时填写 `release_tag`（例如 `v0.1.0`）会创建或更新对应 GitHub Release；留空则只生成可下载的 workflow artifacts。推送 `v*` tag 时也会自动把产物上传到对应 Release。
 
 ### 底层流程
 
