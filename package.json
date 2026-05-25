@@ -1,7 +1,7 @@
 {
   "name": "open-eagle",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.1",
   "main": "dist-electron/main.js",
   "type": "module",
   "packageManager": "pnpm@10.7.0",

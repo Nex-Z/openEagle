@@ -3,7 +3,6 @@ from __future__ import annotations
 import asyncio
 import re
 from collections.abc import Awaitable, Callable
-from pathlib import Path
 from typing import Any
 
 from .agent_router import AgentRouter
@@ -13,6 +12,7 @@ from .confirmations import ToolConfirmationStore
 from .langgraph_agent import run_text_model
 from .models import AttachmentRef, StatusPayload, utc_now
 from .memory import MemoryService
+from .paths import resolve_workspace_root
 from .prompts import build_direct_answer_instructions, build_direct_answer_prompt
 from .providers.base import ReplyToolConfirmation, ReplyTrace
 from .solo_worker_adapter import SoloWorkerAdapter
@@ -56,7 +56,7 @@ class AgentRuntime:
     ) -> None:
         self._config_getter = config_getter
         self._confirmation_store = confirmation_store
-        self._attachment_store = attachment_store or AttachmentStore(Path(__file__).resolve().parents[2])
+        self._attachment_store = attachment_store or AttachmentStore(resolve_workspace_root())
         self._confirmed_tool_results = confirmed_tool_results
         self._send_event = send_event
         self._solo_adapter = SoloWorkerAdapter(start_solo, solo_control)

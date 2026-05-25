@@ -20,6 +20,7 @@ from ..langgraph_agent import (
 )
 from ..memory import MemoryService
 from ..models import AttachmentRef
+from ..paths import resolve_workspace_root
 from ..prompts import build_chat_instructions
 from .base import ProviderStreamEvent, ReplyChunk, ReplyToolConfirmation, ReplyTrace
 
@@ -29,7 +30,7 @@ def utc_now() -> str:
 
 
 def workspace_root() -> Path:
-    return Path(__file__).resolve().parents[3]
+    return resolve_workspace_root()
 
 
 def _attachment_prompt(prompt: str, attachments: list[AttachmentRef]) -> str:

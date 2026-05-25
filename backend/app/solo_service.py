@@ -20,6 +20,7 @@ from .prompts import (
     build_solo_repair_prompt,
     solo_decision_instructions,
 )
+from .paths import resolve_workspace_root
 from .safety import assess_solo_action
 from .solo_capabilities import (
     SoloCapabilityRuntime,
@@ -594,7 +595,7 @@ class SoloService:
 
     @staticmethod
     def is_dangerous_action(action: str, action_args: dict[str, Any]) -> tuple[bool, str]:
-        workspace_root = Path(__file__).resolve().parents[2]
+        workspace_root = resolve_workspace_root()
         assessment = assess_solo_action(action, action_args, workspace_root)
         return assessment.level == "confirm", assessment.reason
 

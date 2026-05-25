@@ -12,12 +12,13 @@ from urllib.parse import urlparse
 from uuid import uuid4
 
 from .command_runner import run_workspace_command
+from .paths import resolve_workspace_root
 
 
 class SoloExecutor:
     def __init__(self, default_tools: Any | None = None) -> None:
         self._pyautogui = None
-        self._workspace_root = Path(__file__).resolve().parents[2]
+        self._workspace_root = resolve_workspace_root()
         self._last_capture_region: dict[str, int] | None = None
         self._preferred_display_index = 1
         self._capture_all_displays = False

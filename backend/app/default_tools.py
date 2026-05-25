@@ -18,6 +18,7 @@ from .command_runner import DEFAULT_COMMAND_TAIL, DEFAULT_COMMAND_TIMEOUT_MS
 from .command_runner import execute_workspace_command
 from .config import ToolConfig
 from .confirmations import PendingToolConfirmation, ToolConfirmationStore
+from .paths import resolve_workspace_root
 from .safety import BlockedActionError, assess_tool_action, resolve_workspace_path
 from .scheduler.tools import create_scheduled_task
 
@@ -1242,7 +1243,7 @@ def build_default_tools(
     attachment_store: AttachmentStore | None = None,
     memory_service: Any | None = None,
 ) -> OpenEagleDefaultTools:
-    root = workspace_root or Path(__file__).resolve().parents[2]
+    root = workspace_root or resolve_workspace_root()
     return OpenEagleDefaultTools(
         workspace_root=root,
         confirmation_store=confirmation_store,
@@ -1272,7 +1273,7 @@ def build_configured_tools(
     conversation_id: str | None = None,
     permission_mode: str = "default",
 ) -> tuple[list[BaseTool], dict[str, str]]:
-    root = (workspace_root or Path(__file__).resolve().parents[2]).resolve()
+    root = (workspace_root or resolve_workspace_root()).resolve()
     tools: list[BaseTool] = []
     name_map: dict[str, str] = {}
 

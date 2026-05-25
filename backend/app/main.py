@@ -34,6 +34,7 @@ from .models import (
     ToolConfirmationPayload,
     utc_now,
 )
+from .paths import resolve_workspace_root
 from .runtime_state import RuntimeState
 from .safety import assess_solo_action, is_repairable_solo_block
 from .scheduler import SchedulerService, init_db, set_scheduler_service
@@ -57,7 +58,7 @@ app = FastAPI(title="openEagle Agent Backend")
 config = load_config()
 runtime_state = RuntimeState()
 runtime_state.update_config(config)
-workspace_root = Path(__file__).resolve().parents[2]
+workspace_root = resolve_workspace_root()
 attachment_store = AttachmentStore(workspace_root)
 
 

@@ -35,5 +35,7 @@ run("uv", [
   targetName,
   "--distpath",
   binaryRoot,
-  path.join(backendRoot, "app", "main.py"),
+  "--paths",
+  backendRoot,
+  path.join(backendRoot, "scripts", "sidecar_entry.py"),
 ]);

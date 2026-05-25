@@ -1,10 +1,12 @@
 import { ChildProcess, spawn, execSync } from "node:child_process";
 import path from "node:path";
-import { BrowserWindow } from "electron";
+import { app, BrowserWindow } from "electron";
 import fs from "node:fs";
+import { appendLog, relayBackendOutput } from "./log";
 
 const READY_PATTERN = /\[AGENT_READY\]\s+WS_PORT:\s+(\d+)/;
 const BACKEND_PARENT_PID_ENV = "OPEN_EAGLE_PARENT_PID";
+const BACKEND_WORKSPACE_ROOT_ENV = "OPEN_EAGLE_WORKSPACE_ROOT";
 
 export interface BackendState {
   phase: "starting" | "ready" | "error" | "disconnected";
@@ -116,6 +118,12 @@ export function spawnBackend(mainWindow: BrowserWindow | null, isDev: boolean) {
     cmd = sidecarPath;
     args = ["--host", "127.0.0.1", "--port", "0"];
     cwd = path.dirname(sidecarPath);
+    if (!fs.existsSync(cmd)) {
+      const message = `Packaged backend sidecar was not found: ${cmd}`;
+      appendLog(`[BACKEND] ${message}`);
+      setState({ phase: "error", port: null, message }, mainWindow);
+      return;
+    }
   }
 
   const env = {
@@ -123,9 +131,13 @@ export function spawnBackend(mainWindow: BrowserWindow | null, isDev: boolean) {
     PYTHONUTF8: "1",
     PYTHONUNBUFFERED: "1",
     [BACKEND_PARENT_PID_ENV]: parentPid,
+    ...(isDev ? {} : { [BACKEND_WORKSPACE_ROOT_ENV]: app.getPath("userData") }),
   };
 
   try {
+    appendLog(
+      `[BACKEND] launching ${isDev ? "dev" : "packaged"} backend: ${cmd} ${args.join(" ")} cwd=${cwd}`
+    );
     childProcess = spawn(cmd, args, {
       cwd,
       env,
@@ -174,10 +186,8 @@ export function spawnBackend(mainWindow: BrowserWindow | null, isDev: boolean) {
   const readyRegex = READY_PATTERN;
 
   childProcess.stdout?.on("data", (chunk: Buffer) => {
-    const text = chunk.toString("utf-8").trimEnd();
+    const text = relayBackendOutput("stdout", chunk.toString("utf-8"));
     if (!text) return;
-    console.log(`[BACKEND/stdout] ${text}`);
-    appendLogFile(`[BACKEND/stdout] ${text}`);
 
     const match = readyRegex.exec(text);
     if (match) {
@@ -193,10 +203,8 @@ export function spawnBackend(mainWindow: BrowserWindow | null, isDev: boolean) {
   });
 
   childProcess.stderr?.on("data", (chunk: Buffer) => {
-    const text = chunk.toString("utf-8").trimEnd();
+    const text = relayBackendOutput("stderr", chunk.toString("utf-8"));
     if (!text) return;
-    console.error(`[BACKEND/stderr] ${text}`);
-    appendLogFile(`[BACKEND/stderr] ${text}`);
 
     if (currentState.phase !== "ready") {
       setState(
@@ -219,27 +227,5 @@ export function killBackend() {
       // process may already be dead
     }
     childProcess = null;
-  }
-}
-
-// Simple log file appender (mirrors Rust append_app_log)
-import { appendFileSync, mkdirSync } from "node:fs";
-
-let logPath: string | null = null;
-
-export function initLogPath() {
-  const dir = path.join(projectRoot(), ".open-eagle", "logs");
-  mkdirSync(dir, { recursive: true });
-  const date = new Date().toISOString().slice(0, 10);
-  logPath = path.join(dir, `openEagle-${date}.log`);
-  console.log(`[APP] log file: ${logPath}`);
-}
-
-function appendLogFile(line: string) {
-  if (!logPath) return;
-  try {
-    appendFileSync(logPath, `${new Date().toISOString()} ${line}\n`);
-  } catch {
-    // best-effort
   }
 }
