@@ -10,4 +10,4 @@ def resolve_workspace_root() -> Path:
     configured = os.environ.get(OPEN_EAGLE_WORKSPACE_ROOT_ENV)
     if configured:
         return Path(configured).expanduser().resolve()
-    return Path(__file__).resolve().parents[2]
+    return Path.home()
