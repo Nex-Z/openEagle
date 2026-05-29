@@ -193,6 +193,13 @@ export const defaultSettings: AppSettings = {
   skills: [],
 };
 
+function settingsForFilePersistence(
+  settings: AppSettings,
+): Omit<AppSettings, "mcp" | "skills"> {
+  const { mcp: _mcp, skills: _skills, ...rest } = settings;
+  return rest;
+}
+
 export type PersistedConversation = {
   summary: ConversationSummary;
   messages: ChatMessage[];
@@ -318,7 +325,9 @@ export function saveSettings(settings: AppSettings) {
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   // Also persist to Electron file if available
   if (isElectronRuntime()) {
-    void invoke("save_app_settings", { settings }).catch(() => {});
+    void invoke("save_app_settings", {
+      settings: settingsForFilePersistence(settings),
+    }).catch(() => {});
   }
 }
 

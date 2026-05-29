@@ -217,8 +217,10 @@ openEagle 支持灵活的模型路由——main agent 文本对话和 Vision-Lan
 | `context.aiSummaryEnabled`                            | 是否使用文本模型摘要中段上下文                    |
 | `context.snapshotOnCompaction`                        | 压缩前是否写入长期记忆快照                        |
 | `tools`                                               | 自定义命令工具（[详见下方](#tool--自定义命令工具)） |
-| `mcp`                                                 | MCP 服务器连接（[详见下方](#mcp--连接外部服务)）    |
-| `skills`                                              | 自定义 Skill 行为指令（[详见下方](#skill--注入私域经验)） |
+| `mcp`                                                 | MCP 服务器连接，保存于 `.open-eagle/mcp.json`（[详见下方](#mcp--连接外部服务)） |
+| `skills`                                              | 自定义 Skill 行为指令，保存于 `.open-eagle/skills/`（[详见下方](#skill--注入私域经验)） |
+
+模型、IM、上下文和界面偏好仍保存在 `.open-eagle/settings.json`。MCP 与 Skill 定义改为文件态存储，方便用户审阅、复制到其他机器，或单独纳入版本管理。旧版 `settings.json` 中已有的 `mcp` / `skills` 数组会在启动时自动迁移为文件。
 
 ## 工具、MCP 与 Skill
 
@@ -255,6 +257,26 @@ openEagle 支持 [Model Context Protocol (MCP)](https://modelcontextprotocol.io/
 配置示例（stdio）：`id: "my-mcp"`, `name: "我的 MCP 服务"`, `transport: "stdio"`, `endpoint: "npx -y @some/mcp-server"`
 
 MCP 工具在桌面执行和对话中均可使用。默认权限模式下，MCP 调用需要用户确认。
+
+MCP 定义会持久化到 `.open-eagle/mcp.json`：
+
+```json
+{
+  "version": 1,
+  "servers": [
+    {
+      "id": "my-mcp",
+      "name": "我的 MCP 服务",
+      "transport": "stdio",
+      "endpoint": "npx -y @some/mcp-server",
+      "description": "提供项目专用工具。",
+      "enabled": true
+    }
+  ]
+}
+```
+
+openEagle 也可以读取常见的 Claude 风格 `mcpServers` JSON，并规范化为应用内的 MCP 列表。
 
 ### Skill — 注入私域经验
 
@@ -296,6 +318,18 @@ prompt: |
 - **手动指定**：在对话中输入 `/skill <名称>` 显式选择某个 Skill 用于当前轮次
 
 > Skill 的本质是**经验的结构化传递**。你不需要写代码，只需要把"正确做法"写清楚，Agent 就会照做。这比让模型自己猜或者搜索通用方案可靠得多。
+
+Skill 会以可迁移的目录形式保存：
+
+```
+.open-eagle/
+  skills/
+    project-deploy/
+      skill.json
+      SKILL.md
+```
+
+`skill.json` 保存 `id`、`name`、`description`、`enabled` 等元数据；`SKILL.md` 保存完整行为指令，因此其他文件态 agent 的 Skill 可以较少修改地复制进 openEagle。如果 `SKILL.md` 带有包含 `name` 或 `description` 的 front matter，而 `skill.json` 不存在，openEagle 会读取这些信息。用户在设置中删除 Skill 时，目录会归档到 `.open-eagle/deleted-skills/`，不会直接永久删除。
 
 ### 三者的关系
 

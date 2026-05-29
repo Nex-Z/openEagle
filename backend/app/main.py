@@ -15,6 +15,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 
 from .agent_runtime import AgentRuntime
 from .attachments import AttachmentStore
+from .capability_files import load_file_backed_settings, save_file_backed_settings
 from .config import AppConfig, load_config
 from .confirmations import ToolConfirmationStore
 from .default_tools import build_default_tools, execute_confirmed_tool
@@ -70,18 +71,27 @@ def settings_file_path() -> Path:
 
 def load_persisted_settings() -> dict[str, Any] | None:
     path = settings_file_path()
+    settings: dict[str, Any] | None = None
     if not path.exists():
-        return None
+        return load_file_backed_settings(workspace_root, None)
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        loaded = json.loads(path.read_text(encoding="utf-8"))
+        settings = loaded if isinstance(loaded, dict) else None
     except Exception:
-        return None
+        settings = None
+    return load_file_backed_settings(workspace_root, settings)
 
 
 def save_persisted_settings(settings: dict[str, Any]) -> None:
     path = settings_file_path()
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(settings, ensure_ascii=False, indent=2), encoding="utf-8")
+    settings_without_capabilities = save_file_backed_settings(workspace_root, settings)
+    path.write_text(
+        json.dumps(settings_without_capabilities, ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
+
+
 memory_service = MemoryService(config_getter=runtime_state.get_config)
 confirmed_tool_results: dict[str, str] = {}
 scheduler_service: SchedulerService | None = None

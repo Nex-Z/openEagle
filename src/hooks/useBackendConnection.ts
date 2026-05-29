@@ -397,6 +397,7 @@ export function useBackendConnection(
   const activePortRef = useRef<number | null>(null);
   const onMessagesChangeRef = useRef(onMessagesChange);
   const messagesRef = useRef(messages);
+  const settingsRef = useRef(settings);
   const syncedConversationIdRef = useRef(conversationId);
   const onConversationPatchRef = useRef(onConversationPatch);
   const skipNextMessageSyncRef = useRef(true);
@@ -413,6 +414,7 @@ export function useBackendConnection(
   soloPlanRef.current = soloPlan;
   const soloConfirmationRef = useRef(soloConfirmation);
   soloConfirmationRef.current = soloConfirmation;
+  settingsRef.current = settings;
   messagesRef.current = messages;
 
   const syncSettings = () => {
@@ -425,7 +427,7 @@ export function useBackendConnection(
       type: "client:update_settings",
       requestId: createId("settings"),
       conversationId,
-      payload: { settings },
+      payload: { settings: settingsRef.current },
       timestamp: new Date().toISOString(),
     };
     socket.send(JSON.stringify(settingsEnvelope));

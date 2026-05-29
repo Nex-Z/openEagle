@@ -217,8 +217,10 @@ Key settings (accessible from the in-app Settings panel):
 | `context.aiSummaryEnabled` | Enables AI summaries for middle conversation context |
 | `context.snapshotOnCompaction` | Writes a memory snapshot before compaction |
 | `tools` | Custom command tools ([see below](#tool--custom-command-tools)) |
-| `mcp` | MCP server connections ([see below](#mcp--connect-external-services)) |
-| `skills` | Custom skill directives ([see below](#skill--inject-domain-specific-knowledge)) |
+| `mcp` | MCP server connections, stored in `.open-eagle/mcp.json` ([see below](#mcp--connect-external-services)) |
+| `skills` | Custom skill directives, stored under `.open-eagle/skills/` ([see below](#skill--inject-domain-specific-knowledge)) |
+
+Model, IM, context, and UI preferences are saved in `.open-eagle/settings.json`. MCP and Skill definitions are file-backed so they can be reviewed, copied between machines, or versioned separately from runtime preferences. Older `settings.json` files that still contain `mcp` or `skills` arrays are migrated automatically on startup.
 
 ## Tools, MCP & Skills
 
@@ -255,6 +257,26 @@ Configure in **Settings -> MCP** with three transport types:
 Example (stdio): `id: "my-mcp"`, `name: "My MCP Server"`, `transport: "stdio"`, `endpoint: "npx -y @some/mcp-server"`
 
 MCP tools are available in both desktop execution and chat. In default permission mode, MCP calls require user confirmation.
+
+MCP definitions are persisted in `.open-eagle/mcp.json`:
+
+```json
+{
+  "version": 1,
+  "servers": [
+    {
+      "id": "my-mcp",
+      "name": "My MCP Server",
+      "transport": "stdio",
+      "endpoint": "npx -y @some/mcp-server",
+      "description": "Provides project-specific tools.",
+      "enabled": true
+    }
+  ]
+}
+```
+
+openEagle can also read common Claude-style `mcpServers` JSON and normalizes it into the same in-app MCP list.
 
 ### Skill — Inject Domain-Specific Knowledge
 
@@ -296,6 +318,18 @@ prompt: |
 - **Manual selection**: Type `/skill <name>` in chat to explicitly apply a skill for the current turn.
 
 > Skills are **structured transfer of experience**. You don't write code — you just write down "the right way to do it," and the agent follows. This is far more reliable than letting the model guess or search for generic solutions.
+
+Skills are persisted as portable folders:
+
+```
+.open-eagle/
+  skills/
+    project-deploy/
+      skill.json
+      SKILL.md
+```
+
+`skill.json` stores metadata such as `id`, `name`, `description`, and `enabled`. `SKILL.md` stores the full directive, so skills from other file-based agents can be copied into openEagle with minimal editing. If `SKILL.md` contains front matter with `name` or `description`, openEagle uses it when `skill.json` is absent. Removing a skill from Settings archives its folder under `.open-eagle/deleted-skills/` instead of deleting it permanently.
 
 ### How They Fit Together
 
