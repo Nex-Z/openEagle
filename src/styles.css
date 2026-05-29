@@ -3813,88 +3813,111 @@ body,
 }
 
 .settings-drawer-nav {
-  gap: 14px;
-  padding: 16px;
+  gap: 16px;
+  padding: 18px 14px;
   border-right: 1px solid rgba(24, 42, 37, 0.06);
   background: rgba(255, 255, 255, 0.28);
 }
 
 .settings-drawer-brand {
   gap: 10px;
+  padding-bottom: 4px;
 }
 
 .settings-nav-list {
-  gap: 5px;
+  gap: 3px;
 }
 
 .settings-nav-item {
-  padding: 10px;
-  border-radius: 12px;
-  color: rgba(57, 71, 66, 0.84);
+  padding: 10px 12px;
+  border-radius: 10px;
+  color: rgba(57, 71, 66, 0.78);
+  transition: background 0.15s, color 0.15s;
 }
 
 .settings-nav-item:hover {
-  background: rgba(255, 255, 255, 0.46);
+  background: rgba(255, 255, 255, 0.4);
+  color: rgba(57, 71, 66, 0.92);
 }
 
 .settings-nav-item.is-active {
   border-color: rgba(255, 255, 255, 0.72);
   background: rgba(255, 255, 255, 0.72);
+  color: var(--text-primary);
   box-shadow:
-    0 12px 26px rgba(35, 52, 47, 0.06),
+    0 8px 20px rgba(35, 52, 47, 0.06),
     0 1px 0 rgba(255, 255, 255, 0.88) inset;
 }
 
 .settings-nav-item strong {
-  color: var(--text-primary);
+  color: inherit;
   font-size: 13px;
+  font-weight: 560;
+  display: block;
 }
 
 .settings-nav-item span {
   color: var(--text-caption);
   font-size: 11px;
+  display: block;
+  margin-top: 1px;
 }
 
 .settings-drawer-content {
-  gap: 13px;
-  padding: 17px 18px;
+  gap: 16px;
+  padding: 20px 22px;
 }
 
 .settings-drawer-header {
-  min-height: 38px;
+  min-height: 42px;
+  padding-bottom: 4px;
 }
 
 .settings-drawer-header h2 {
   color: var(--text-primary);
-  font-size: 18px;
-  font-weight: 680;
+  font-size: 20px;
+  font-weight: 700;
+  letter-spacing: -0.01em;
 }
 
 .settings-drawer-header p {
   color: var(--text-caption);
   font-size: 13px;
   font-weight: 440;
-  letter-spacing: 0.01em;
+  margin-top: 2px;
 }
 
-.settings-panel {
-  gap: 12px;
-  padding: 13px;
-  border: 1px solid rgba(24, 42, 37, 0.06);
-  border-radius: 15px;
-  background: rgba(255, 255, 255, 0.5);
-  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.78) inset;
+.settings-stack {
+  gap: 14px;
 }
 
 .settings-stack.two-column {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.settings-panel {
+  gap: 14px;
+  padding: 16px;
+  border: 1px solid rgba(24, 42, 37, 0.06);
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.55);
+  box-shadow:
+    0 2px 8px rgba(35, 52, 47, 0.04),
+    0 1px 0 rgba(255, 255, 255, 0.8) inset;
+}
+
+.settings-panel-head {
+  padding-bottom: 2px;
 }
 
 .settings-panel-head strong {
   color: var(--text-primary);
   font-size: 14px;
-  font-weight: 650;
+  font-weight: 620;
+  display: block;
+  margin-top: 2px;
 }
 
 .settings-panel-head span,
@@ -3908,13 +3931,22 @@ body,
 }
 
 .config-row {
-  padding: 11px;
-  border-radius: 13px;
+  padding: 12px;
+  border-radius: 12px;
+  border: 1px solid rgba(24, 42, 37, 0.05);
+  background: rgba(255, 255, 255, 0.4);
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.config-row:hover {
+  background: rgba(255, 255, 255, 0.65);
+  border-color: rgba(24, 42, 37, 0.08);
 }
 
 .config-row-copy strong {
   color: var(--text-primary);
   font-size: 13px;
+  font-weight: 580;
 }
 
 .config-row-body {
@@ -3923,15 +3955,17 @@ body,
 
 .form-field {
   font-size: 12px;
-  font-weight: 560;
+  font-weight: 520;
+  gap: 6px;
 }
 
 .form-field input,
 .form-field select,
 .form-textarea {
-  min-height: 38px;
-  border-radius: 12px;
+  min-height: 36px;
+  border-radius: 10px;
   color: var(--text-primary);
+  font-size: 13px;
 }
 
 .form-textarea {
@@ -3950,6 +3984,50 @@ body,
   box-shadow:
     0 8px 18px rgba(34, 50, 46, 0.05),
     0 1px 0 rgba(255, 255, 255, 0.86) inset;
+}
+
+.settings-panel-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-panel-head > div {
+  flex: 1;
+  min-width: 0;
+}
+
+.settings-panel-head > svg,
+.settings-panel-head > .lucide {
+  flex: 0 0 auto;
+  color: rgba(87, 99, 95, 0.4);
+  margin-top: 2px;
+}
+
+.form-switch {
+  min-height: 36px;
+  padding: 0 2px;
+  font-size: 13px;
+}
+
+.form-switch span {
+  color: var(--text-primary);
+  font-weight: 480;
+}
+
+.form-hint {
+  font-size: 12px;
+  color: var(--text-caption);
+  line-height: 1.5;
+}
+
+.ghost-button {
+  min-height: 30px;
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 520;
+  border-radius: 8px;
 }
 
 .display-preview,
