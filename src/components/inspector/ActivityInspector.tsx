@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "../../lib/electron-bridge";
 import {
   AlertTriangle,
-  CheckCircle2,
   ChevronLeft,
   ChevronRight,
   Image,
@@ -11,7 +10,6 @@ import {
   Wrench,
   X,
 } from "lucide-react";
-import { executionStateLabel } from "../../lib/runLabels";
 import type {
   AgentExecutionTrace,
   SoloConfirmationPayload,
@@ -84,6 +82,52 @@ function formatTraceValue(value: unknown) {
   } catch {
     return String(value);
   }
+}
+
+function formatTraceDuration(startedAt: string, completedAt?: string) {
+  if (!completedAt) {
+    return "进行中";
+  }
+
+  const duration = new Date(completedAt).getTime() - new Date(startedAt).getTime();
+  if (Number.isNaN(duration) || duration < 0) {
+    return "刚刚";
+  }
+  if (duration < 1000) {
+    return `${duration}ms`;
+  }
+  return `${(duration / 1000).toFixed(duration >= 10_000 ? 0 : 1)}s`;
+}
+
+function traceDisplayName(trace: AgentExecutionTrace) {
+  const command = trace.params?.command;
+  if (typeof command === "string" && command.trim()) {
+    return command.trim();
+  }
+  return trace.name;
+}
+
+function traceStatusLabel(trace: AgentExecutionTrace) {
+  switch (trace.status) {
+    case "completed":
+      return "完成";
+    case "started":
+      return "运行中";
+    case "error":
+      return "失败";
+    default:
+      return trace.status;
+  }
+}
+
+function tracePlanStatus(trace: AgentExecutionTrace) {
+  if (trace.status === "started") {
+    return "in_progress";
+  }
+  if (trace.status === "error") {
+    return "failed";
+  }
+  return "completed";
 }
 
 function normalizeImagePath(path: string) {
@@ -174,6 +218,11 @@ export function ActivityInspector(props: ActivityInspectorProps) {
   const attemptedPathsRef = useRef<Set<string>>(new Set());
   const prevAssetsRef = useRef<typeof assets>([]);
   const stepText = currentStepText(soloStep);
+  const recentTraces = useMemo(() => traces.slice(0, 6), [traces]);
+  const recentToolResults = useMemo(
+    () => traces.filter((trace) => trace.result || trace.params).slice(0, 3),
+    [traces],
+  );
 
   useEffect(() => {
     const imagePaths = Array.from(
@@ -249,8 +298,11 @@ export function ActivityInspector(props: ActivityInspectorProps) {
     }
   }, [soloStatus.state]);
 
+  const hasDecisionSurface = Boolean(soloConfirmation || toolConfirmation || soloLastError);
   const confirmationCount =
-    Number(Boolean(soloConfirmation)) + Number(Boolean(toolConfirmation));
+    Number(Boolean(soloConfirmation)) +
+    Number(Boolean(toolConfirmation)) +
+    Number(Boolean(soloLastError));
 
   const inspector = (
     <aside
@@ -258,8 +310,8 @@ export function ActivityInspector(props: ActivityInspectorProps) {
     >
       <header className="inspector-header">
         <div className="inspector-header-copy">
-          <p>活动面板</p>
-          {!inspectorCollapsed ? <strong>执行侧栏</strong> : null}
+          <p>活动</p>
+          {!inspectorCollapsed ? <strong>执行轨迹</strong> : null}
         </div>
         <button className="icon-button" onClick={onToggleCollapsed} type="button">
           {inspectorCollapsed ? <ChevronLeft size={16} /> : <ChevronRight size={16} />}
@@ -300,14 +352,36 @@ export function ActivityInspector(props: ActivityInspectorProps) {
           <div className="inspector-scroll">
             {activeTab === "activity" ? (
               <>
-                <section className="inspector-card">
-                  <div className="inspector-card-head">
-                    <div>
-                      <span className="card-kicker">当前运行状态</span>
-                      <strong>{executionStateLabel(soloStatus.state)}</strong>
+                {soloPlan && <SoloPlanChecklist plan={soloPlan} />}
+
+                {!soloPlan && recentTraces.length > 0 ? (
+                  <section className="inspector-card solo-plan-card derived-plan-card">
+                    <div className="inspector-card-head">
+                      <div>
+                        <span className="card-kicker">执行计划</span>
+                        <strong>
+                          {recentTraces.filter((trace) => trace.status === "completed").length}/
+                          {recentTraces.length} 步
+                        </strong>
+                      </div>
                     </div>
-                  </div>
-                </section>
+                    <div className="plan-checklist">
+                      {recentTraces
+                        .slice()
+                        .reverse()
+                        .map((trace) => (
+                          <div
+                            key={trace.id}
+                            className={`plan-item plan-item-${tracePlanStatus(trace)} derived-plan-item`}
+                          >
+                            <span className={`trace-kind-dot trace-kind-${trace.kind}`} />
+                            <span className="plan-item-desc">{traceDisplayName(trace)}</span>
+                            <span className="plan-item-action">{trace.kind.toUpperCase()}</span>
+                          </div>
+                        ))}
+                    </div>
+                  </section>
+                ) : null}
 
                 {soloStep ? (
                   <section className="inspector-card current-action-card">
@@ -327,110 +401,177 @@ export function ActivityInspector(props: ActivityInspectorProps) {
                   </section>
                 ) : null}
 
-                {soloPlan && <SoloPlanChecklist plan={soloPlan} />}
-
-                <section className="inspector-card">
-                  <div className="inspector-card-head">
-                    <div>
-                      <span className="card-kicker">执行时间线</span>
-                      <strong>最近事件</strong>
+                {recentTraces.length > 0 ? (
+                  <section className="inspector-card inspector-compact-section">
+                    <div className="inspector-card-head">
+                      <div>
+                        <span className="card-kicker">执行轨迹</span>
+                        <strong>最近调用</strong>
+                      </div>
+                      <ListTree size={16} />
                     </div>
-                    <ListTree size={16} />
-                  </div>
-                  <div className="timeline-list">
-                    {soloTimeline.length > 0 ? (
-                      soloTimeline
+                    <div className="inspector-trace-compact-list">
+                      {recentTraces.map((trace) => (
+                        <button
+                          key={trace.id}
+                          className={`inspector-trace-compact trace-status-${trace.status}`}
+                          onClick={() => {
+                            setActiveTab("traces");
+                            setExpandedTraceId(trace.id);
+                          }}
+                          type="button"
+                        >
+                          <span className={`trace-kind-dot trace-kind-${trace.kind}`} />
+                          <span className="inspector-trace-name">{traceDisplayName(trace)}</span>
+                          <span className="inspector-trace-meta">
+                            {traceStatusLabel(trace)} · {formatTraceDuration(trace.startedAt, trace.completedAt)}
+                          </span>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+
+                {recentToolResults.length > 0 ? (
+                  <section className="inspector-card inspector-compact-section">
+                    <div className="inspector-card-head">
+                      <div>
+                        <span className="card-kicker">工具结果</span>
+                        <strong>最近输出</strong>
+                      </div>
+                      <Wrench size={16} />
+                    </div>
+                    <div className="inspector-tool-result-list">
+                      {recentToolResults.map((trace) => (
+                        <button
+                          key={trace.id}
+                          className="inspector-tool-result"
+                          onClick={() => {
+                            setActiveTab("traces");
+                            setExpandedTraceId(trace.id);
+                          }}
+                          type="button"
+                        >
+                          <span>{trace.name}</span>
+                          <code>
+                            {formatTraceValue(trace.result ?? trace.params).slice(0, 120)}
+                          </code>
+                        </button>
+                      ))}
+                    </div>
+                  </section>
+                ) : null}
+
+                {soloTimeline.length > 0 ? (
+                  <section className="inspector-card inspector-compact-section">
+                    <div className="inspector-card-head">
+                      <div>
+                        <span className="card-kicker">事件</span>
+                        <strong>最近动态</strong>
+                      </div>
+                      <ListTree size={16} />
+                    </div>
+                    <div className="timeline-list">
+                      {soloTimeline
                         .slice()
                         .reverse()
+                        .slice(0, 6)
                         .map((line) => (
                           <div key={line} className="timeline-item">
                             {line}
                           </div>
-                        ))
-                    ) : (
-                      <div className="timeline-empty">暂时没有时间线事件。</div>
-                    )}
+                        ))}
+                    </div>
+                  </section>
+                ) : null}
+
+                {hasDecisionSurface ? (
+                  <section className="inspector-card">
+                    <div className="inspector-card-head">
+                      <div>
+                        <span className="card-kicker">确认与异常</span>
+                        <strong>需要你的决定</strong>
+                      </div>
+                      <ShieldAlert size={16} />
+                    </div>
+
+                    {soloConfirmation ? (
+                      <div className="decision-card warning">
+                        <div className="decision-card-head">
+                          <ShieldAlert size={16} />
+                          <strong>{soloConfirmation.action}</strong>
+                        </div>
+                        <p>{soloConfirmation.reason}</p>
+                        {soloConfirmation.visual?.safeArgsPreview || soloConfirmation.actionArgs ? (
+                          <pre>
+                            {formatTraceValue(
+                              soloConfirmation.visual?.safeArgsPreview ??
+                                soloConfirmation.actionArgs,
+                            )}
+                          </pre>
+                        ) : null}
+                        <div className="decision-actions">
+                          <button className="ghost-button" onClick={onAllowDangerousStep} type="button">
+                            允许
+                          </button>
+                          <button
+                            className="ghost-button danger"
+                            onClick={onRejectDangerousStep}
+                            type="button"
+                          >
+                            拒绝
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {toolConfirmation ? (
+                      <div className="decision-card danger">
+                        <div className="decision-card-head">
+                          <Wrench size={16} />
+                          <strong>{toolConfirmation.name}</strong>
+                        </div>
+                        <p>{toolConfirmation.reason}</p>
+                        {toolConfirmation.params ? (
+                          <pre>{formatTraceValue(toolConfirmation.params)}</pre>
+                        ) : null}
+                        <div className="decision-actions">
+                          <button className="ghost-button" onClick={onAllowToolConfirmation} type="button">
+                            允许
+                          </button>
+                          <button
+                            className="ghost-button danger"
+                            onClick={onRejectToolConfirmation}
+                            type="button"
+                          >
+                            拒绝
+                          </button>
+                        </div>
+                      </div>
+                    ) : null}
+
+                    {soloLastError ? (
+                      <div className="decision-card danger subtle">
+                        <div className="decision-card-head">
+                          <AlertTriangle size={16} />
+                          <strong>最近异常</strong>
+                        </div>
+                        <p>{soloLastError}</p>
+                      </div>
+                    ) : null}
+                  </section>
+                ) : null}
+
+                {!soloPlan &&
+                !soloStep &&
+                recentTraces.length === 0 &&
+                recentToolResults.length === 0 &&
+                soloTimeline.length === 0 &&
+                !hasDecisionSurface ? (
+                  <div className="inspector-quiet-state">
+                    <span>执行开始后，这里会沉淀计划、调用和结果。</span>
                   </div>
-                </section>
-
-                <section className="inspector-card">
-                  <div className="inspector-card-head">
-                    <div>
-                      <span className="card-kicker">确认与异常</span>
-                      <strong>需要你的决定</strong>
-                    </div>
-                    {confirmationCount > 0 ? <ShieldAlert size={16} /> : <CheckCircle2 size={16} />}
-                  </div>
-
-                  {soloConfirmation ? (
-                    <div className="decision-card warning">
-                      <div className="decision-card-head">
-                        <ShieldAlert size={16} />
-                        <strong>{soloConfirmation.action}</strong>
-                      </div>
-                      <p>{soloConfirmation.reason}</p>
-                      {soloConfirmation.visual?.safeArgsPreview || soloConfirmation.actionArgs ? (
-                        <pre>
-                          {formatTraceValue(
-                            soloConfirmation.visual?.safeArgsPreview ??
-                              soloConfirmation.actionArgs,
-                          )}
-                        </pre>
-                      ) : null}
-                      <div className="decision-actions">
-                        <button className="ghost-button" onClick={onAllowDangerousStep} type="button">
-                          允许
-                        </button>
-                        <button
-                          className="ghost-button danger"
-                          onClick={onRejectDangerousStep}
-                          type="button"
-                        >
-                          拒绝
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {toolConfirmation ? (
-                    <div className="decision-card danger">
-                      <div className="decision-card-head">
-                        <Wrench size={16} />
-                        <strong>{toolConfirmation.name}</strong>
-                      </div>
-                      <p>{toolConfirmation.reason}</p>
-                      {toolConfirmation.params ? (
-                        <pre>{formatTraceValue(toolConfirmation.params)}</pre>
-                      ) : null}
-                      <div className="decision-actions">
-                        <button className="ghost-button" onClick={onAllowToolConfirmation} type="button">
-                          允许
-                        </button>
-                        <button
-                          className="ghost-button danger"
-                          onClick={onRejectToolConfirmation}
-                          type="button"
-                        >
-                          拒绝
-                        </button>
-                      </div>
-                    </div>
-                  ) : null}
-
-                  {!soloConfirmation && !toolConfirmation ? (
-                    <div className="decision-empty">当前没有待确认动作。</div>
-                  ) : null}
-
-                  {soloLastError ? (
-                    <div className="decision-card danger subtle">
-                      <div className="decision-card-head">
-                        <AlertTriangle size={16} />
-                        <strong>最近异常</strong>
-                      </div>
-                      <p>{soloLastError}</p>
-                    </div>
-                  ) : null}
-                </section>
+                ) : null}
               </>
             ) : null}
 

@@ -138,6 +138,22 @@ export default function App() {
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
   const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
+  const [sidebarWidth, setSidebarWidth] = useState(() => {
+    const stored = localStorage.getItem("open-eagle/sidebar-width");
+    return stored ? Math.max(180, Math.min(400, Number(stored) || 248)) : 248;
+  });
+  const [inspectorWidth, setInspectorWidth] = useState(() => {
+    const stored = localStorage.getItem("open-eagle/inspector-width");
+    return stored ? Math.max(240, Math.min(500, Number(stored) || 318)) : 318;
+  });
+  const handleSidebarWidthChange = useCallback((width: number) => {
+    setSidebarWidth(width);
+    localStorage.setItem("open-eagle/sidebar-width", String(width));
+  }, []);
+  const handleInspectorWidthChange = useCallback((width: number) => {
+    setInspectorWidth(width);
+    localStorage.setItem("open-eagle/inspector-width", String(width));
+  }, []);
   const saveQueueRef = useRef(Promise.resolve());
   const indexSaveTimerRef = useRef<number | null>(null);
   const conversationSaveTimerRef = useRef<number | null>(null);
@@ -561,6 +577,10 @@ export default function App() {
     <>
       <AppShell
         inspectorCollapsed={inspectorCollapsed}
+        sidebarWidth={sidebarWidth}
+        inspectorWidth={inspectorWidth}
+        onSidebarWidthChange={handleSidebarWidthChange}
+        onInspectorWidthChange={handleInspectorWidthChange}
         inspectorPanel={
           <ActivityInspector
             assets={assets}

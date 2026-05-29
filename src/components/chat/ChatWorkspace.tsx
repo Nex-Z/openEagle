@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { convertFileSrc } from "../../lib/electron-bridge";
 import {
   ChevronDown,
@@ -379,65 +379,241 @@ function TraceGroup(props: {
   onToggleTrace: (traceKey: string) => void;
 }) {
   const { message, group, expandedTraceIds, onToggleTrace } = props;
-  const traceKey = `${message.id}:${group.id}`;
+  const [groupCollapsed, setGroupCollapsed] = useState(group.traces.length > 3);
+  const hasError = group.traces.some((t) => t.status === "error");
+  const isRunning = group.traces.some((t) => t.status === "started");
+
+  if (group.traces.length > 1) {
+    return (
+      <div className="trace-group-wrapper">
+        <div
+          className={`trace-group-header ${hasError ? "has-error" : ""} ${isRunning ? "is-running" : ""}`}
+          onClick={() => setGroupCollapsed((c) => !c)}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              setGroupCollapsed((c) => !c);
+            }
+          }}
+          role="button"
+          tabIndex={0}
+        >
+          <span className="trace-group-label">{group.traces.length} 个工具调用</span>
+          <ChevronDown
+            size={13}
+            className="trace-group-chevron"
+            style={{ transform: groupCollapsed ? "none" : "rotate(180deg)" }}
+          />
+        </div>
+        {!groupCollapsed ? (
+          <div className="trace-timeline">
+            {group.traces.map((trace) => {
+              const traceKey = `${message.id}:${trace.id}`;
+              const isExpanded = expandedTraceIds.has(traceKey);
+              const statusClass =
+                trace.status === "completed"
+                  ? "is-completed"
+                  : trace.status === "error"
+                    ? "has-error"
+                    : trace.status === "started"
+                      ? "is-running"
+                      : "";
+
+              return (
+                <div
+                  key={trace.id}
+                  className={`trace-step ${statusClass}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleTrace(traceKey);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onToggleTrace(traceKey);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                >
+                  <div className="trace-step-header">
+                    <span className="trace-step-title">{compactTraceTitle(trace)}</span>
+                    <small className="trace-step-duration">
+                      {formatTraceDuration(trace.startedAt, trace.completedAt)}
+                    </small>
+                    <ChevronDown
+                      size={12}
+                      className="trace-step-chevron"
+                      style={{ transform: isExpanded ? "rotate(180deg)" : "none" }}
+                    />
+                  </div>
+                  {isExpanded && (trace.result || trace.params) ? (
+                    <div className="trace-step-detail">
+                      <div className="trace-step-detail-head">
+                        <span>{trace.name}</span>
+                        <span>{trace.status === "completed" ? "成功" : trace.status}</span>
+                      </div>
+                      {trace.result ? <pre>{formatTraceValue(trace.result)}</pre> : null}
+                      {!trace.result && trace.params ? <pre>{formatTraceValue(trace.params)}</pre> : null}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            })}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  const trace = group.traces[0];
+  if (!trace) return null;
+  const traceKey = `${message.id}:${trace.id}`;
   const isExpanded = expandedTraceIds.has(traceKey);
-  const hasError = group.traces.some((trace) => trace.status === "error");
-  const isRunning = group.traces.some((trace) => trace.status === "started");
+  const statusClass =
+    trace.status === "completed"
+      ? "is-completed"
+      : trace.status === "error"
+        ? "has-error"
+        : trace.status === "started"
+          ? "is-running"
+          : "";
 
   return (
-    <div
-      className={[
-        "trace-group-row",
-        isExpanded ? "is-expanded" : "",
-        hasError ? "has-error" : "",
-        isRunning ? "is-running" : "",
-      ]
-        .filter(Boolean)
-        .join(" ")}
-      onClick={() => onToggleTrace(traceKey)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onToggleTrace(traceKey);
-        }
-      }}
-      role="button"
-      tabIndex={0}
-    >
-      <div className="trace-group-summary">
-        <span>{traceGroupLabel(group.traces)}</span>
-        <ChevronDown size={15} />
-      </div>
-      {isExpanded ? (
-        <div className="trace-group-body">
-          {group.traces.map((trace) => (
-            <div key={trace.id} className="trace-compact-item">
-              <div className="trace-compact-line">
-                <span>
-                  {trace.status === "started"
-                    ? "正在运行"
-                    : trace.status === "error"
-                      ? "运行失败"
-                      : "已运行"}
-                </span>
-                <strong>{compactTraceTitle(trace)}</strong>
-                <small>{formatTraceDuration(trace.startedAt, trace.completedAt)}</small>
-              </div>
-              {trace.result || trace.params ? (
-                <div className="trace-compact-result">
-                  <div className="trace-compact-result-head">
-                    <span>{trace.name}</span>
-                    <span>{trace.status === "completed" ? "成功" : trace.status}</span>
-                  </div>
-                  {trace.result ? <pre>{formatTraceValue(trace.result)}</pre> : null}
-                  {!trace.result && trace.params ? <pre>{formatTraceValue(trace.params)}</pre> : null}
-                </div>
-              ) : null}
+    <div className="trace-timeline">
+      <div
+        className={`trace-step ${statusClass}`}
+        onClick={() => onToggleTrace(traceKey)}
+        onKeyDown={(event) => {
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            onToggleTrace(traceKey);
+          }
+        }}
+        role="button"
+        tabIndex={0}
+      >
+        <div className="trace-step-header">
+          <span className="trace-step-title">{compactTraceTitle(trace)}</span>
+          <small className="trace-step-duration">
+            {formatTraceDuration(trace.startedAt, trace.completedAt)}
+          </small>
+          <ChevronDown
+            size={12}
+            className="trace-step-chevron"
+            style={{ transform: isExpanded ? "rotate(180deg)" : "none" }}
+          />
+        </div>
+        {isExpanded && (trace.result || trace.params) ? (
+          <div className="trace-step-detail">
+            <div className="trace-step-detail-head">
+              <span>{trace.name}</span>
+              <span>{trace.status === "completed" ? "成功" : trace.status}</span>
             </div>
-          ))}
+            {trace.result ? <pre>{formatTraceValue(trace.result)}</pre> : null}
+            {!trace.result && trace.params ? <pre>{formatTraceValue(trace.params)}</pre> : null}
+          </div>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+function ToolMessageGroup(props: {
+  messages: ChatMessage[];
+  expandedTraceIds: Set<string>;
+  onToggleTrace: (traceKey: string) => void;
+  isCollapsed: boolean;
+  onToggleCollapsed: () => void;
+}) {
+  const { messages, expandedTraceIds, onToggleTrace, isCollapsed, onToggleCollapsed } = props;
+
+  const allTraces = messages.flatMap((m) => m.traces ?? []);
+  const hasError = allTraces.some((t) => t.status === "error");
+  const isRunning = allTraces.some((t) => t.status === "started");
+  const count = allTraces.length;
+
+  return (
+    <article className="message-shell role-tool tool-message-group">
+      <div
+        className={`tool-group-header ${hasError ? "has-error" : ""} ${isRunning ? "is-running" : ""}`}
+        onClick={onToggleCollapsed}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggleCollapsed();
+          }
+        }}
+        role="button"
+        tabIndex={0}
+      >
+        <span className="tool-group-label">{count} 个工具调用</span>
+        <ChevronDown
+          size={13}
+          className="tool-group-chevron"
+          style={{ transform: isCollapsed ? "none" : "rotate(180deg)" }}
+        />
+      </div>
+      {!isCollapsed ? (
+        <div className="trace-timeline">
+          {messages.map((message) =>
+            (message.traces ?? []).map((trace) => {
+              const traceKey = `${message.id}:${trace.id}`;
+              const isExpanded = expandedTraceIds.has(traceKey);
+              const statusClass =
+                trace.status === "completed"
+                  ? "is-completed"
+                  : trace.status === "error"
+                    ? "has-error"
+                    : trace.status === "started"
+                      ? "is-running"
+                      : "";
+
+              return (
+                <div
+                  key={trace.id}
+                  className={`trace-step ${statusClass}`}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onToggleTrace(traceKey);
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter" || e.key === " ") {
+                      e.preventDefault();
+                      onToggleTrace(traceKey);
+                    }
+                  }}
+                  role="button"
+                  tabIndex={0}
+                >
+                  <div className="trace-step-header">
+                    <span className="trace-step-title">{compactTraceTitle(trace)}</span>
+                    <small className="trace-step-duration">
+                      {formatTraceDuration(trace.startedAt, trace.completedAt)}
+                    </small>
+                    <ChevronDown
+                      size={12}
+                      className="trace-step-chevron"
+                      style={{ transform: isExpanded ? "rotate(180deg)" : "none" }}
+                    />
+                  </div>
+                  {isExpanded && (trace.result || trace.params) ? (
+                    <div className="trace-step-detail">
+                      <div className="trace-step-detail-head">
+                        <span>{trace.name}</span>
+                        <span>{trace.status === "completed" ? "成功" : trace.status}</span>
+                      </div>
+                      {trace.result ? <pre>{formatTraceValue(trace.result)}</pre> : null}
+                      {!trace.result && trace.params ? <pre>{formatTraceValue(trace.params)}</pre> : null}
+                    </div>
+                  ) : null}
+                </div>
+              );
+            }),
+          )}
         </div>
       ) : null}
-    </div>
+    </article>
   );
 }
 
@@ -466,6 +642,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const [expandedTraceIds, setExpandedTraceIds] = useState<Set<string>>(new Set());
+  const [collapsedToolGroups, setCollapsedToolGroups] = useState<Set<string>>(new Set());
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const streamRef = useRef<HTMLDivElement | null>(null);
@@ -518,7 +695,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
       return;
     }
     element.style.height = "0px";
-    const nextHeight = Math.min(Math.max(element.scrollHeight, 78), 164);
+    const nextHeight = Math.min(Math.max(element.scrollHeight, 80), 170);
     element.style.height = `${nextHeight}px`;
   }, [draft]);
 
@@ -708,24 +885,15 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     soloStatus.state === "running" ||
     soloStatus.state === "paused" ||
     soloStatus.state === "waiting_user_confirmation";
+  const permissionIsAll = settings.permissions.mode === "all";
 
   return (
     <section className="chat-workspace">
-      <header className="workspace-header">
-        <div className="workspace-header-main">
-          <div className="workspace-actions mobile-only">
-            <button className="icon-button" onClick={onOpenMobileSidebar} type="button">
-              <PanelLeftOpen size={16} />
-            </button>
-          </div>
-          <div>
-            <p className="workspace-kicker">主工作区</p>
-            <h1>对话与执行</h1>
-          </div>
-        </div>
-
-        <div className="workspace-header-side" />
-      </header>
+      <div className="workspace-mobile-bar mobile-only">
+        <button className="icon-button" onClick={onOpenMobileSidebar} type="button">
+          <PanelLeftOpen size={16} />
+        </button>
+      </div>
 
       <div ref={streamRef} className="message-stream">
         {visibleMessages.length === 0 ? (
@@ -749,82 +917,128 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
             )}
           </div>
         ) : (
-          visibleMessages.map((message) => (
-            <article
-              key={message.id}
-              className={`message-shell role-${message.role} ${message.mode === "solo" ? "mode-solo" : ""}`}
-            >
-              <div className="message-meta">
-                <strong>
-                  {message.role === "user"
-                    ? "你"
-                    : message.role === "assistant"
-                      ? "Agent"
-                      : message.role === "tool"
-                        ? "工具"
-                        : "系统"}
-                </strong>
-                <span>{new Date(message.createdAt).toLocaleTimeString()}</span>
-              </div>
+          (() => {
+            const elements: ReactNode[] = [];
+            let toolBuffer: ChatMessage[] = [];
 
-              {shouldShowMessageLabel(message) ? (
-                <div className="message-label">{message.label}</div>
-              ) : null}
-
-              {message.blocks && message.blocks.length > 0 ? (
-                <div className="assistant-blocks">
-                  {groupAssistantBlocks(message.blocks).map((block) =>
-                    block.kind === "text" ? (
-                      block.content ? <div key={block.id}>{renderMessageMarkdown(block.content)}</div> : null
-                    ) : block.kind === "trace-group" ? (
-                      <TraceGroup
-                        key={block.id}
-                        expandedTraceIds={expandedTraceIds}
-                        group={block}
-                        message={message}
-                        onToggleTrace={toggleTrace}
-                      />
-                    ) : (
-                      <TraceGroup
-                        key={block.id}
-                        expandedTraceIds={expandedTraceIds}
-                        group={{ id: `trace-group-${block.trace.id}`, kind: "trace-group", traces: [block.trace] }}
-                        message={message}
-                        onToggleTrace={toggleTrace}
-                      />
-                    ),
-                  )}
-                </div>
-              ) : message.content ? (
-                renderMessageMarkdown(message.content)
-              ) : null}
-
-              <AttachmentList attachments={message.attachments} />
-
-              {(!message.blocks || message.blocks.length === 0) &&
-              message.traces &&
-              message.traces.length > 0 ? (
-                <TraceGroup
+            const flushToolBuffer = () => {
+              if (toolBuffer.length === 0) return;
+              const groupId = `tool-group-${toolBuffer[0].id}-${toolBuffer[toolBuffer.length - 1].id}`;
+              const isCollapsed = collapsedToolGroups.has(groupId);
+              elements.push(
+                <ToolMessageGroup
+                  key={groupId}
+                  messages={toolBuffer}
                   expandedTraceIds={expandedTraceIds}
-                  group={{
-                    id: `trace-group-${message.traces[0]?.id ?? message.id}`,
-                    kind: "trace-group",
-                    traces: message.traces,
-                  }}
-                  message={message}
                   onToggleTrace={toggleTrace}
-                />
-              ) : null}
+                  isCollapsed={isCollapsed}
+                  onToggleCollapsed={() => {
+                    setCollapsedToolGroups((prev) => {
+                      const next = new Set(prev);
+                      if (next.has(groupId)) {
+                        next.delete(groupId);
+                      } else {
+                        next.add(groupId);
+                      }
+                      return next;
+                    });
+                  }}
+                />,
+              );
+              toolBuffer = [];
+            };
 
-              {message.role === "assistant" && message.status === "pending" ? (
-                <div className="message-thinking" aria-label="AI 正在思考">
-                  <span />
-                  <span />
-                  <span />
-                </div>
-              ) : null}
-            </article>
-          ))
+            for (const message of visibleMessages) {
+              if (message.role === "tool" && message.traces && message.traces.length > 0) {
+                toolBuffer.push(message);
+                continue;
+              }
+              flushToolBuffer();
+
+              elements.push(
+                <article
+                  key={message.id}
+                  className={`message-shell role-${message.role} ${message.mode === "solo" ? "mode-solo" : ""}`}
+                >
+                  <div className="message-meta">
+                    <strong>
+                      {message.role === "user"
+                        ? "你"
+                        : message.role === "assistant"
+                          ? "Agent"
+                          : message.role === "tool"
+                            ? "工具"
+                            : "系统"}
+                    </strong>
+                    <span>{new Date(message.createdAt).toLocaleTimeString()}</span>
+                  </div>
+
+                  {shouldShowMessageLabel(message) ? (
+                    <div className="message-label">{message.label}</div>
+                  ) : null}
+
+                  {message.blocks && message.blocks.length > 0 ? (
+                    <div className="assistant-blocks">
+                      {groupAssistantBlocks(message.blocks).map((block) =>
+                        block.kind === "text" ? (
+                          block.content ? (
+                            <div key={block.id} className="assistant-text-panel">
+                              {renderMessageMarkdown(block.content)}
+                            </div>
+                          ) : null
+                        ) : block.kind === "trace-group" ? (
+                          <TraceGroup
+                            key={block.id}
+                            expandedTraceIds={expandedTraceIds}
+                            group={block}
+                            message={message}
+                            onToggleTrace={toggleTrace}
+                          />
+                        ) : (
+                          <TraceGroup
+                            key={block.id}
+                            expandedTraceIds={expandedTraceIds}
+                            group={{ id: `trace-group-${block.trace.id}`, kind: "trace-group", traces: [block.trace] }}
+                            message={message}
+                            onToggleTrace={toggleTrace}
+                          />
+                        ),
+                      )}
+                    </div>
+                  ) : message.content ? (
+                    renderMessageMarkdown(message.content)
+                  ) : null}
+
+                  <AttachmentList attachments={message.attachments} />
+
+                  {(!message.blocks || message.blocks.length === 0) &&
+                  message.traces &&
+                  message.traces.length > 0 ? (
+                    <TraceGroup
+                      expandedTraceIds={expandedTraceIds}
+                      group={{
+                        id: `trace-group-${message.traces[0]?.id ?? message.id}`,
+                        kind: "trace-group",
+                        traces: message.traces,
+                      }}
+                      message={message}
+                      onToggleTrace={toggleTrace}
+                    />
+                  ) : null}
+
+                  {message.role === "assistant" && message.status === "pending" ? (
+                    <div className="message-thinking" aria-label="AI 正在思考">
+                      <span />
+                      <span />
+                      <span />
+                    </div>
+                  ) : null}
+                </article>,
+              );
+            }
+            flushToolBuffer();
+            return elements;
+          })()
         )}
       </div>
 
@@ -899,32 +1113,6 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
         ) : null}
 
         <div className="composer-frame">
-          <div className="composer-mode-row">
-            <div className="composer-controls">
-              <div className="segmented-control permission-control" aria-label="权限控制">
-                <button
-                  className={
-                    settings.permissions.mode === "default" ? "segment is-active" : "segment"
-                  }
-                  onClick={() => onPermissionModeChange("default")}
-                  type="button"
-                >
-                  <ShieldAlert size={13} />
-                  <span>默认权限</span>
-                </button>
-                <button
-                  className={settings.permissions.mode === "all" ? "segment is-active" : "segment"}
-                  onClick={() => onPermissionModeChange("all")}
-                  type="button"
-                >
-                  <ShieldCheck size={13} />
-                  <span>所有权限</span>
-                </button>
-              </div>
-            </div>
-            <span className="mode-hint">main agent 会按意图自动聊天或调度执行</span>
-          </div>
-
           <input
             ref={fileInputRef}
             multiple
@@ -1005,10 +1193,17 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
           </div>
 
           <div className="composer-footer">
-            <div className="composer-status">
-              <Play size={14} />
-              <span>Agent 已就绪</span>
-            </div>
+            <button
+              className={permissionIsAll ? "permission-status is-all" : "permission-status"}
+              onClick={() => onPermissionModeChange(permissionIsAll ? "default" : "all")}
+              title={permissionIsAll ? "切回默认权限" : "切换到所有权限"}
+              type="button"
+            >
+              {permissionIsAll ? <ShieldCheck size={13} /> : <ShieldAlert size={13} />}
+              <span>{permissionIsAll ? "所有权限" : "默认权限"}</span>
+              <ChevronDown size={13} />
+            </button>
+            <div className="composer-footer-spacer" />
             <button
               aria-label="添加附件"
               className="attach-button"
@@ -1017,7 +1212,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
               title="添加附件"
               type="button"
             >
-              <Paperclip size={16} />
+              <Paperclip size={14} />
             </button>
             <button
               aria-label="发送消息"

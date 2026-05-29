@@ -1,10 +1,11 @@
 import { useEffect, useRef, useState } from "react";
 import {
   CirclePlus,
+  Feather,
   MoreHorizontal,
   Settings2,
-  Sparkles,
   Trash2,
+  Wrench,
   Wifi,
   WifiOff,
   X,
@@ -26,13 +27,42 @@ interface NavigationSidebarProps {
   onCloseMobile: () => void;
 }
 
+function sidebarStatusCopy(backend: BackendState) {
+  switch (backend.phase) {
+    case "connected":
+      return {
+        primary: "本地服务在线",
+        secondary: backend.port ? `端口 ${backend.port} · 刚刚同步` : "刚刚同步",
+        tone: "success",
+      };
+    case "ready":
+    case "connecting":
+    case "starting":
+      return {
+        primary: "正在唤醒本地服务",
+        secondary: "准备好后就能发送任务",
+        tone: "warning",
+      };
+    case "error":
+      return {
+        primary: "本地服务需要检查",
+        secondary: backend.message || "查看后端日志",
+        tone: "danger",
+      };
+    default:
+      return {
+        primary: "本地服务同步中",
+        secondary: backend.message || "稍后自动重连",
+        tone: "neutral",
+      };
+  }
+}
+
 export function NavigationSidebar(props: NavigationSidebarProps) {
   const {
     conversations,
     activeConversationId,
     backend,
-    statusLine,
-    statusDetail,
     mobileOpen,
     onSelectConversation,
     onDeleteConversation,
@@ -42,6 +72,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
   } = props;
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const statusCopy = sidebarStatusCopy(backend);
 
   useEffect(() => {
     const handlePointerDown = (event: PointerEvent) => {
@@ -66,10 +97,12 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
       >
         <header className="nav-sidebar-header">
           <div className="brand-lockup">
-            <div className="brand-emblem">OE</div>
+            <div className="brand-emblem" aria-hidden="true">
+              <Feather size={19} />
+            </div>
             <div className="brand-copy">
-              <span className="brand-kicker">桌面 Agent 工作台</span>
               <strong>openEagle</strong>
+              <span className="brand-kicker">桌面 Agent 工作台</span>
             </div>
           </div>
           {mobileOpen ? (
@@ -157,30 +190,24 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
           </div>
         </section>
 
-        <section className="nav-section">
-          <div className="section-heading">
-            <span>工作台</span>
-          </div>
-
-          <div className="sidebar-quick-links">
+        <footer className="nav-sidebar-footer">
+          <div className="sidebar-quick-links" aria-label="工作台入口">
+            <button className="secondary-button" onClick={() => onOpenSettings("tools")} type="button">
+              <Wrench size={15} />
+              <span>工具</span>
+            </button>
             <button className="secondary-button" onClick={() => onOpenSettings("general")} type="button">
-              <Settings2 size={16} />
+              <Settings2 size={15} />
               <span>设置</span>
             </button>
-            <button className="secondary-button" onClick={() => onOpenSettings("tools")} type="button">
-              <Sparkles size={16} />
-              <span>扩展</span>
-            </button>
           </div>
-        </section>
 
-        <footer className="nav-sidebar-footer">
-          <div className="status-card">
+          <div className={`status-card tone-${statusCopy.tone}`}>
             <div className="status-card-head">
               {backend.phase === "connected" ? <Wifi size={15} /> : <WifiOff size={15} />}
-              <span>{statusLine}</span>
+              <span>{statusCopy.primary}</span>
             </div>
-            <small>{statusDetail || backend.message}</small>
+            <small>{statusCopy.secondary}</small>
           </div>
         </footer>
       </aside>

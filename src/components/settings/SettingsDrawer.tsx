@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { convertFileSrc, invoke } from "../../lib/electron-bridge";
-import { Monitor, SlidersHorizontal, Sparkles, Wrench, X } from "lucide-react";
+import { Feather, Monitor, SlidersHorizontal, Sparkles, Wrench, X } from "lucide-react";
 import QRCode from "qrcode";
 import { ThemeToggle } from "../ThemeToggle";
 import type {
@@ -445,7 +445,9 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
       <aside className={open ? "settings-drawer is-open" : "settings-drawer"}>
         <div className="settings-drawer-nav">
           <div className="settings-drawer-brand">
-            <div className="brand-emblem small">OE</div>
+            <div className="brand-emblem small" aria-hidden="true">
+              <Feather size={17} />
+            </div>
             <div>
               <strong>Settings</strong>
               <span>即时保存</span>
@@ -480,7 +482,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
 
           <div className="settings-content-scroll">
             {activeSection === "general" ? (
-              <div className="settings-stack">
+              <div className="settings-stack two-column">
                 <section className="settings-panel">
                   <div className="settings-panel-head">
                     <div>
@@ -922,7 +924,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
             ) : null}
 
             {activeSection === "models" ? (
-              <div className="settings-stack">
+              <div className="settings-stack two-column">
                 <section className="settings-panel">
                   <div className="settings-panel-head">
                     <div>
@@ -1075,7 +1077,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
             ) : null}
 
             {activeSection === "solo" ? (
-              <div className="settings-stack">
+              <div className="settings-stack two-column">
                 <section className="settings-panel">
                   <div className="settings-panel-head">
                     <div>
