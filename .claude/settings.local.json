@@ -29,7 +29,8 @@
       "Bash(sleep 20 && head -c 500 \"C:/Users/17602/AppData/Local/Temp/open-eagle-migrate-debug.txt\" 2>/dev/null)",
       "Bash(dd if=\"C:/Users/17602/AppData/Local/Temp/open-eagle-migrate-debug.txt\" bs=1 skip=1230 count=100)",
       "Bash(xxd)",
-      "Bash(node scripts/ensure-cjs-package.cjs)"
+      "Bash(node scripts/ensure-cjs-package.cjs)",
+      "Bash(git merge *)"
     ]
   }
 }

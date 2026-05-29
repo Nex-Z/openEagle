@@ -272,6 +272,7 @@ export default function App() {
     imStatuses,
     wechatBindStatus,
     requestSoloDisplays,
+    refreshSettings,
     startWechatBind,
     cancelWechatBind,
     unbindWechat,
@@ -662,6 +663,7 @@ export default function App() {
         onChange={setSettings}
         onClose={() => setSettingsDrawerOpen(false)}
         onRefreshSoloDisplays={requestSoloDisplays}
+        onRefreshSettings={refreshSettings}
         onRequestMemoryState={requestMemoryState}
         onSectionChange={setSettingsSection}
         onStartWechatBind={startWechatBind}

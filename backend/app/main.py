@@ -1711,6 +1711,17 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 )
                 continue
 
+            if envelope.type == "client:refresh_settings":
+                refreshed = load_persisted_settings()
+                if refreshed:
+                    await safe_send(
+                        "server:settings_loaded",
+                        envelope.request_id,
+                        envelope.conversation_id,
+                        {"settings": refreshed},
+                    )
+                continue
+
             if envelope.type == "client:memory_get":
                 await emit_memory_state(
                     "server:memory_state",

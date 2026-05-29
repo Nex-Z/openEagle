@@ -39,6 +39,7 @@ interface SettingsDrawerProps {
   scheduledTaskHistory: Record<string, ScheduledTaskExecution[]>;
   memoryState: MemoryState;
   onRefreshSoloDisplays: () => boolean;
+  onRefreshSettings: () => boolean;
   onStartWechatBind: (force?: boolean) => boolean;
   onCancelWechatBind: () => boolean;
   onUnbindWechat: () => boolean;
@@ -261,6 +262,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
     scheduledTaskHistory,
     memoryState,
     onRefreshSoloDisplays,
+    onRefreshSettings,
     onStartWechatBind,
     onCancelWechatBind,
     onUnbindWechat,
@@ -1157,18 +1159,27 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                       <span className="card-kicker">执行入口</span>
                       <strong>工具列表</strong>
                     </div>
-                    <button
-                      className="ghost-button"
-                      onClick={() =>
-                        onChange({
-                          ...settings,
-                          tools: [...settings.tools, createToolConfig()],
-                        })
-                      }
-                      type="button"
-                    >
-                      新增工具
-                    </button>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button
+                        className="ghost-button"
+                        onClick={() => onRefreshSettings()}
+                        type="button"
+                      >
+                        刷新
+                      </button>
+                      <button
+                        className="ghost-button"
+                        onClick={() =>
+                          onChange({
+                            ...settings,
+                            tools: [...settings.tools, createToolConfig()],
+                          })
+                        }
+                        type="button"
+                      >
+                        新增工具
+                      </button>
+                    </div>
                   </div>
                   <div className="config-list">
                     {settings.tools.map((tool) => {
@@ -1357,18 +1368,27 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                       <span className="card-kicker">Model Context Protocol</span>
                       <strong>MCP Server</strong>
                     </div>
-                    <button
-                      className="ghost-button"
-                      onClick={() =>
-                        onChange({
-                          ...settings,
-                          mcp: [...settings.mcp, createMcpConfig()],
-                        })
-                      }
-                      type="button"
-                    >
-                      新增 MCP
-                    </button>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button
+                        className="ghost-button"
+                        onClick={() => onRefreshSettings()}
+                        type="button"
+                      >
+                        刷新
+                      </button>
+                      <button
+                        className="ghost-button"
+                        onClick={() =>
+                          onChange({
+                            ...settings,
+                            mcp: [...settings.mcp, createMcpConfig()],
+                          })
+                        }
+                        type="button"
+                      >
+                        新增 MCP
+                      </button>
+                    </div>
                   </div>
                   <div className="config-list">
                     {settings.mcp.map((server) => (
@@ -1483,18 +1503,27 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                       <span className="card-kicker">Prompt Skills</span>
                       <strong>Skill 列表</strong>
                     </div>
-                    <button
-                      className="ghost-button"
-                      onClick={() =>
-                        onChange({
-                          ...settings,
-                          skills: [...settings.skills, createSkillConfig()],
-                        })
-                      }
-                      type="button"
-                    >
-                      新增 Skill
-                    </button>
+                    <div style={{ display: "flex", gap: 6 }}>
+                      <button
+                        className="ghost-button"
+                        onClick={() => onRefreshSettings()}
+                        type="button"
+                      >
+                        刷新
+                      </button>
+                      <button
+                        className="ghost-button"
+                        onClick={() =>
+                          onChange({
+                            ...settings,
+                            skills: [...settings.skills, createSkillConfig()],
+                          })
+                        }
+                        type="button"
+                      >
+                        新增 Skill
+                      </button>
+                    </div>
                   </div>
                   <div className="config-list">
                     {settings.skills.map((skill) => (

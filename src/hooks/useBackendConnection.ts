@@ -527,6 +527,22 @@ export function useBackendConnection(
     return true;
   }, [conversationId]);
 
+  const refreshSettings = useCallback(() => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+    const envelope: Envelope<Record<string, never>> = {
+      type: "client:refresh_settings",
+      requestId: createId("refresh-settings"),
+      conversationId,
+      payload: {},
+      timestamp: new Date().toISOString(),
+    };
+    socket.send(JSON.stringify(envelope));
+    return true;
+  }, [conversationId]);
+
   const sendWechatControl = (
     type: "client:wechat_bind_start" | "client:wechat_bind_cancel" | "client:wechat_unbind",
     payload: Record<string, unknown> = {},
@@ -1709,6 +1725,7 @@ export function useBackendConnection(
     imStatuses,
     wechatBindStatus,
     requestSoloDisplays,
+    refreshSettings,
     startWechatBind: (force = false) =>
       sendWechatControl("client:wechat_bind_start", { force }),
     cancelWechatBind: () => sendWechatControl("client:wechat_bind_cancel"),
