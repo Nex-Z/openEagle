@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { convertFileSrc, invoke } from "../../lib/electron-bridge";
-import { Feather, Monitor, SlidersHorizontal, Sparkles, Wrench, X } from "lucide-react";
+import { ChevronDown, Feather, Monitor, SlidersHorizontal, Sparkles, Wrench, X } from "lucide-react";
 import QRCode from "qrcode";
 import { ThemeToggle } from "../ThemeToggle";
 import type {
@@ -235,7 +235,7 @@ function ConfigListItem(props: {
               onChange={(event) => onToggleEnabled(event.target.checked)}
               type="checkbox"
             />
-            <span>{enabled ? "开" : "关"}</span>
+            <span className="toggle-track" />
           </label>
           <button className="ghost-button" onClick={onToggleExpanded} type="button">
             {expanded ? "收起" : "编辑"}
@@ -287,6 +287,13 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
   const [memoryDraft, setMemoryDraft] = useState<MemoryState>(memoryState);
   const [memoryDirty, setMemoryDirty] = useState(false);
   const [historyTaskId, setHistoryTaskId] = useState<string | null>(null);
+  const [collapsedImSections, setCollapsedImSections] = useState<Set<string>>(() => {
+    const initial = new Set<string>();
+    if (!settings.feishu.enabled) initial.add("feishu");
+    if (!settings.telegram.enabled) initial.add("telegram");
+    if (!settings.wechat.enabled) initial.add("wechat");
+    return initial;
+  });
   const [previewDataUrls, setPreviewDataUrls] = useState<Record<string, string>>({});
   const [failedPreviews, setFailedPreviews] = useState<Set<string>>(new Set());
   const [wechatQrDataUrl, setWechatQrDataUrl] = useState<string | null>(null);
@@ -514,13 +521,16 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                   </div>
                   <label className="form-switch">
                     <span>启用整理</span>
-                    <input
-                      checked={settings.context.enabled}
-                      onChange={(event) =>
-                        updateContextSettings({ enabled: event.target.checked })
-                      }
-                      type="checkbox"
-                    />
+                    <div className="toggle-switch">
+                      <input
+                        checked={settings.context.enabled}
+                        onChange={(event) =>
+                          updateContextSettings({ enabled: event.target.checked })
+                        }
+                        type="checkbox"
+                      />
+                      <span className="toggle-track" />
+                    </div>
                   </label>
                   <label className="form-field">
                     <span>触发 token 阈值</span>
@@ -588,23 +598,29 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                   </label>
                   <label className="form-switch">
                     <span>AI 摘要中段</span>
-                    <input
-                      checked={settings.context.aiSummaryEnabled}
-                      onChange={(event) =>
-                        updateContextSettings({ aiSummaryEnabled: event.target.checked })
-                      }
-                      type="checkbox"
-                    />
+                    <div className="toggle-switch">
+                      <input
+                        checked={settings.context.aiSummaryEnabled}
+                        onChange={(event) =>
+                          updateContextSettings({ aiSummaryEnabled: event.target.checked })
+                        }
+                        type="checkbox"
+                      />
+                      <span className="toggle-track" />
+                    </div>
                   </label>
                   <label className="form-switch">
                     <span>压缩前写入记忆快照</span>
-                    <input
-                      checked={settings.context.snapshotOnCompaction}
-                      onChange={(event) =>
-                        updateContextSettings({ snapshotOnCompaction: event.target.checked })
-                      }
-                      type="checkbox"
-                    />
+                    <div className="toggle-switch">
+                      <input
+                        checked={settings.context.snapshotOnCompaction}
+                        onChange={(event) =>
+                          updateContextSettings({ snapshotOnCompaction: event.target.checked })
+                        }
+                        type="checkbox"
+                      />
+                      <span className="toggle-track" />
+                    </div>
                   </label>
                   <label className="form-field">
                     <span>摘要字符上限</span>
@@ -694,29 +710,53 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                 </section>
 
                 <section className="settings-panel">
-                  <div className="settings-panel-head">
+                  <div
+                    className="settings-panel-head settings-panel-collapsible"
+                    onClick={() =>
+                      setCollapsedImSections((prev) => {
+                        const next = new Set(prev);
+                        if (next.has("feishu")) next.delete("feishu");
+                        else next.add("feishu");
+                        return next;
+                      })
+                    }
+                  >
                     <div>
                       <span className="card-kicker">飞书</span>
                       <strong>长连接机器人</strong>
                     </div>
-                    <Sparkles size={16} />
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <label
+                        className="toggle-inline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          checked={settings.feishu.enabled}
+                          onChange={(event) =>
+                            onChange({
+                              ...settings,
+                              feishu: {
+                                ...settings.feishu,
+                                enabled: event.target.checked,
+                              },
+                            })
+                          }
+                          type="checkbox"
+                        />
+                        <span className="toggle-track" />
+                      </label>
+                      <ChevronDown
+                        size={14}
+                        style={{
+                          transform: collapsedImSections.has("feishu") ? "none" : "rotate(180deg)",
+                          transition: "transform 0.15s",
+                          color: "rgba(87, 99, 95, 0.4)",
+                        }}
+                      />
+                    </div>
                   </div>
-                  <label className="form-switch">
-                    <span>启用飞书入口</span>
-                    <input
-                      checked={settings.feishu.enabled}
-                      onChange={(event) =>
-                        onChange({
-                          ...settings,
-                          feishu: {
-                            ...settings.feishu,
-                            enabled: event.target.checked,
-                          },
-                        })
-                      }
-                      type="checkbox"
-                    />
-                  </label>
+                  {!collapsedImSections.has("feishu") ? (
+                  <>
                   <label className="form-field">
                     <span>App ID</span>
                     <input
@@ -786,32 +826,58 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                       value={joinLines(settings.feishu.allowedChatIds)}
                     />
                   </label>
+                  </>
+                  ) : null}
                 </section>
 
                 <section className="settings-panel">
-                  <div className="settings-panel-head">
+                  <div
+                    className="settings-panel-head settings-panel-collapsible"
+                    onClick={() =>
+                      setCollapsedImSections((prev) => {
+                        const next = new Set(prev);
+                        if (next.has("telegram")) next.delete("telegram");
+                        else next.add("telegram");
+                        return next;
+                      })
+                    }
+                  >
                     <div>
                       <span className="card-kicker">Telegram</span>
                       <strong>Bot 长轮询</strong>
                     </div>
-                    <Sparkles size={16} />
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <label
+                        className="toggle-inline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          checked={settings.telegram.enabled}
+                          onChange={(event) =>
+                            onChange({
+                              ...settings,
+                              telegram: {
+                                ...settings.telegram,
+                                enabled: event.target.checked,
+                              },
+                            })
+                          }
+                          type="checkbox"
+                        />
+                        <span className="toggle-track" />
+                      </label>
+                      <ChevronDown
+                        size={14}
+                        style={{
+                          transform: collapsedImSections.has("telegram") ? "none" : "rotate(180deg)",
+                          transition: "transform 0.15s",
+                          color: "rgba(87, 99, 95, 0.4)",
+                        }}
+                      />
+                    </div>
                   </div>
-                  <label className="form-switch">
-                    <span>启用 Telegram 入口</span>
-                    <input
-                      checked={settings.telegram.enabled}
-                      onChange={(event) =>
-                        onChange({
-                          ...settings,
-                          telegram: {
-                            ...settings.telegram,
-                            enabled: event.target.checked,
-                          },
-                        })
-                      }
-                      type="checkbox"
-                    />
-                  </label>
+                  {!collapsedImSections.has("telegram") ? (
+                  <>
                   <label className="form-field">
                     <span>Bot Token</span>
                     <SecretInput
@@ -861,32 +927,58 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                       value={joinLines(settings.telegram.allowedChatIds)}
                     />
                   </label>
+                  </>
+                  ) : null}
                 </section>
 
                 <section className="settings-panel">
-                  <div className="settings-panel-head">
+                  <div
+                    className="settings-panel-head settings-panel-collapsible"
+                    onClick={() =>
+                      setCollapsedImSections((prev) => {
+                        const next = new Set(prev);
+                        if (next.has("wechat")) next.delete("wechat");
+                        else next.add("wechat");
+                        return next;
+                      })
+                    }
+                  >
                     <div>
                       <span className="card-kicker">微信</span>
                       <strong>ClawBot 扫码接入</strong>
                     </div>
-                    <Sparkles size={16} />
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <label
+                        className="toggle-inline"
+                        onClick={(e) => e.stopPropagation()}
+                      >
+                        <input
+                          checked={settings.wechat.enabled}
+                          onChange={(event) =>
+                            onChange({
+                              ...settings,
+                              wechat: {
+                                ...settings.wechat,
+                                enabled: event.target.checked,
+                              },
+                            })
+                          }
+                          type="checkbox"
+                        />
+                        <span className="toggle-track" />
+                      </label>
+                      <ChevronDown
+                        size={14}
+                        style={{
+                          transform: collapsedImSections.has("wechat") ? "none" : "rotate(180deg)",
+                          transition: "transform 0.15s",
+                          color: "rgba(87, 99, 95, 0.4)",
+                        }}
+                      />
+                    </div>
                   </div>
-                  <label className="form-switch">
-                    <span>启用微信入口</span>
-                    <input
-                      checked={settings.wechat.enabled}
-                      onChange={(event) =>
-                        onChange({
-                          ...settings,
-                          wechat: {
-                            ...settings.wechat,
-                            enabled: event.target.checked,
-                          },
-                        })
-                      }
-                      type="checkbox"
-                    />
-                  </label>
+                  {!collapsedImSections.has("wechat") ? (
+                  <>
                   <div className="form-hint">
                     <span>绑定状态: {wechatBindStatus?.message || settings.wechat.accountId || "未绑定"}</span>
                     {settings.wechat.accountId ? (
@@ -919,6 +1011,8 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                     <div className="wechat-qr-panel">
                       <img alt="微信扫码绑定二维码" src={wechatQrDataUrl} />
                     </div>
+                  ) : null}
+                  </>
                   ) : null}
                 </section>
 
@@ -1153,35 +1247,34 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
 
             {activeSection === "tools" ? (
               <div className="settings-stack">
-                <section className="settings-panel">
-                  <div className="settings-panel-head">
-                    <div>
-                      <span className="card-kicker">执行入口</span>
-                      <strong>工具列表</strong>
-                    </div>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      <button
-                        className="ghost-button"
-                        onClick={() => onRefreshSettings()}
-                        type="button"
-                      >
-                        刷新
-                      </button>
-                      <button
-                        className="ghost-button"
-                        onClick={() =>
-                          onChange({
-                            ...settings,
-                            tools: [...settings.tools, createToolConfig()],
-                          })
-                        }
-                        type="button"
-                      >
-                        新增工具
-                      </button>
-                    </div>
+                <div className="settings-section-head">
+                  <div>
+                    <span className="card-kicker">执行入口</span>
+                    <strong>工具列表</strong>
                   </div>
-                  <div className="config-list">
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button
+                      className="ghost-button"
+                      onClick={() => onRefreshSettings()}
+                      type="button"
+                    >
+                      刷新
+                    </button>
+                    <button
+                      className="ghost-button"
+                      onClick={() =>
+                        onChange({
+                          ...settings,
+                          tools: [...settings.tools, createToolConfig()],
+                        })
+                      }
+                      type="button"
+                    >
+                      新增工具
+                    </button>
+                  </div>
+                </div>
+                <div className="config-list">
                     {settings.tools.map((tool) => {
                       const qualityMessages = getToolQualityMessages(tool, settings.tools);
                       return (
@@ -1317,17 +1410,15 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                       </ConfigListItem>
                       );
                     })}
-                  </div>
-                </section>
+                </div>
 
-                <section className="settings-panel">
-                  <div className="settings-panel-head">
-                    <div>
-                      <span className="card-kicker">Built-in</span>
-                      <strong>内置工具</strong>
-                    </div>
+                <div className="settings-section-head">
+                  <div>
+                    <span className="card-kicker">Built-in</span>
+                    <strong>内置工具</strong>
                   </div>
-                  <div className="config-list">
+                </div>
+                <div className="config-list">
                     {settings.builtinTools.map((bt) => (
                       <article key={bt.id} className="config-row">
                         <div className="config-row-head">
@@ -1355,42 +1446,40 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                         </div>
                       </article>
                     ))}
-                  </div>
-                </section>
+                </div>
               </div>
             ) : null}
 
             {activeSection === "mcp" ? (
               <div className="settings-stack">
-                <section className="settings-panel">
-                  <div className="settings-panel-head">
-                    <div>
-                      <span className="card-kicker">Model Context Protocol</span>
-                      <strong>MCP Server</strong>
-                    </div>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      <button
-                        className="ghost-button"
-                        onClick={() => onRefreshSettings()}
-                        type="button"
-                      >
-                        刷新
-                      </button>
-                      <button
-                        className="ghost-button"
-                        onClick={() =>
-                          onChange({
-                            ...settings,
-                            mcp: [...settings.mcp, createMcpConfig()],
-                          })
-                        }
-                        type="button"
-                      >
-                        新增 MCP
-                      </button>
-                    </div>
+                <div className="settings-section-head">
+                  <div>
+                    <span className="card-kicker">Model Context Protocol</span>
+                    <strong>MCP Server</strong>
                   </div>
-                  <div className="config-list">
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button
+                      className="ghost-button"
+                      onClick={() => onRefreshSettings()}
+                      type="button"
+                    >
+                      刷新
+                    </button>
+                    <button
+                      className="ghost-button"
+                      onClick={() =>
+                        onChange({
+                          ...settings,
+                          mcp: [...settings.mcp, createMcpConfig()],
+                        })
+                      }
+                      type="button"
+                    >
+                      新增 MCP
+                    </button>
+                  </div>
+                </div>
+                <div className="config-list">
                     {settings.mcp.map((server) => (
                       <ConfigListItem
                         key={server.id}
@@ -1490,54 +1579,52 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                         </label>
                       </ConfigListItem>
                     ))}
-                  </div>
-                </section>
+                </div>
               </div>
             ) : null}
 
             {activeSection === "skills" ? (
               <div className="settings-stack">
-                <section className="settings-panel">
-                  <div className="settings-panel-head">
-                    <div>
-                      <span className="card-kicker">Prompt Skills</span>
-                      <strong>Skill 列表</strong>
-                    </div>
-                    <div style={{ display: "flex", gap: 6 }}>
-                      <button
-                        className="ghost-button"
-                        onClick={() => onRefreshSettings()}
-                        type="button"
-                      >
-                        刷新
-                      </button>
-                      <button
-                        className="ghost-button"
-                        onClick={() =>
-                          onChange({
-                            ...settings,
-                            skills: [...settings.skills, createSkillConfig()],
-                          })
-                        }
-                        type="button"
-                      >
-                        新增 Skill
-                      </button>
-                    </div>
+                <div className="settings-section-head">
+                  <div>
+                    <span className="card-kicker">Prompt Skills</span>
+                    <strong>Skill 列表</strong>
                   </div>
-                  <div className="config-list">
-                    {settings.skills.map((skill) => (
-                      <ConfigListItem
-                        key={skill.id}
-                        enabled={skill.enabled}
-                        expanded={expandedSkillId === skill.id}
-                        onDelete={() =>
-                          onChange({
-                            ...settings,
-                            skills: removeListItem(settings.skills, skill.id),
-                          })
-                        }
-                        onToggleEnabled={(value) =>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button
+                      className="ghost-button"
+                      onClick={() => onRefreshSettings()}
+                      type="button"
+                    >
+                      刷新
+                    </button>
+                    <button
+                      className="ghost-button"
+                      onClick={() =>
+                        onChange({
+                          ...settings,
+                          skills: [...settings.skills, createSkillConfig()],
+                        })
+                      }
+                      type="button"
+                    >
+                      新增 Skill
+                    </button>
+                  </div>
+                </div>
+                <div className="config-list">
+                  {settings.skills.map((skill) => (
+                    <ConfigListItem
+                      key={skill.id}
+                      enabled={skill.enabled}
+                      expanded={expandedSkillId === skill.id}
+                      onDelete={() =>
+                        onChange({
+                          ...settings,
+                          skills: removeListItem(settings.skills, skill.id),
+                        })
+                      }
+                      onToggleEnabled={(value) =>
                           onChange({
                             ...settings,
                             skills: updateListItem(settings.skills, skill.id, (item) => ({
@@ -1602,8 +1689,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
                         </label>
                       </ConfigListItem>
                     ))}
-                  </div>
-                </section>
+                </div>
               </div>
             ) : null}
 
