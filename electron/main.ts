@@ -10,6 +10,10 @@ import { migrateTauriSettings } from "./migrate-tauri-settings";
 
 const isDev = !app.isPackaged;
 
+// 禁用 GPU 硬件加速，避免部分 Windows 设备上 GPU 进程崩溃
+// 注意：命令行开关需在 electron-dev.cjs / 启动脚本中传入，此处仅作打包后的兜底
+app.disableHardwareAcceleration();
+
 // Match Tauri's app data directory for conversation persistence
 app.setName("com.openeagle.desktop");
 if (process.platform === "win32") {
@@ -47,9 +51,20 @@ function createMainWindow() {
     },
   });
 
+  // 安全发送 IPC，渲染帧已销毁时静默忽略
+  function safeSend(channel: string, ...args: unknown[]) {
+    try {
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.webContents.send(channel, ...args);
+      }
+    } catch {
+      // 渲染帧已销毁时忽略
+    }
+  }
+
   // Handle close request (equivalent to Tauri CloseRequested)
   mainWindow.on("close", () => {
-    mainWindow?.webContents.send("app:close-requested");
+    safeSend("app:close-requested");
   });
 
   mainWindow.on("closed", () => {
@@ -60,11 +75,11 @@ function createMainWindow() {
   });
 
   mainWindow.on("focus", () => {
-    mainWindow?.webContents.send("main://focus_changed", true);
+    safeSend("main://focus_changed", true);
   });
 
   mainWindow.on("blur", () => {
-    mainWindow?.webContents.send("main://focus_changed", false);
+    safeSend("main://focus_changed", false);
   });
 
   if (isDev) {

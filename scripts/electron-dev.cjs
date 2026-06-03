@@ -151,7 +151,7 @@ async function main() {
     }
   }
 
-  const electron = spawnPnpmInherit(["exec", "electron", "."]);
+  const electron = spawnPnpmInherit(["exec", "electron", "--no-sandbox", "--disable-gpu", "--disable-gpu-compositing", "."]);
   const cleanup = () => stop(vite);
   process.on("SIGINT", () => {
     cleanup();

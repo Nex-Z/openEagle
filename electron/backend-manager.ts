@@ -44,7 +44,11 @@ function setState(next: BackendState, mainWindow: BrowserWindow | null) {
     listener(currentState);
   }
   if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send("backend://status", currentState);
+    try {
+      mainWindow.webContents.send("backend://status", currentState);
+    } catch {
+      // 渲染帧已销毁时忽略，窗口正在关闭或重启中
+    }
   }
 }
 
