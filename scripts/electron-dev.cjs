@@ -152,14 +152,21 @@ async function main() {
   }
 
   const electron = spawnPnpmInherit(["exec", "electron", "--no-sandbox", "--disable-gpu", "--disable-gpu-compositing", "."]);
-  const cleanup = () => stop(vite);
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
+    stop(vite);
+    stop(electron);
+  };
+  process.on("exit", cleanup);
   process.on("SIGINT", () => {
     cleanup();
-    electron.kill("SIGINT");
+    process.exit(0);
   });
   process.on("SIGTERM", () => {
     cleanup();
-    electron.kill("SIGTERM");
+    process.exit(0);
   });
   electron.on("exit", (code) => {
     cleanup();
