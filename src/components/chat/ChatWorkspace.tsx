@@ -1004,6 +1004,13 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
                           />
                         ),
                       )}
+                      {/* blocks 全是 trace 没有正文时，用 content 兜底 */}
+                      {message.content &&
+                        !message.blocks.some((b) => b.kind === "text" && b.content) && (
+                          <div className="assistant-text-panel">
+                            {renderMessageMarkdown(message.content)}
+                          </div>
+                        )}
                     </div>
                   ) : message.content ? (
                     renderMessageMarkdown(message.content)
