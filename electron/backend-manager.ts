@@ -7,6 +7,8 @@ import { appendLog, relayBackendOutput } from "./log";
 const READY_PATTERN = /\[AGENT_READY\]\s+WS_PORT:\s+(\d+)/;
 const BACKEND_PARENT_PID_ENV = "OPEN_EAGLE_PARENT_PID";
 const BACKEND_WORKSPACE_ROOT_ENV = "OPEN_EAGLE_WORKSPACE_ROOT";
+const EXTERNAL_BACKEND_HOST_ENV = "OPEN_EAGLE_BACKEND_HOST";
+const EXTERNAL_BACKEND_PORT_ENV = "OPEN_EAGLE_BACKEND_PORT";
 
 export interface BackendState {
   phase: "starting" | "ready" | "error" | "disconnected";
@@ -64,6 +66,20 @@ function backendPython(): string {
   return path.join(backendRoot(), ".venv", "Scripts", "python.exe");
 }
 
+function externalBackendTarget(isDev: boolean): { host: string; port: number } | null {
+  if (!isDev) return null;
+  const rawPort = process.env[EXTERNAL_BACKEND_PORT_ENV];
+  if (!rawPort) return null;
+  const port = Number(rawPort);
+  if (!Number.isInteger(port) || port <= 0 || port > 65535) {
+    return null;
+  }
+  return {
+    host: process.env[EXTERNAL_BACKEND_HOST_ENV] || "127.0.0.1",
+    port,
+  };
+}
+
 function packagedSidecarPath(): string {
   const base = path.join(
     process.resourcesPath || projectRoot(),
@@ -94,6 +110,21 @@ function cleanupStaleDebugBackends() {
 }
 
 export function spawnBackend(mainWindow: BrowserWindow | null, isDev: boolean) {
+  const externalBackend = externalBackendTarget(isDev);
+  if (externalBackend) {
+    if (timeoutHandle) {
+      clearTimeout(timeoutHandle);
+      timeoutHandle = null;
+    }
+    if (childProcess) {
+      killBackend();
+    }
+    const message = `Using external dev backend on ${externalBackend.host}:${externalBackend.port}`;
+    appendLog(`[BACKEND] ${message}`);
+    setState({ phase: "ready", port: externalBackend.port, message }, mainWindow);
+    return;
+  }
+
   setState(
     { phase: "starting", port: null, message: "Starting Python backend" },
     mainWindow

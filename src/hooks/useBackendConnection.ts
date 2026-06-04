@@ -560,7 +560,7 @@ export function useBackendConnection(
     socket.send(JSON.stringify(settingsEnvelope));
   };
 
-  const requestMemoryState = () => {
+  const requestMemoryState = useCallback(() => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       return false;
@@ -575,9 +575,9 @@ export function useBackendConnection(
     };
     socket.send(JSON.stringify(envelope));
     return true;
-  };
+  }, [conversationId]);
 
-  const sendMemorySnapshot = (snapshot: {
+  const sendMemorySnapshot = useCallback((snapshot: {
     reason: string;
     content: string;
     source: string;
@@ -595,9 +595,9 @@ export function useBackendConnection(
     };
     socket.send(JSON.stringify(envelope));
     return true;
-  };
+  }, [conversationId]);
 
-  useEffect(() => registerMemorySnapshotSender(sendMemorySnapshot), [conversationId]);
+  useEffect(() => registerMemorySnapshotSender(sendMemorySnapshot), [sendMemorySnapshot]);
 
   const appendSoloTimeline = (line: string) => {
     const stamped = `[${new Date().toLocaleTimeString()}] ${line}`;
@@ -613,7 +613,7 @@ export function useBackendConnection(
     );
   };
 
-  const sendSoloControl = (payload: SoloControlPayload) => {
+  const sendSoloControl = useCallback((payload: SoloControlPayload) => {
     const socket = socketRef.current;
     const requestId = payload.soloRequestId ?? activeSoloRequestIdRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN || !requestId) {
@@ -632,7 +632,7 @@ export function useBackendConnection(
     };
     socket.send(JSON.stringify(envelope));
     return true;
-  };
+  }, [conversationId]);
 
   const requestSoloDisplays = useCallback(() => {
     const socket = socketRef.current;
@@ -670,7 +670,7 @@ export function useBackendConnection(
     return true;
   }, [conversationId]);
 
-  const sendWechatControl = (
+  const sendWechatControl = useCallback((
     type: "client:wechat_bind_start" | "client:wechat_bind_cancel" | "client:wechat_unbind",
     payload: Record<string, unknown> = {},
   ) => {
@@ -690,7 +690,7 @@ export function useBackendConnection(
     };
     socket.send(JSON.stringify(envelope));
     return true;
-  };
+  }, [conversationId]);
 
   useEffect(() => {
     if (!isElectronRuntime()) {
@@ -1689,7 +1689,7 @@ export function useBackendConnection(
     };
   }, []);
 
-  const sendMessage = (content: string, attachments: AttachmentRef[] = []) => {
+  const sendMessage = useCallback((content: string, attachments: AttachmentRef[] = []) => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       setStatusLine("后端服务未就绪");
@@ -1734,21 +1734,21 @@ export function useBackendConnection(
     setStatusLine("AI 正在思考");
     setStatusDetail("请求已发送，等待模型开始生成。");
     return true;
-  };
+  }, [conversationId]);
 
-  const pauseSolo = () => sendSoloControl({ action: "pause" });
-  const resumeSolo = () => sendSoloControl({ action: "resume" });
-  const stopSolo = () => sendSoloControl({ action: "stop" });
-  const allowDangerousStep = () => {
+  const pauseSolo = useCallback(() => sendSoloControl({ action: "pause" }), [sendSoloControl]);
+  const resumeSolo = useCallback(() => sendSoloControl({ action: "resume" }), [sendSoloControl]);
+  const stopSolo = useCallback(() => sendSoloControl({ action: "stop" }), [sendSoloControl]);
+  const allowDangerousStep = useCallback(() => {
     setSoloConfirmation(null);
     return sendSoloControl({ action: "confirm_allow" });
-  };
-  const rejectDangerousStep = () => {
+  }, [sendSoloControl]);
+  const rejectDangerousStep = useCallback(() => {
     setSoloConfirmation(null);
     return sendSoloControl({ action: "confirm_reject" });
-  };
+  }, [sendSoloControl]);
 
-  const sendToolConfirmation = (decision: "allow" | "reject") => {
+  const sendToolConfirmation = useCallback((decision: "allow" | "reject") => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN || !toolConfirmation) {
       return false;
@@ -1772,9 +1772,18 @@ export function useBackendConnection(
     setStatusLine(decision === "allow" ? "工具确认已发送" : "工具动作已拒绝");
     setStatusDetail(null);
     return true;
-  };
+  }, [conversationId, toolConfirmation]);
 
-  const sendScheduledTaskMessage = (
+  const allowToolConfirmation = useCallback(
+    () => sendToolConfirmation("allow"),
+    [sendToolConfirmation],
+  );
+  const rejectToolConfirmation = useCallback(
+    () => sendToolConfirmation("reject"),
+    [sendToolConfirmation],
+  );
+
+  const sendScheduledTaskMessage = useCallback((
     type: string,
     payload: Record<string, unknown>,
   ) => {
@@ -1791,20 +1800,31 @@ export function useBackendConnection(
     };
     socket.send(JSON.stringify(envelope));
     return true;
-  };
+  }, [conversationId]);
 
-  const requestScheduledTasks = () =>
-    sendScheduledTaskMessage("client:scheduled_task_list", {});
-  const createScheduledTask = (task: Omit<ScheduledTask, "id" | "createdAt" | "updatedAt">) =>
-    sendScheduledTaskMessage("client:scheduled_task_create", { task });
-  const updateScheduledTask = (task: ScheduledTask) =>
-    sendScheduledTaskMessage("client:scheduled_task_update", { task });
-  const deleteScheduledTask = (taskId: string) =>
-    sendScheduledTaskMessage("client:scheduled_task_delete", { taskId });
-  const requestScheduledTaskHistory = (taskId: string) =>
-    sendScheduledTaskMessage("client:scheduled_task_history", { taskId });
+  const requestScheduledTasks = useCallback(
+    () => sendScheduledTaskMessage("client:scheduled_task_list", {}),
+    [sendScheduledTaskMessage],
+  );
+  const createScheduledTask = useCallback(
+    (task: Omit<ScheduledTask, "id" | "createdAt" | "updatedAt">) =>
+      sendScheduledTaskMessage("client:scheduled_task_create", { task }),
+    [sendScheduledTaskMessage],
+  );
+  const updateScheduledTask = useCallback(
+    (task: ScheduledTask) => sendScheduledTaskMessage("client:scheduled_task_update", { task }),
+    [sendScheduledTaskMessage],
+  );
+  const deleteScheduledTask = useCallback(
+    (taskId: string) => sendScheduledTaskMessage("client:scheduled_task_delete", { taskId }),
+    [sendScheduledTaskMessage],
+  );
+  const requestScheduledTaskHistory = useCallback(
+    (taskId: string) => sendScheduledTaskMessage("client:scheduled_task_history", { taskId }),
+    [sendScheduledTaskMessage],
+  );
 
-  const saveMemoryState = (memory: MemoryState) => {
+  const saveMemoryState = useCallback((memory: MemoryState) => {
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       setStatusLine("后端服务未就绪");
@@ -1820,7 +1840,20 @@ export function useBackendConnection(
     };
     socket.send(JSON.stringify(envelope));
     return true;
-  };
+  }, [conversationId]);
+
+  const startWechatBind = useCallback(
+    (force = false) => sendWechatControl("client:wechat_bind_start", { force }),
+    [sendWechatControl],
+  );
+  const cancelWechatBind = useCallback(
+    () => sendWechatControl("client:wechat_bind_cancel"),
+    [sendWechatControl],
+  );
+  const unbindWechat = useCallback(
+    () => sendWechatControl("client:wechat_unbind"),
+    [sendWechatControl],
+  );
 
   return {
     backend,
@@ -1841,17 +1874,16 @@ export function useBackendConnection(
     wechatBindStatus,
     requestSoloDisplays,
     refreshSettings,
-    startWechatBind: (force = false) =>
-      sendWechatControl("client:wechat_bind_start", { force }),
-    cancelWechatBind: () => sendWechatControl("client:wechat_bind_cancel"),
-    unbindWechat: () => sendWechatControl("client:wechat_unbind"),
+    startWechatBind,
+    cancelWechatBind,
+    unbindWechat,
     pauseSolo,
     resumeSolo,
     stopSolo,
     allowDangerousStep,
     rejectDangerousStep,
-    allowToolConfirmation: () => sendToolConfirmation("allow"),
-    rejectToolConfirmation: () => sendToolConfirmation("reject"),
+    allowToolConfirmation,
+    rejectToolConfirmation,
     overlayVisible,
     setOverlayVisible,
     scheduledTasks,

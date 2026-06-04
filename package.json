@@ -7,6 +7,11 @@
   "packageManager": "pnpm@10.7.0",
   "scripts": {
     "dev": "vite",
+    "dev:web": "vite",
+    "dev:backend": "pnpm --filter @open-eagle/backend dev",
+    "dev:desktop": "node scripts/electron-dev.cjs",
+    "dev:desktop:external-backend": "node scripts/electron-dev-external-backend.cjs",
+    "dev:stack": "node scripts/dev-stack.cjs",
     "build": "tsc && vite build",
     "preview": "vite preview",
     "electron:dev": "node scripts/electron-dev.cjs",
@@ -22,6 +27,7 @@
   },
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.6",
+    "@tanstack/react-virtual": "^3.14.2",
     "classic-level": "^3.0.0",
     "lucide-react": "^1.11.0",
     "qrcode": "^1.5.4",

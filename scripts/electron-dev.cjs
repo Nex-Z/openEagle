@@ -65,14 +65,14 @@ function runPnpmChecked(args) {
   }
 }
 
-function urlReady(url) {
+function urlReady(url, timeoutMs = 1000) {
   return new Promise((resolve) => {
     const req = http.get(url, (res) => {
       res.resume();
       resolve((res.statusCode ?? 500) < 500);
     });
     req.on("error", () => resolve(false));
-    req.setTimeout(1000, () => {
+    req.setTimeout(timeoutMs, () => {
       req.destroy();
       resolve(false);
     });
@@ -123,11 +123,9 @@ function stop(child) {
 }
 
 async function main() {
-  runPnpmChecked(["exec", "tsc", "-p", "tsconfig.electron.json"]);
-  runChecked(process.execPath, [path.join(root, "scripts", "ensure-cjs-package.cjs")]);
-
   let vite = null;
-  if (!(await urlReady(devUrl))) {
+  let viteReady = Promise.resolve(true);
+  if (!(await urlReady(devUrl, 300))) {
     vite = spawnPnpmInherit([
       "exec",
       "vite",
@@ -144,11 +142,16 @@ async function main() {
       }
     });
 
-    if (!(await waitForUrl(devUrl, 20_000))) {
-      stop(vite);
-      console.error("[electron:dev] Vite did not become ready on http://127.0.0.1:1420");
-      process.exit(1);
-    }
+    viteReady = waitForUrl(devUrl, 20_000);
+  }
+
+  runPnpmChecked(["exec", "tsc", "-p", "tsconfig.electron.json"]);
+  runChecked(process.execPath, [path.join(root, "scripts", "ensure-cjs-package.cjs")]);
+
+  if (!(await viteReady)) {
+    stop(vite);
+    console.error("[electron:dev] Vite did not become ready on http://127.0.0.1:1420");
+    process.exit(1);
   }
 
   const electron = spawnPnpmInherit(["exec", "electron", "--no-sandbox", "--disable-gpu", "--disable-gpu-compositing", "."]);

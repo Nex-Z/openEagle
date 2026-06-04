@@ -1,4 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useVirtualizer } from "@tanstack/react-virtual";
 import { convertFileSrc } from "../../lib/electron-bridge";
 import {
   ChevronDown,
@@ -366,6 +367,83 @@ function groupAssistantBlocks(blocks: AssistantMessageBlock[]) {
   return grouped;
 }
 
+type MessageListItem =
+  | {
+      id: string;
+      kind: "message";
+      message: ChatMessage;
+    }
+  | {
+      id: string;
+      kind: "tool-group";
+      messages: ChatMessage[];
+    };
+
+function buildMessageListItems(messages: ChatMessage[]) {
+  const items: MessageListItem[] = [];
+  let toolBuffer: ChatMessage[] = [];
+
+  const flushToolBuffer = () => {
+    if (toolBuffer.length === 0) {
+      return;
+    }
+    items.push({
+      id: `tool-group-${toolBuffer[0].id}-${toolBuffer[toolBuffer.length - 1].id}`,
+      kind: "tool-group",
+      messages: toolBuffer,
+    });
+    toolBuffer = [];
+  };
+
+  for (const message of messages) {
+    if (message.role === "tool" && message.traces && message.traces.length > 0) {
+      toolBuffer.push(message);
+      continue;
+    }
+    flushToolBuffer();
+    items.push({
+      id: message.id,
+      kind: "message",
+      message,
+    });
+  }
+
+  flushToolBuffer();
+  return items;
+}
+
+function estimateMessageSize(message: ChatMessage) {
+  const contentLength =
+    message.content.length +
+    (message.blocks?.reduce(
+      (total, block) => total + (block.kind === "text" ? block.content.length : 34),
+      0,
+    ) ?? 0);
+  const traceCount =
+    (message.traces?.length ?? 0) +
+    (message.blocks?.filter((block) => block.kind === "trace").length ?? 0);
+  const attachmentCount = message.attachments?.length ?? 0;
+
+  if (message.role === "user") {
+    return Math.min(260, 56 + Math.ceil(contentLength / 90) * 24 + attachmentCount * 42);
+  }
+  if (message.role === "tool") {
+    return Math.min(320, 64 + traceCount * 42);
+  }
+  return Math.min(720, 110 + Math.ceil(contentLength / 88) * 24 + traceCount * 44 + attachmentCount * 46);
+}
+
+function estimateMessageListItemSize(item: MessageListItem | undefined) {
+  if (!item) {
+    return 160;
+  }
+  if (item.kind === "tool-group") {
+    const traceCount = item.messages.reduce((total, message) => total + (message.traces?.length ?? 0), 0);
+    return Math.min(420, 70 + traceCount * 38);
+  }
+  return estimateMessageSize(item.message);
+}
+
 function TraceGroup(props: {
   message: ChatMessage;
   group: Extract<RenderedAssistantBlock, { kind: "trace-group" }>;
@@ -643,7 +721,99 @@ function ToolMessageGroup(props: {
   );
 }
 
-export function ChatWorkspace(props: ChatWorkspaceProps) {
+const MessageArticle = memo(function MessageArticle({
+  message,
+  expandedTraceIds,
+  onToggleTrace,
+}: {
+  message: ChatMessage;
+  expandedTraceIds: Set<string>;
+  onToggleTrace: (traceKey: string) => void;
+}) {
+  return (
+    <article
+      className={`message-shell role-${message.role} ${message.mode === "solo" ? "mode-solo" : ""}`}
+    >
+      <div className="message-meta">
+        <strong>
+          {message.role === "user"
+            ? "你"
+            : message.role === "assistant"
+              ? "Agent"
+              : message.role === "tool"
+                ? "工具"
+                : "系统"}
+        </strong>
+        <span>{new Date(message.createdAt).toLocaleTimeString()}</span>
+      </div>
+
+      {shouldShowMessageLabel(message) ? <div className="message-label">{message.label}</div> : null}
+
+      {message.blocks && message.blocks.length > 0 ? (
+        <div className="assistant-blocks">
+          {groupAssistantBlocks(message.blocks).map((block) =>
+            block.kind === "text" ? (
+              block.content ? (
+                <div key={block.id} className="assistant-text-panel">
+                  {renderMessageMarkdown(block.content)}
+                </div>
+              ) : null
+            ) : block.kind === "trace-group" ? (
+              <TraceGroup
+                key={block.id}
+                expandedTraceIds={expandedTraceIds}
+                group={block}
+                message={message}
+                onToggleTrace={onToggleTrace}
+              />
+            ) : (
+              <TraceGroup
+                key={block.id}
+                expandedTraceIds={expandedTraceIds}
+                group={{ id: `trace-group-${block.trace.id}`, kind: "trace-group", traces: [block.trace] }}
+                message={message}
+                onToggleTrace={onToggleTrace}
+              />
+            ),
+          )}
+          {/* blocks 全是 trace 没有正文时，用 content 兜底 */}
+          {message.content && !message.blocks.some((b) => b.kind === "text" && b.content) ? (
+            <div className="assistant-text-panel">{renderMessageMarkdown(message.content)}</div>
+          ) : null}
+        </div>
+      ) : message.content ? (
+        renderMessageMarkdown(message.content)
+      ) : null}
+
+      <AttachmentList attachments={message.attachments} />
+
+      {(!message.blocks || message.blocks.length === 0) &&
+      message.traces &&
+      message.traces.length > 0 ? (
+        <TraceGroup
+          expandedTraceIds={expandedTraceIds}
+          group={{
+            id: `trace-group-${message.traces[0]?.id ?? message.id}`,
+            kind: "trace-group",
+            traces: message.traces,
+          }}
+          message={message}
+          onToggleTrace={onToggleTrace}
+        />
+      ) : null}
+
+      {message.role === "assistant" && message.status === "pending" ? (
+        <div className="message-thinking" aria-label="AI 正在思考">
+          <span />
+          <span />
+          <span />
+        </div>
+      ) : null}
+    </article>
+  );
+});
+
+function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
   const {
     messages,
     canSend,
@@ -705,7 +875,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
       .filter((group) => group.items.length > 0);
   }, [filteredSlashItems]);
 
-  const flatItems = groupedItems.flatMap((group) => group.items);
+  const flatItems = useMemo(() => groupedItems.flatMap((group) => group.items), [groupedItems]);
 
   const visibleMessages = useMemo(
     () =>
@@ -714,6 +884,26 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
       ),
     [messages],
   );
+  const messageItems = useMemo(() => buildMessageListItems(visibleMessages), [visibleMessages]);
+
+  const estimateVirtualItemSize = useCallback(
+    (index: number) => estimateMessageListItemSize(messageItems[index]),
+    [messageItems],
+  );
+
+  const getVirtualItemKey = useCallback(
+    (index: number) => messageItems[index]?.id ?? index,
+    [messageItems],
+  );
+
+  const messageVirtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
+    count: messageItems.length,
+    getScrollElement: () => streamRef.current,
+    estimateSize: estimateVirtualItemSize,
+    getItemKey: getVirtualItemKey,
+    overscan: 8,
+    gap: 30,
+  });
 
   useEffect(() => {
     const element = textareaRef.current;
@@ -743,16 +933,17 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
   useEffect(() => {
     const stream = streamRef.current;
     const latestMessage = visibleMessages[visibleMessages.length - 1];
+    const latestItemIndex = messageItems.length - 1;
     const forceScrollForSolo = latestMessage?.mode === "solo";
-    if (!stream || (!shouldStickToBottomRef.current && !forceScrollForSolo)) {
+    if (!stream || latestItemIndex < 0 || (!shouldStickToBottomRef.current && !forceScrollForSolo)) {
       return;
     }
     requestAnimationFrame(() => {
-      stream.scrollTo({ top: stream.scrollHeight, behavior: "auto" });
+      messageVirtualizer.scrollToIndex(latestItemIndex, { align: "end", behavior: "auto" });
     });
-  }, [soloStatus.state, visibleMessages]);
+  }, [messageItems.length, messageVirtualizer, soloStatus.state, visibleMessages]);
 
-  const toggleTrace = (traceKey: string) => {
+  const toggleTrace = useCallback((traceKey: string) => {
     setExpandedTraceIds((current) => {
       const next = new Set(current);
       if (next.has(traceKey)) {
@@ -762,7 +953,19 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
       }
       return next;
     });
-  };
+  }, []);
+
+  const toggleToolGroup = useCallback((groupId: string) => {
+    setExpandedToolGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(groupId)) {
+        next.delete(groupId);
+      } else {
+        next.add(groupId);
+      }
+      return next;
+    });
+  }, []);
 
   const handleFilesSelected = async (fileList: FileList | null) => {
     const files = Array.from(fileList ?? []);
@@ -912,6 +1115,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     soloStatus.state === "paused" ||
     soloStatus.state === "waiting_user_confirmation";
   const permissionIsAll = settings.permissions.mode === "all";
+  const virtualRows = messageVirtualizer.getVirtualItems();
 
   return (
     <section className="chat-workspace bg-white motion-safe:animate-[eagle-panel-up_260ms_ease-out_both]">
@@ -921,7 +1125,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
         </button>
       </div>
 
-      <div ref={streamRef} className="message-stream scroll-smooth">
+      <div ref={streamRef} className="message-stream">
         {visibleMessages.length === 0 ? (
           <div className="empty-message-state">
             {!canSend ? (
@@ -943,135 +1147,43 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
             )}
           </div>
         ) : (
-          (() => {
-            const elements: ReactNode[] = [];
-            let toolBuffer: ChatMessage[] = [];
-
-            const flushToolBuffer = () => {
-              if (toolBuffer.length === 0) return;
-              const groupId = `tool-group-${toolBuffer[0].id}-${toolBuffer[toolBuffer.length - 1].id}`;
-              const isCollapsed = !expandedToolGroups.has(groupId);
-              elements.push(
-                <ToolMessageGroup
-                  key={groupId}
-                  messages={toolBuffer}
-                  expandedTraceIds={expandedTraceIds}
-                  onToggleTrace={toggleTrace}
-                  isCollapsed={isCollapsed}
-                  onToggleCollapsed={() => {
-                    setExpandedToolGroups((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(groupId)) {
-                        next.delete(groupId);
-                      } else {
-                        next.add(groupId);
-                      }
-                      return next;
-                    });
-                  }}
-                />,
-              );
-              toolBuffer = [];
-            };
-
-            for (const message of visibleMessages) {
-              if (message.role === "tool" && message.traces && message.traces.length > 0) {
-                toolBuffer.push(message);
-                continue;
+          <div
+            className="message-virtualizer"
+            style={{ height: `${messageVirtualizer.getTotalSize()}px` }}
+          >
+            {virtualRows.map((virtualRow) => {
+              const item = messageItems[virtualRow.index];
+              if (!item) {
+                return null;
               }
-              flushToolBuffer();
 
-              elements.push(
-                <article
-                  key={message.id}
-                  className={`message-shell role-${message.role} ${message.mode === "solo" ? "mode-solo" : ""}`}
+              return (
+                <div
+                  key={item.id}
+                  ref={messageVirtualizer.measureElement}
+                  className="message-virtual-row"
+                  data-index={virtualRow.index}
+                  style={{ transform: `translateY(${virtualRow.start}px)` }}
                 >
-                  <div className="message-meta">
-                    <strong>
-                      {message.role === "user"
-                        ? "你"
-                        : message.role === "assistant"
-                          ? "Agent"
-                          : message.role === "tool"
-                            ? "工具"
-                            : "系统"}
-                    </strong>
-                    <span>{new Date(message.createdAt).toLocaleTimeString()}</span>
-                  </div>
-
-                  {shouldShowMessageLabel(message) ? (
-                    <div className="message-label">{message.label}</div>
-                  ) : null}
-
-                  {message.blocks && message.blocks.length > 0 ? (
-                    <div className="assistant-blocks">
-                      {groupAssistantBlocks(message.blocks).map((block) =>
-                        block.kind === "text" ? (
-                          block.content ? (
-                            <div key={block.id} className="assistant-text-panel">
-                              {renderMessageMarkdown(block.content)}
-                            </div>
-                          ) : null
-                        ) : block.kind === "trace-group" ? (
-                          <TraceGroup
-                            key={block.id}
-                            expandedTraceIds={expandedTraceIds}
-                            group={block}
-                            message={message}
-                            onToggleTrace={toggleTrace}
-                          />
-                        ) : (
-                          <TraceGroup
-                            key={block.id}
-                            expandedTraceIds={expandedTraceIds}
-                            group={{ id: `trace-group-${block.trace.id}`, kind: "trace-group", traces: [block.trace] }}
-                            message={message}
-                            onToggleTrace={toggleTrace}
-                          />
-                        ),
-                      )}
-                      {/* blocks 全是 trace 没有正文时，用 content 兜底 */}
-                      {message.content &&
-                        !message.blocks.some((b) => b.kind === "text" && b.content) && (
-                          <div className="assistant-text-panel">
-                            {renderMessageMarkdown(message.content)}
-                          </div>
-                        )}
-                    </div>
-                  ) : message.content ? (
-                    renderMessageMarkdown(message.content)
-                  ) : null}
-
-                  <AttachmentList attachments={message.attachments} />
-
-                  {(!message.blocks || message.blocks.length === 0) &&
-                  message.traces &&
-                  message.traces.length > 0 ? (
-                    <TraceGroup
+                  {item.kind === "tool-group" ? (
+                    <ToolMessageGroup
+                      messages={item.messages}
                       expandedTraceIds={expandedTraceIds}
-                      group={{
-                        id: `trace-group-${message.traces[0]?.id ?? message.id}`,
-                        kind: "trace-group",
-                        traces: message.traces,
-                      }}
-                      message={message}
+                      onToggleTrace={toggleTrace}
+                      isCollapsed={!expandedToolGroups.has(item.id)}
+                      onToggleCollapsed={() => toggleToolGroup(item.id)}
+                    />
+                  ) : (
+                    <MessageArticle
+                      expandedTraceIds={expandedTraceIds}
+                      message={item.message}
                       onToggleTrace={toggleTrace}
                     />
-                  ) : null}
-
-                  {message.role === "assistant" && message.status === "pending" ? (
-                    <div className="message-thinking" aria-label="AI 正在思考">
-                      <span />
-                      <span />
-                      <span />
-                    </div>
-                  ) : null}
-                </article>,
+                  )}
+                </div>
               );
-            }
-            flushToolBuffer();
-            return elements;
-          })()
+            })}
+          </div>
         )}
       </div>
 
@@ -1145,10 +1257,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
           </div>
         ) : null}
 
-        <div
-          className="composer-frame transition-[border-color,box-shadow,transform] duration-200 ease-out"
-          style={{ backdropFilter: "blur(8px)" }}
-        >
+        <div className="composer-frame transition-[border-color,box-shadow,transform] duration-200 ease-out">
           <input
             ref={fileInputRef}
             multiple
@@ -1188,7 +1297,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
             />
 
             {slashQuery ? (
-              <div className="slash-menu" role="listbox" style={{ backdropFilter: "blur(8px)" }}>
+              <div className="slash-menu" role="listbox">
                 <div className="slash-menu-header">
                   <strong>命令面板</strong>
                   <span>上下键选择，Enter 插入</span>
@@ -1270,3 +1379,5 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
     </section>
   );
 }
+
+export const ChatWorkspace = memo(ChatWorkspaceComponent);

@@ -1,0 +1,8 @@
+{
+  "name": "@open-eagle/backend",
+  "private": true,
+  "scripts": {
+    "dev": "node ../scripts/backend-dev.cjs",
+    "dev:random": "node ../scripts/backend-dev.cjs --port 0"
+  }
+}

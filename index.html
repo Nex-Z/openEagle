@@ -23,22 +23,22 @@
     <style>
       :root {
         color-scheme: dark;
-        --boot-bg-app: #121313;
-        --boot-bg-panel: #171919;
-        --boot-bg-panel-muted: #141616;
-        --boot-bg-surface: #1d2020;
-        --boot-bg-elevated: #232727;
-        --boot-border-subtle: rgba(255, 248, 238, 0.08);
-        --boot-text-primary: #f5efe7;
-        --boot-text-secondary: #d7d0c7;
-        --boot-text-muted: #938d85;
-        --boot-accent: #2ba58d;
-        --boot-accent-soft: rgba(43, 165, 141, 0.16);
+        --boot-bg-app: #0b1220;
+        --boot-bg-panel: #111827;
+        --boot-bg-panel-muted: #172033;
+        --boot-bg-surface: #1e293b;
+        --boot-bg-elevated: #263449;
+        --boot-border-subtle: rgba(219, 234, 254, 0.1);
+        --boot-text-primary: #f8fbff;
+        --boot-text-secondary: #dbeafe;
+        --boot-text-muted: #94a3b8;
+        --boot-accent: #60a5fa;
+        --boot-accent-soft: rgba(96, 165, 250, 0.16);
         background:
-          radial-gradient(circle at top left, rgba(43, 165, 141, 0.16), transparent 22%),
-          radial-gradient(circle at top right, rgba(241, 182, 92, 0.08), transparent 16%),
-          linear-gradient(180deg, #121313 0%, #0f1010 100%);
-        color: #f5efe7;
+          radial-gradient(circle at top left, rgba(96, 165, 250, 0.16), transparent 22%),
+          radial-gradient(circle at top right, rgba(37, 99, 235, 0.1), transparent 16%),
+          linear-gradient(180deg, #0b1220 0%, #020617 100%);
+        color: #f8fbff;
         font-family:
           "Segoe UI", "PingFang SC", "Microsoft YaHei", ui-sans-serif,
           system-ui, sans-serif;
@@ -46,21 +46,21 @@
 
       :root[data-theme="light"] {
         color-scheme: light;
-        --boot-bg-app: #edf0ed;
-        --boot-bg-panel: #f7faf8;
-        --boot-bg-panel-muted: #eef3f1;
+        --boot-bg-app: #f6faff;
+        --boot-bg-panel: #ffffff;
+        --boot-bg-panel-muted: #edf5ff;
         --boot-bg-surface: #ffffff;
-        --boot-bg-elevated: #fbfcfb;
-        --boot-border-subtle: rgba(23, 36, 33, 0.08);
-        --boot-text-primary: #13221e;
-        --boot-text-secondary: #314743;
-        --boot-text-muted: #6d7c78;
-        --boot-accent: #0d7c69;
-        --boot-accent-soft: rgba(13, 124, 105, 0.12);
+        --boot-bg-elevated: #f9fcff;
+        --boot-border-subtle: rgba(20, 88, 214, 0.12);
+        --boot-text-primary: #081636;
+        --boot-text-secondary: #253858;
+        --boot-text-muted: #63728d;
+        --boot-accent: #155cff;
+        --boot-accent-soft: rgba(21, 92, 255, 0.1);
         background:
-          radial-gradient(circle at top left, rgba(13, 124, 105, 0.12), transparent 24%),
-          radial-gradient(circle at top right, rgba(202, 152, 59, 0.08), transparent 16%),
-          linear-gradient(180deg, #eef1ee 0%, #e5ebe7 100%);
+          radial-gradient(circle at top left, rgba(21, 92, 255, 0.09), transparent 24%),
+          radial-gradient(circle at top right, rgba(106, 165, 255, 0.08), transparent 16%),
+          linear-gradient(180deg, #ffffff 0%, #eef6ff 100%);
         color: var(--boot-text-primary);
       }
 
@@ -113,7 +113,7 @@
         border-radius: 12px;
         display: grid;
         place-items: center;
-        background: linear-gradient(180deg, var(--boot-accent), #65bfae);
+        background: linear-gradient(180deg, #6aa5ff, var(--boot-accent));
         color: #ffffff;
         font-size: 13px;
         font-weight: 700;
@@ -179,7 +179,7 @@
         width: 8px;
         height: 8px;
         border-radius: 999px;
-        background: #c7923b;
+        background: #f59e0b;
       }
 
       .boot-status-card small {
@@ -234,7 +234,7 @@
         width: 24px;
         height: 24px;
         border-radius: 999px;
-        border: 2px solid rgba(43, 165, 141, 0.22);
+        border: 2px solid rgba(21, 92, 255, 0.22);
         border-top-color: var(--boot-accent);
         animation: boot-spin 1s linear infinite;
       }

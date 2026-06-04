@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { convertFileSrc, invoke } from "../../lib/electron-bridge";
 import {
   AlertTriangle,
@@ -193,7 +193,7 @@ function visualKindLabel(visual?: SoloStepVisualPayload) {
   }
 }
 
-export function ActivityInspector(props: ActivityInspectorProps) {
+function ActivityInspectorComponent(props: ActivityInspectorProps) {
   const {
     traces,
     assets,
@@ -714,3 +714,5 @@ export function ActivityInspector(props: ActivityInspectorProps) {
     </>
   );
 }
+
+export const ActivityInspector = memo(ActivityInspectorComponent);

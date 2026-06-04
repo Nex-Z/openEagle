@@ -27,6 +27,7 @@ import type {
   AssistantMessageBlock,
   ChatMessage,
   ConversationSummary,
+  PermissionMode,
 } from "./types/protocol";
 
 function createConversation(seed?: Partial<ConversationSummary>): ConversationSummary {
@@ -162,7 +163,10 @@ export default function App() {
   const pendingDeletedConversationIdsRef = useRef<Set<string>>(new Set());
   const conversationStoreRef = useRef(conversationStore);
   const conversationsHydratedRef = useRef(conversationsHydrated);
-  const conversations = conversationStore.map((item) => item.summary);
+  const conversations = useMemo(
+    () => conversationStore.map((item) => item.summary),
+    [conversationStore],
+  );
   const activeConversation =
     conversationStore.find((item) => item.summary.id === activeConversationId) ??
     conversationStore[0];
@@ -539,7 +543,7 @@ export default function App() {
   const traces = useMemo(() => collectLatestTraces(messages), [messages]);
   const assets = useMemo(() => collectAssetMessages(messages), [messages]);
 
-  const createNewConversation = () => {
+  const createNewConversation = useCallback(() => {
     const next = createConversation({
       title: `对话 ${conversations.length + 1}`,
     });
@@ -552,9 +556,9 @@ export default function App() {
     ]);
     setActiveConversationId(next.id);
     setMobileSidebarOpen(false);
-  };
+  }, [conversations.length]);
 
-  const deleteConversation = (conversationId: string) => {
+  const deleteConversation = useCallback((conversationId: string) => {
     pendingDeletedConversationIdsRef.current.add(conversationId);
     setConversationStore((current) => {
       const remaining = current.filter((item) => item.summary.id !== conversationId);
@@ -572,7 +576,47 @@ export default function App() {
       setActiveConversationId(replacement.summary.id);
       return [replacement];
     });
-  };
+  }, [activeConversationId]);
+
+  const handleToggleInspectorCollapsed = useCallback(() => {
+    setInspectorCollapsed((current) => !current);
+  }, []);
+
+  const handleOpenMobileSidebar = useCallback(() => {
+    setMobileSidebarOpen(true);
+  }, []);
+
+  const handleCloseMobileSidebar = useCallback(() => {
+    setMobileSidebarOpen(false);
+  }, []);
+
+  const handleOpenSettings = useCallback((section: SettingsSection) => {
+    setSettingsSection(section);
+    setSettingsDrawerOpen(true);
+  }, []);
+
+  const handleCloseSettings = useCallback(() => {
+    setSettingsDrawerOpen(false);
+  }, []);
+
+  const handleSettingsSectionChange = useCallback((section: SettingsSection) => {
+    setSettingsSection(section);
+  }, []);
+
+  const handleSelectConversation = useCallback((id: string) => {
+    setActiveConversationId(id);
+    setMobileSidebarOpen(false);
+  }, []);
+
+  const handlePermissionModeChange = useCallback((mode: PermissionMode) => {
+    setSettings((current) => ({
+      ...current,
+      permissions: {
+        ...current.permissions,
+        mode,
+      },
+    }));
+  }, []);
 
   return (
     <>
@@ -590,7 +634,7 @@ export default function App() {
             onAllowToolConfirmation={allowToolConfirmation}
             onRejectDangerousStep={rejectDangerousStep}
             onRejectToolConfirmation={rejectToolConfirmation}
-            onToggleCollapsed={() => setInspectorCollapsed((current) => !current)}
+            onToggleCollapsed={handleToggleInspectorCollapsed}
             soloConfirmation={soloConfirmation}
             soloLastError={soloLastError}
             soloStatus={soloStatus}
@@ -607,16 +651,8 @@ export default function App() {
             messages={messages}
             onAllowDangerousStep={allowDangerousStep}
             onAllowToolConfirmation={allowToolConfirmation}
-            onOpenMobileSidebar={() => setMobileSidebarOpen(true)}
-            onPermissionModeChange={(mode) =>
-              setSettings((current) => ({
-                ...current,
-                permissions: {
-                  ...current.permissions,
-                  mode,
-                },
-              }))
-            }
+            onOpenMobileSidebar={handleOpenMobileSidebar}
+            onPermissionModeChange={handlePermissionModeChange}
             onRejectDangerousStep={rejectDangerousStep}
             onRejectToolConfirmation={rejectToolConfirmation}
             onSend={sendMessage}
@@ -636,17 +672,11 @@ export default function App() {
             backend={backend}
             conversations={conversations}
             mobileOpen={mobileSidebarOpen}
-            onCloseMobile={() => setMobileSidebarOpen(false)}
+            onCloseMobile={handleCloseMobileSidebar}
             onDeleteConversation={deleteConversation}
             onNewConversation={createNewConversation}
-            onOpenSettings={(section) => {
-              setSettingsSection(section);
-              setSettingsDrawerOpen(true);
-            }}
-            onSelectConversation={(id) => {
-              setActiveConversationId(id);
-              setMobileSidebarOpen(false);
-            }}
+            onOpenSettings={handleOpenSettings}
+            onSelectConversation={handleSelectConversation}
             statusDetail={statusDetail}
             statusLine={statusLine}
           />
@@ -661,11 +691,11 @@ export default function App() {
         scheduledTaskHistory={scheduledTaskHistory}
         onCancelWechatBind={cancelWechatBind}
         onChange={setSettings}
-        onClose={() => setSettingsDrawerOpen(false)}
+        onClose={handleCloseSettings}
         onRefreshSoloDisplays={requestSoloDisplays}
         onRefreshSettings={refreshSettings}
         onRequestMemoryState={requestMemoryState}
-        onSectionChange={setSettingsSection}
+        onSectionChange={handleSettingsSectionChange}
         onStartWechatBind={startWechatBind}
         onUnbindWechat={unbindWechat}
         onRequestScheduledTasks={requestScheduledTasks}

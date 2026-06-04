@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { memo, useEffect, useRef, useState } from "react";
 import {
   CirclePlus,
   Feather,
@@ -58,7 +58,7 @@ function sidebarStatusCopy(backend: BackendState) {
   }
 }
 
-export function NavigationSidebar(props: NavigationSidebarProps) {
+function NavigationSidebarComponent(props: NavigationSidebarProps) {
   const {
     conversations,
     activeConversationId,
@@ -171,7 +171,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                     </button>
 
                     {openMenuId === conversation.id ? (
-                      <div className="floating-menu" role="menu" style={{ backdropFilter: "blur(8px)" }}>
+                      <div className="floating-menu" role="menu">
                         <button
                           className="floating-menu-item danger"
                           onClick={(event) => {
@@ -218,3 +218,5 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
     </>
   );
 }
+
+export const NavigationSidebar = memo(NavigationSidebarComponent);
