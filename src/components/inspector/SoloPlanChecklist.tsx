@@ -6,11 +6,11 @@ interface SoloPlanChecklistProps {
 }
 
 const STATUS_CONFIG = {
-  completed: { icon: CheckCircle2, color: "var(--color-success, #22c55e)", label: "完成" },
-  in_progress: { icon: Loader2, color: "var(--color-info, #3b82f6)", label: "进行中" },
-  pending: { icon: Circle, color: "var(--color-muted, #6b7280)", label: "等待" },
-  failed: { icon: XCircle, color: "var(--color-danger, #ef4444)", label: "失败" },
-  skipped: { icon: MinusCircle, color: "var(--color-muted, #6b7280)", label: "跳过" },
+  completed: { icon: CheckCircle2, color: "var(--success)", label: "完成" },
+  in_progress: { icon: Loader2, color: "var(--accent)", label: "进行中" },
+  pending: { icon: Circle, color: "var(--text-muted)", label: "等待" },
+  failed: { icon: XCircle, color: "var(--danger)", label: "失败" },
+  skipped: { icon: MinusCircle, color: "var(--text-muted)", label: "跳过" },
 } as const;
 
 export function SoloPlanChecklist({ plan }: SoloPlanChecklistProps) {

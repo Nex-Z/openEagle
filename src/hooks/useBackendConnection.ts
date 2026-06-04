@@ -343,6 +343,41 @@ function upsertAssistantTrace(
   });
 }
 
+function applyAssistantDelta(
+  current: ChatMessage[],
+  requestId: string,
+  delta: string,
+  timestamp: string,
+) {
+  return upsertAssistantMessage(current, requestId, (message) => {
+    const blocks = cloneAssistantBlocks(message);
+    const last = blocks[blocks.length - 1];
+    if (last && last.kind === "text" && last.status !== "done") {
+      last.content += delta;
+      last.status = "pending";
+    } else {
+      blocks.push({
+        id: createId("blk"),
+        kind: "text",
+        content: delta,
+        status: "pending",
+        purpose: "final",
+      });
+    }
+
+    return {
+      id: message?.id ?? createId("assistant"),
+      requestId,
+      role: "assistant",
+      content: collectAssistantContent(blocks),
+      createdAt: message?.createdAt ?? timestamp,
+      status: "pending",
+      traces: message?.traces ?? [],
+      blocks,
+    };
+  });
+}
+
 const initialState: BackendState = {
   phase: "starting",
   port: null,
@@ -353,6 +388,14 @@ const idleSoloStatus: SoloStatusPayload = {
   state: "idle",
   stepCount: 0,
   maxSteps: 100,
+};
+
+type PendingMessageDelta = {
+  targetConversation?: ConversationSummary;
+  targetConversationId: string;
+  requestId: string;
+  content: string;
+  timestamp: string;
 };
 
 export function useBackendConnection(
@@ -401,6 +444,9 @@ export function useBackendConnection(
   const syncedConversationIdRef = useRef(conversationId);
   const onConversationPatchRef = useRef(onConversationPatch);
   const skipNextMessageSyncRef = useRef(true);
+  const parentMessageSyncTimerRef = useRef<number | null>(null);
+  const pendingMessageDeltasRef = useRef<Map<string, PendingMessageDelta>>(new Map());
+  const deltaFlushTimerRef = useRef<number | null>(null);
   const activeSoloRequestIdRef = useRef<string | null>(null);
   const notifiedSoloRequestIdsRef = useRef<Set<string>>(new Set());
   const mainWindowFocusedRef = useRef(true);
@@ -416,6 +462,87 @@ export function useBackendConnection(
   soloConfirmationRef.current = soloConfirmation;
   settingsRef.current = settings;
   messagesRef.current = messages;
+
+  const clearParentMessageSyncTimer = () => {
+    if (parentMessageSyncTimerRef.current) {
+      window.clearTimeout(parentMessageSyncTimerRef.current);
+      parentMessageSyncTimerRef.current = null;
+    }
+  };
+
+  const flushParentMessageSync = (targetConversationId = syncedConversationIdRef.current) => {
+    clearParentMessageSyncTimer();
+    onMessagesChangeRef.current(targetConversationId, messagesRef.current);
+  };
+
+  const patchConversationMessages = (
+    targetConversationId: string,
+    targetConversation: ConversationSummary | undefined,
+    updater: (messages: ChatMessage[]) => ChatMessage[],
+  ) => {
+    if (targetConversationId === conversationId) {
+      setMessages(updater);
+      return;
+    }
+    onConversationPatchRef.current(
+      targetConversationId,
+      targetConversation,
+      updater,
+    );
+  };
+
+  const flushPendingMessageDeltas = (requestId?: string, discard = false) => {
+    const pending = pendingMessageDeltasRef.current;
+    const entries = Array.from(pending.values()).filter(
+      (entry) => !requestId || entry.requestId === requestId,
+    );
+    for (const entry of entries) {
+      pending.delete(`${entry.targetConversationId}:${entry.requestId}`);
+    }
+    if (pending.size === 0 && deltaFlushTimerRef.current) {
+      window.clearTimeout(deltaFlushTimerRef.current);
+      deltaFlushTimerRef.current = null;
+    }
+    if (discard) {
+      return;
+    }
+    for (const entry of entries) {
+      patchConversationMessages(
+        entry.targetConversationId,
+        entry.targetConversation,
+        (current) => applyAssistantDelta(current, entry.requestId, entry.content, entry.timestamp),
+      );
+    }
+  };
+
+  const queueMessageDelta = (
+    targetConversationId: string,
+    targetConversation: ConversationSummary | undefined,
+    requestId: string,
+    content: string,
+    timestamp: string,
+  ) => {
+    if (!content) {
+      return;
+    }
+    const key = `${targetConversationId}:${requestId}`;
+    const existing = pendingMessageDeltasRef.current.get(key);
+    pendingMessageDeltasRef.current.set(key, {
+      targetConversation,
+      targetConversationId,
+      requestId,
+      content: (existing?.content ?? "") + content,
+      timestamp: existing?.timestamp ?? timestamp,
+    });
+
+    if (deltaFlushTimerRef.current) {
+      return;
+    }
+    deltaFlushTimerRef.current = window.setTimeout(() => {
+      deltaFlushTimerRef.current = null;
+      flushPendingMessageDeltas();
+    }, 32);
+  };
 
   const syncSettings = () => {
     const socket = socketRef.current;
@@ -619,6 +746,10 @@ export function useBackendConnection(
     if (!conversationChanged && !externalMessagesChanged) {
       return;
     }
+    if (conversationChanged) {
+      flushPendingMessageDeltas();
+      flushParentMessageSync();
+    }
     syncedConversationIdRef.current = conversationId;
     skipNextMessageSyncRef.current = true;
     setMessages(initialMessages);
@@ -628,13 +759,19 @@ export function useBackendConnection(
     onConversationPatchRef.current = onConversationPatch;
   }, [onConversationPatch]);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (skipNextMessageSyncRef.current) {
       skipNextMessageSyncRef.current = false;
       return;
     }
 
-    onMessagesChangeRef.current(conversationId, messages);
+    clearParentMessageSyncTimer();
+    const targetConversationId = conversationId;
+    const nextMessages = messages;
+    parentMessageSyncTimerRef.current = window.setTimeout(() => {
+      parentMessageSyncTimerRef.current = null;
+      onMessagesChangeRef.current(targetConversationId, nextMessages);
+    }, 160);
   }, [conversationId, messages]);
 
   useEffect(() => {
@@ -759,15 +896,7 @@ export function useBackendConnection(
       const targetConversationId = envelope.conversationId;
       const targetConversation = envelope.payload.conversation;
       const patchMessages = (updater: (messages: ChatMessage[]) => ChatMessage[]) => {
-        if (targetConversationId === conversationId) {
-          setMessages(updater);
-          return;
-        }
-        onConversationPatchRef.current(
-          targetConversationId,
-          targetConversation,
-          updater,
-        );
+        patchConversationMessages(targetConversationId, targetConversation, updater);
       };
       const appendEnvelopeMessage = (message: Omit<ChatMessage, "id">) => {
         patchMessages((current) =>
@@ -908,6 +1037,7 @@ export function useBackendConnection(
       }
 
       if (envelope.type === "server:message") {
+        flushPendingMessageDeltas(envelope.requestId, true);
         patchMessages((current) =>
           upsertAssistantMessage(current, envelope.requestId, (message) => {
             const visibleContent =
@@ -972,35 +1102,12 @@ export function useBackendConnection(
       }
 
       if (envelope.type === "server:message_delta") {
-        patchMessages((current) =>
-          upsertAssistantMessage(current, envelope.requestId, (message) => {
-            const delta = envelope.payload.content ?? "";
-            const blocks = cloneAssistantBlocks(message);
-            const last = blocks[blocks.length - 1];
-            if (last && last.kind === "text" && last.status !== "done") {
-              last.content += delta;
-              last.status = "pending";
-            } else {
-              blocks.push({
-                id: createId("blk"),
-                kind: "text",
-                content: delta,
-                status: "pending",
-                purpose: "final",
-              });
-            }
-
-            return {
-              id: message?.id ?? createId("assistant"),
-              requestId: envelope.requestId,
-              role: "assistant",
-              content: collectAssistantContent(blocks),
-              createdAt: message?.createdAt ?? envelope.timestamp,
-              status: "pending",
-              traces: message?.traces ?? [],
-              blocks,
-            };
-          }),
+        queueMessageDelta(
+          targetConversationId,
+          targetConversation,
+          envelope.requestId,
+          envelope.payload.content ?? "",
+          envelope.timestamp,
         );
         setStatusLine("AI 正在输出");
         setStatusDetail(null);
@@ -1030,6 +1137,7 @@ export function useBackendConnection(
         }
 
         if (envelope.payload.stage === "idle") {
+          flushPendingMessageDeltas(envelope.requestId);
           patchMessages((current) =>
             current.map((message) =>
               message.role === "assistant" &&
@@ -1555,12 +1663,19 @@ export function useBackendConnection(
 
   useEffect(() => {
     return () => {
+      flushPendingMessageDeltas();
+      flushParentMessageSync();
       if (isElectronRuntime()) {
         void invoke("hide_solo_target_highlight").catch(() => {});
       }
       if (reconnectTimerRef.current) {
         window.clearTimeout(reconnectTimerRef.current);
       }
+      if (deltaFlushTimerRef.current) {
+        window.clearTimeout(deltaFlushTimerRef.current);
+        deltaFlushTimerRef.current = null;
+      }
+      clearParentMessageSyncTimer();
       const socket = socketRef.current;
       socketRef.current = null;
       activePortRef.current = null;

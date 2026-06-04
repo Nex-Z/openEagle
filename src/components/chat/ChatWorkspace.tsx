@@ -307,24 +307,18 @@ function compactTraceTitle(trace: AgentExecutionTrace) {
   return trace.name;
 }
 
-function traceGroupLabel(traces: AgentExecutionTrace[]) {
-  if (traces.length === 1) {
-    return `Run ${compactTraceTitle(traces[0])}`;
-  }
+function traceGroupStatus(traces: AgentExecutionTrace[]) {
+  const completed = traces.filter((trace) => trace.status === "completed").length;
+  const failed = traces.filter((trace) => trace.status === "error").length;
+  const running = traces.filter((trace) => trace.status === "started").length;
+  const total = traces.length;
+  const label = running
+    ? `正在执行 ${total} 项工具调用...`
+    : failed
+      ? `${failed} 项工具调用失败`
+      : `已完成 ${total} 项工具调用`;
 
-  const allTools = traces.every((trace) => trace.kind === "tool");
-  const allMcp = traces.every((trace) => trace.kind === "mcp");
-  const allSkills = traces.every((trace) => trace.kind === "skill");
-  if (allTools) {
-    return `Run ${traces.length} commands`;
-  }
-  if (allMcp) {
-    return `Run ${traces.length} MCP calls`;
-  }
-  if (allSkills) {
-    return `Run ${traces.length} skills`;
-  }
-  return `Run ${traces.length} calls`;
+  return { completed, failed, running, total, label };
 }
 
 function messageHasTrace(message: ChatMessage) {
@@ -382,6 +376,10 @@ function TraceGroup(props: {
   const [groupCollapsed, setGroupCollapsed] = useState(group.traces.length > 3);
   const hasError = group.traces.some((t) => t.status === "error");
   const isRunning = group.traces.some((t) => t.status === "started");
+  const status = traceGroupStatus(group.traces);
+  const progress = status.total
+    ? Math.max(status.running ? 8 : 0, Math.round(((status.completed + status.failed) / status.total) * 100))
+    : 0;
 
   if (group.traces.length > 1) {
     return (
@@ -398,7 +396,19 @@ function TraceGroup(props: {
           role="button"
           tabIndex={0}
         >
-          <span className="trace-group-label">{group.traces.length} 个工具调用</span>
+          <span
+            className={`tool-summary-dot ${hasError ? "has-error" : isRunning ? "is-running" : "is-completed"}`}
+          />
+          <span className="tool-summary-copy">
+            <span className="trace-group-label">{status.label}</span>
+            <span className="tool-summary-meta">
+              {status.completed}/{status.total} 完成
+              {status.failed ? ` · ${status.failed} 失败` : ""}
+            </span>
+            <span className="tool-summary-progress" aria-hidden="true">
+              <span style={{ width: `${progress}%` }} />
+            </span>
+          </span>
           <ChevronDown
             size={13}
             className="trace-group-chevron"
@@ -532,6 +542,10 @@ function ToolMessageGroup(props: {
   const hasError = allTraces.some((t) => t.status === "error");
   const isRunning = allTraces.some((t) => t.status === "started");
   const count = allTraces.length;
+  const status = traceGroupStatus(allTraces);
+  const progress = status.total
+    ? Math.max(status.running ? 8 : 0, Math.round(((status.completed + status.failed) / status.total) * 100))
+    : 0;
 
   return (
     <article className="message-shell role-tool tool-message-group">
@@ -547,7 +561,19 @@ function ToolMessageGroup(props: {
         role="button"
         tabIndex={0}
       >
-        <span className="tool-group-label">{count} 个工具调用</span>
+        <span
+          className={`tool-summary-dot ${hasError ? "has-error" : isRunning ? "is-running" : "is-completed"}`}
+        />
+        <span className="tool-summary-copy">
+          <span className="tool-group-label">{status.label}</span>
+          <span className="tool-summary-meta">
+            {status.completed}/{count} 完成
+            {status.failed ? ` · ${status.failed} 失败` : ""}
+          </span>
+          <span className="tool-summary-progress" aria-hidden="true">
+            <span style={{ width: `${progress}%` }} />
+          </span>
+        </span>
         <ChevronDown
           size={13}
           className="tool-group-chevron"
@@ -642,7 +668,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const [expandedTraceIds, setExpandedTraceIds] = useState<Set<string>>(new Set());
-  const [collapsedToolGroups, setCollapsedToolGroups] = useState<Set<string>>(new Set());
+  const [expandedToolGroups, setExpandedToolGroups] = useState<Set<string>>(new Set());
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const streamRef = useRef<HTMLDivElement | null>(null);
@@ -888,14 +914,14 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
   const permissionIsAll = settings.permissions.mode === "all";
 
   return (
-    <section className="chat-workspace">
+    <section className="chat-workspace bg-white motion-safe:animate-[eagle-panel-up_260ms_ease-out_both]">
       <div className="workspace-mobile-bar mobile-only">
         <button className="icon-button" onClick={onOpenMobileSidebar} type="button">
           <PanelLeftOpen size={16} />
         </button>
       </div>
 
-      <div ref={streamRef} className="message-stream">
+      <div ref={streamRef} className="message-stream scroll-smooth">
         {visibleMessages.length === 0 ? (
           <div className="empty-message-state">
             {!canSend ? (
@@ -924,7 +950,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
             const flushToolBuffer = () => {
               if (toolBuffer.length === 0) return;
               const groupId = `tool-group-${toolBuffer[0].id}-${toolBuffer[toolBuffer.length - 1].id}`;
-              const isCollapsed = collapsedToolGroups.has(groupId);
+              const isCollapsed = !expandedToolGroups.has(groupId);
               elements.push(
                 <ToolMessageGroup
                   key={groupId}
@@ -933,7 +959,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
                   onToggleTrace={toggleTrace}
                   isCollapsed={isCollapsed}
                   onToggleCollapsed={() => {
-                    setCollapsedToolGroups((prev) => {
+                    setExpandedToolGroups((prev) => {
                       const next = new Set(prev);
                       if (next.has(groupId)) {
                         next.delete(groupId);
@@ -1119,7 +1145,10 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
           </div>
         ) : null}
 
-        <div className="composer-frame">
+        <div
+          className="composer-frame transition-[border-color,box-shadow,transform] duration-200 ease-out"
+          style={{ backdropFilter: "blur(8px)" }}
+        >
           <input
             ref={fileInputRef}
             multiple
@@ -1159,7 +1188,7 @@ export function ChatWorkspace(props: ChatWorkspaceProps) {
             />
 
             {slashQuery ? (
-              <div className="slash-menu" role="listbox">
+              <div className="slash-menu" role="listbox" style={{ backdropFilter: "blur(8px)" }}>
                 <div className="slash-menu-header">
                   <strong>命令面板</strong>
                   <span>上下键选择，Enter 插入</span>

@@ -251,6 +251,14 @@ function ConfigListItem(props: {
 }
 
 export function SettingsDrawer(props: SettingsDrawerProps) {
+  if (!props.open) {
+    return null;
+  }
+
+  return <SettingsDrawerContent {...props} />;
+}
+
+function SettingsDrawerContent(props: SettingsDrawerProps) {
   const {
     open,
     settings,
@@ -451,7 +459,7 @@ export function SettingsDrawer(props: SettingsDrawerProps) {
   return (
     <>
       <div className={open ? "settings-backdrop is-visible" : "settings-backdrop"} onClick={onClose} />
-      <aside className={open ? "settings-drawer is-open" : "settings-drawer"}>
+      <aside className="settings-drawer is-open motion-safe:animate-[eagle-drawer-in_220ms_ease-out_both]">
         <div className="settings-drawer-nav">
           <div className="settings-drawer-brand">
             <div className="brand-emblem small" aria-hidden="true">

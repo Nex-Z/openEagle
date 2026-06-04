@@ -306,7 +306,11 @@ export function ActivityInspector(props: ActivityInspectorProps) {
 
   const inspector = (
     <aside
-      className={inspectorCollapsed ? "activity-inspector is-collapsed" : "activity-inspector"}
+      className={
+        inspectorCollapsed
+          ? "activity-inspector is-collapsed transition-[transform,box-shadow] duration-200 ease-out motion-safe:animate-[eagle-panel-right_260ms_ease-out_both]"
+          : "activity-inspector transition-[transform,box-shadow] duration-200 ease-out motion-safe:animate-[eagle-panel-right_260ms_ease-out_both]"
+      }
     >
       <header className="inspector-header">
         <div className="inspector-header-copy">
@@ -589,7 +593,7 @@ export function ActivityInspector(props: ActivityInspectorProps) {
                     traces.map((trace) => (
                       <div
                         key={trace.id}
-                        className={expandedTraceId === trace.id ? "trace-row is-expanded" : "trace-row"}
+                        className={`trace-row trace-status-${trace.status} ${expandedTraceId === trace.id ? "is-expanded" : ""}`}
                         onClick={() =>
                           setExpandedTraceId((current) => (current === trace.id ? null : trace.id))
                         }
@@ -608,9 +612,9 @@ export function ActivityInspector(props: ActivityInspectorProps) {
                           <span className={`trace-chip trace-chip-${trace.kind}`}>
                             {trace.kind.toUpperCase()}
                           </span>
-                          <strong>{trace.name}</strong>
+                          <strong>{traceDisplayName(trace)}</strong>
                           <span className={`trace-status trace-status-${trace.status}`}>
-                            {trace.status}
+                            {traceStatusLabel(trace)}
                           </span>
                         </div>
                         {expandedTraceId === trace.id ? (

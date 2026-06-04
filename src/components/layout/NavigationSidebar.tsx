@@ -93,7 +93,11 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
       />
       <aside
         ref={containerRef}
-        className={mobileOpen ? "nav-sidebar mobile-open" : "nav-sidebar"}
+        className={
+          mobileOpen
+            ? "nav-sidebar mobile-open transition-[transform,box-shadow] duration-200 ease-out motion-safe:animate-[eagle-panel-left_260ms_ease-out_both]"
+            : "nav-sidebar transition-[transform,box-shadow] duration-200 ease-out motion-safe:animate-[eagle-panel-left_260ms_ease-out_both]"
+        }
       >
         <header className="nav-sidebar-header">
           <div className="brand-lockup">
@@ -167,7 +171,7 @@ export function NavigationSidebar(props: NavigationSidebarProps) {
                     </button>
 
                     {openMenuId === conversation.id ? (
-                      <div className="floating-menu" role="menu">
+                      <div className="floating-menu" role="menu" style={{ backdropFilter: "blur(8px)" }}>
                         <button
                           className="floating-menu-item danger"
                           onClick={(event) => {

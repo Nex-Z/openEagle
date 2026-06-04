@@ -115,7 +115,9 @@ export function AppShell(props: AppShellProps) {
   return (
     <main
       className={
-        inspectorCollapsed ? "app-shell inspector-collapsed" : "app-shell"
+        inspectorCollapsed
+          ? "app-shell inspector-collapsed bg-blue-50/70 text-slate-950 motion-safe:animate-[eagle-shell-in_320ms_ease-out_both]"
+          : "app-shell bg-blue-50/70 text-slate-950 motion-safe:animate-[eagle-shell-in_320ms_ease-out_both]"
       }
       style={{
         gridTemplateColumns: `${sidebarWidth}px 4px minmax(0, 1fr) 4px ${effectiveInspectorWidth}px`,
