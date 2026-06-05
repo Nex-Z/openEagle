@@ -14,6 +14,7 @@ import {
   SendHorizonal,
   ShieldAlert,
   ShieldCheck,
+  SquareStop,
   X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -1893,18 +1894,25 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
               <Paperclip size={14} />
             </button>
             <button
-              aria-label="发送消息"
-              className="send-button"
+              aria-label={isSoloBusy ? "停止桌面执行" : "发送消息"}
+              className={isSoloBusy ? "send-button is-stop" : "send-button"}
               disabled={
                 !canSend ||
-                (!draft.trim() && draftAttachments.every((attachment) => attachment.status === "error"))
+                (!isSoloBusy &&
+                  !draft.trim() &&
+                  draftAttachments.every((attachment) => attachment.status === "error"))
               }
               onClick={() => {
+                if (isSoloBusy) {
+                  onSoloStop();
+                  return;
+                }
                 void submit();
               }}
+              title={isSoloBusy ? "停止桌面执行" : "发送消息"}
               type="button"
             >
-              <SendHorizonal size={16} />
+              {isSoloBusy ? <SquareStop size={16} /> : <SendHorizonal size={16} />}
             </button>
           </div>
         </div>

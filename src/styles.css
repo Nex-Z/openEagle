@@ -4604,6 +4604,19 @@ a {
   color: currentColor;
 }
 
+.send-button.is-stop {
+  background: linear-gradient(180deg, #ef4444 0%, #dc2626 100%);
+  box-shadow:
+    0 12px 28px rgba(220, 38, 38, 0.24),
+    0 1px 0 rgba(255, 255, 255, 0.36) inset;
+}
+
+.send-button.is-stop:not(:disabled):hover {
+  box-shadow:
+    0 16px 30px rgba(220, 38, 38, 0.24),
+    0 1px 0 rgba(255, 255, 255, 0.46) inset;
+}
+
 .permission-status.is-all,
 .current-action-target,
 .trace-status-completed,
