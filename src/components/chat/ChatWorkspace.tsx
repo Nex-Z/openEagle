@@ -196,6 +196,13 @@ function formatTraceValue(value: unknown) {
   }
 }
 
+function formatDurationMs(duration: number) {
+  if (duration < 1000) {
+    return `${duration}ms`;
+  }
+  return `${(duration / 1000).toFixed(duration >= 10_000 ? 0 : 1)}s`;
+}
+
 function formatTraceDuration(startedAt: string, completedAt?: string) {
   if (!completedAt) {
     return "进行中";
@@ -205,10 +212,7 @@ function formatTraceDuration(startedAt: string, completedAt?: string) {
   if (Number.isNaN(duration) || duration < 0) {
     return "刚刚";
   }
-  if (duration < 1000) {
-    return `${duration}ms`;
-  }
-  return `${(duration / 1000).toFixed(duration >= 10_000 ? 0 : 1)}s`;
+  return formatDurationMs(duration);
 }
 
 function renderMessageMarkdown(content: string) {
@@ -292,6 +296,61 @@ function traceKeyFromMessage(message: ChatMessage, trace: AgentExecutionTrace) {
   return `${message.id}:${trace.id}`;
 }
 
+function timestampMs(value?: string) {
+  if (!value) {
+    return undefined;
+  }
+  const ms = new Date(value).getTime();
+  return Number.isFinite(ms) ? ms : undefined;
+}
+
+function collectUniqueMessageTraces(message: ChatMessage) {
+  const traceMap = new Map<string, AgentExecutionTrace>();
+  for (const trace of message.traces ?? []) {
+    traceMap.set(trace.id, trace);
+  }
+  for (const block of message.blocks ?? []) {
+    if (block.kind !== "trace") {
+      continue;
+    }
+    const existing = traceMap.get(block.trace.id);
+    traceMap.set(block.trace.id, existing ? { ...block.trace, ...existing } : block.trace);
+  }
+  return Array.from(traceMap.values());
+}
+
+function isSoloHandoffTrace(trace: AgentExecutionTrace) {
+  const workerKind = trace.params?.workerKind;
+  const route = trace.params?.route;
+  return (
+    trace.name.toLowerCase().includes("solo-worker") ||
+    workerKind === "solo" ||
+    route === "start_solo"
+  );
+}
+
+function formatMessageDuration(message: ChatMessage, traces: AgentExecutionTrace[]) {
+  const starts = [
+    timestampMs(message.createdAt),
+    ...traces.map((trace) => timestampMs(trace.startedAt)),
+  ].filter((value): value is number => value !== undefined);
+  const ends = [
+    timestampMs(message.completedAt),
+    ...traces.map((trace) => timestampMs(trace.completedAt)),
+  ].filter((value): value is number => value !== undefined);
+
+  if (starts.length === 0 || ends.length === 0) {
+    return "已完成";
+  }
+
+  const startedAt = Math.min(...starts);
+  const completedAt = Math.max(...ends);
+  if (completedAt < startedAt) {
+    return "已完成";
+  }
+  return `用时 ${formatDurationMs(completedAt - startedAt)}`;
+}
+
 type RenderedAssistantBlock =
   | AssistantMessageBlock
   | {
@@ -314,12 +373,25 @@ function traceGroupStatus(traces: AgentExecutionTrace[]) {
   const running = traces.filter((trace) => trace.status === "started").length;
   const total = traces.length;
   const label = running
-    ? `正在执行 ${total} 项工具调用...`
+    ? `正在执行 ${total} 个工具调用`
     : failed
-      ? `${failed} 项工具调用失败`
-      : `已完成 ${total} 项工具调用`;
+      ? `已完成 ${total} 个工具调用，${failed} 个失败`
+      : `已完成 ${total} 个工具调用`;
 
   return { completed, failed, running, total, label };
+}
+
+function traceStatusClass(trace: AgentExecutionTrace) {
+  if (trace.status === "completed") {
+    return "is-completed";
+  }
+  if (trace.status === "error") {
+    return "has-error";
+  }
+  if (trace.status === "started") {
+    return "is-running";
+  }
+  return "";
 }
 
 function messageHasTrace(message: ChatMessage) {
@@ -372,6 +444,12 @@ type MessageListItem =
       id: string;
       kind: "message";
       message: ChatMessage;
+      soloProcessMessages?: ChatMessage[];
+    }
+  | {
+      id: string;
+      kind: "solo-process-group";
+      messages: ChatMessage[];
     }
   | {
       id: string;
@@ -379,9 +457,22 @@ type MessageListItem =
       messages: ChatMessage[];
     };
 
-function buildMessageListItems(messages: ChatMessage[]) {
+function isSoloAssistantProcessMessage(message: ChatMessage) {
+  return message.role === "assistant" && message.mode === "solo" && Boolean(message.content.trim());
+}
+
+function canAttachSoloProcessMessages(message: ChatMessage) {
+  return (
+    message.role === "assistant" &&
+    Boolean(message.requestId) &&
+    collectUniqueMessageTraces(message).some(isSoloHandoffTrace)
+  );
+}
+
+function buildMessageListItems(messages: ChatMessage[], collapseProcess: boolean) {
   const items: MessageListItem[] = [];
   let toolBuffer: ChatMessage[] = [];
+  let soloAssistantBuffer: ChatMessage[] = [];
 
   const flushToolBuffer = () => {
     if (toolBuffer.length === 0) {
@@ -395,12 +486,98 @@ function buildMessageListItems(messages: ChatMessage[]) {
     toolBuffer = [];
   };
 
+  const attachSoloProcessMessages = (processMessages: ChatMessage[]) => {
+    if (processMessages.length === 0) {
+      return false;
+    }
+    const requestId = processMessages[0].requestId;
+    if (!requestId) {
+      return false;
+    }
+    let targetIndex = -1;
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index];
+      if (
+        item.kind === "message" &&
+        item.message.requestId === requestId &&
+        canAttachSoloProcessMessages(item.message)
+      ) {
+        targetIndex = index;
+        break;
+      }
+    }
+    if (targetIndex < 0) {
+      return false;
+    }
+    const target = items[targetIndex];
+    if (target.kind !== "message") {
+      return false;
+    }
+    items[targetIndex] = {
+      ...target,
+      soloProcessMessages: [...(target.soloProcessMessages ?? []), ...processMessages],
+    };
+    return true;
+  };
+
+  const flushSoloAssistantBuffer = () => {
+    if (soloAssistantBuffer.length === 0) {
+      return;
+    }
+    if (soloAssistantBuffer.length === 1) {
+      items.push({
+        id: soloAssistantBuffer[0].id,
+        kind: "message",
+        message: soloAssistantBuffer[0],
+      });
+      soloAssistantBuffer = [];
+      return;
+    }
+
+    const processMessages = soloAssistantBuffer.slice(0, -1);
+    const latestMessage = soloAssistantBuffer[soloAssistantBuffer.length - 1];
+    if (!attachSoloProcessMessages(processMessages)) {
+      items.push({
+        id: `solo-process-group-${processMessages[0].id}-${processMessages[processMessages.length - 1].id}`,
+        kind: "solo-process-group",
+        messages: processMessages,
+      });
+    }
+    items.push({
+      id: latestMessage.id,
+      kind: "message",
+      message: latestMessage,
+    });
+    soloAssistantBuffer = [];
+  };
+
   for (const message of messages) {
+    if (!collapseProcess) {
+      items.push({
+        id: message.id,
+        kind: "message",
+        message,
+      });
+      continue;
+    }
+
     if (message.role === "tool" && message.traces && message.traces.length > 0) {
+      flushSoloAssistantBuffer();
       toolBuffer.push(message);
       continue;
     }
     flushToolBuffer();
+
+    if (isSoloAssistantProcessMessage(message)) {
+      const bufferRequestId = soloAssistantBuffer[0]?.requestId;
+      if (soloAssistantBuffer.length > 0 && bufferRequestId !== message.requestId) {
+        flushSoloAssistantBuffer();
+      }
+      soloAssistantBuffer.push(message);
+      continue;
+    }
+
+    flushSoloAssistantBuffer();
     items.push({
       id: message.id,
       kind: "message",
@@ -409,6 +586,7 @@ function buildMessageListItems(messages: ChatMessage[]) {
   }
 
   flushToolBuffer();
+  flushSoloAssistantBuffer();
   return items;
 }
 
@@ -441,7 +619,76 @@ function estimateMessageListItemSize(item: MessageListItem | undefined) {
     const traceCount = item.messages.reduce((total, message) => total + (message.traces?.length ?? 0), 0);
     return Math.min(420, 70 + traceCount * 38);
   }
-  return estimateMessageSize(item.message);
+  if (item.kind === "solo-process-group") {
+    return Math.min(360, 76 + item.messages.length * 36);
+  }
+  return estimateMessageSize(item.message) + (item.soloProcessMessages?.length ?? 0) * 36;
+}
+
+type TraceTimelineItem = {
+  key: string;
+  trace: AgentExecutionTrace;
+};
+
+function TraceTimeline(props: {
+  items: TraceTimelineItem[];
+  expandedTraceIds: Set<string>;
+  onToggleTrace: (traceKey: string) => void;
+}) {
+  const { items, expandedTraceIds, onToggleTrace } = props;
+  if (items.length === 0) {
+    return null;
+  }
+
+  return (
+    <div className="trace-timeline">
+      {items.map((item) => {
+        const { trace } = item;
+        const isExpanded = expandedTraceIds.has(item.key);
+
+        return (
+          <div
+            key={item.key}
+            className={`trace-step ${traceStatusClass(trace)}`}
+            onClick={(e) => {
+              e.stopPropagation();
+              onToggleTrace(item.key);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.preventDefault();
+                onToggleTrace(item.key);
+              }
+            }}
+            role="button"
+            tabIndex={0}
+          >
+            <div className="trace-step-header">
+              <span className="trace-step-title">{compactTraceTitle(trace)}</span>
+              <small className="trace-step-duration">
+                {formatTraceDuration(trace.startedAt, trace.completedAt)}
+              </small>
+              <ChevronDown
+                size={12}
+                className="trace-step-chevron"
+                style={{ transform: isExpanded ? "rotate(180deg)" : "none" }}
+              />
+            </div>
+            {isExpanded && (trace.result || trace.params) ? (
+              <div className="trace-step-detail">
+                <div className="trace-step-detail-head">
+                  <span>{trace.name}</span>
+                  <span>{trace.status === "completed" ? "成功" : trace.status}</span>
+                </div>
+                {trace.result ? <pre>{formatTraceValue(trace.result)}</pre> : null}
+                {!trace.result && trace.params ? <pre>{formatTraceValue(trace.params)}</pre> : null}
+              </div>
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
 }
 
 function TraceGroup(props: {
@@ -455,9 +702,10 @@ function TraceGroup(props: {
   const hasError = group.traces.some((t) => t.status === "error");
   const isRunning = group.traces.some((t) => t.status === "started");
   const status = traceGroupStatus(group.traces);
-  const progress = status.total
-    ? Math.max(status.running ? 8 : 0, Math.round(((status.completed + status.failed) / status.total) * 100))
-    : 0;
+  const traceItems = group.traces.map((trace) => ({
+    key: traceKeyFromMessage(message, trace),
+    trace,
+  }));
 
   if (group.traces.length > 1) {
     return (
@@ -483,9 +731,6 @@ function TraceGroup(props: {
               {status.completed}/{status.total} 完成
               {status.failed ? ` · ${status.failed} 失败` : ""}
             </span>
-            <span className="tool-summary-progress" aria-hidden="true">
-              <span style={{ width: `${progress}%` }} />
-            </span>
           </span>
           <ChevronDown
             size={13}
@@ -494,116 +739,22 @@ function TraceGroup(props: {
           />
         </div>
         {!groupCollapsed ? (
-          <div className="trace-timeline">
-            {group.traces.map((trace) => {
-              const traceKey = `${message.id}:${trace.id}`;
-              const isExpanded = expandedTraceIds.has(traceKey);
-              const statusClass =
-                trace.status === "completed"
-                  ? "is-completed"
-                  : trace.status === "error"
-                    ? "has-error"
-                    : trace.status === "started"
-                      ? "is-running"
-                      : "";
-
-              return (
-                <div
-                  key={trace.id}
-                  className={`trace-step ${statusClass}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleTrace(traceKey);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      onToggleTrace(traceKey);
-                    }
-                  }}
-                  role="button"
-                  tabIndex={0}
-                >
-                  <div className="trace-step-header">
-                    <span className="trace-step-title">{compactTraceTitle(trace)}</span>
-                    <small className="trace-step-duration">
-                      {formatTraceDuration(trace.startedAt, trace.completedAt)}
-                    </small>
-                    <ChevronDown
-                      size={12}
-                      className="trace-step-chevron"
-                      style={{ transform: isExpanded ? "rotate(180deg)" : "none" }}
-                    />
-                  </div>
-                  {isExpanded && (trace.result || trace.params) ? (
-                    <div className="trace-step-detail">
-                      <div className="trace-step-detail-head">
-                        <span>{trace.name}</span>
-                        <span>{trace.status === "completed" ? "成功" : trace.status}</span>
-                      </div>
-                      {trace.result ? <pre>{formatTraceValue(trace.result)}</pre> : null}
-                      {!trace.result && trace.params ? <pre>{formatTraceValue(trace.params)}</pre> : null}
-                    </div>
-                  ) : null}
-                </div>
-              );
-            })}
-          </div>
+          <TraceTimeline
+            expandedTraceIds={expandedTraceIds}
+            items={traceItems}
+            onToggleTrace={onToggleTrace}
+          />
         ) : null}
       </div>
     );
   }
 
-  const trace = group.traces[0];
-  if (!trace) return null;
-  const traceKey = `${message.id}:${trace.id}`;
-  const isExpanded = expandedTraceIds.has(traceKey);
-  const statusClass =
-    trace.status === "completed"
-      ? "is-completed"
-      : trace.status === "error"
-        ? "has-error"
-        : trace.status === "started"
-          ? "is-running"
-          : "";
-
   return (
-    <div className="trace-timeline">
-      <div
-        className={`trace-step ${statusClass}`}
-        onClick={() => onToggleTrace(traceKey)}
-        onKeyDown={(event) => {
-          if (event.key === "Enter" || event.key === " ") {
-            event.preventDefault();
-            onToggleTrace(traceKey);
-          }
-        }}
-        role="button"
-        tabIndex={0}
-      >
-        <div className="trace-step-header">
-          <span className="trace-step-title">{compactTraceTitle(trace)}</span>
-          <small className="trace-step-duration">
-            {formatTraceDuration(trace.startedAt, trace.completedAt)}
-          </small>
-          <ChevronDown
-            size={12}
-            className="trace-step-chevron"
-            style={{ transform: isExpanded ? "rotate(180deg)" : "none" }}
-          />
-        </div>
-        {isExpanded && (trace.result || trace.params) ? (
-          <div className="trace-step-detail">
-            <div className="trace-step-detail-head">
-              <span>{trace.name}</span>
-              <span>{trace.status === "completed" ? "成功" : trace.status}</span>
-            </div>
-            {trace.result ? <pre>{formatTraceValue(trace.result)}</pre> : null}
-            {!trace.result && trace.params ? <pre>{formatTraceValue(trace.params)}</pre> : null}
-          </div>
-        ) : null}
-      </div>
-    </div>
+    <TraceTimeline
+      expandedTraceIds={expandedTraceIds}
+      items={traceItems}
+      onToggleTrace={onToggleTrace}
+    />
   );
 }
 
@@ -616,14 +767,17 @@ function ToolMessageGroup(props: {
 }) {
   const { messages, expandedTraceIds, onToggleTrace, isCollapsed, onToggleCollapsed } = props;
 
-  const allTraces = messages.flatMap((m) => m.traces ?? []);
+  const traceItems = messages.flatMap((message) =>
+    (message.traces ?? []).map((trace) => ({
+      key: traceKeyFromMessage(message, trace),
+      trace,
+    })),
+  );
+  const allTraces = traceItems.map((item) => item.trace);
   const hasError = allTraces.some((t) => t.status === "error");
   const isRunning = allTraces.some((t) => t.status === "started");
   const count = allTraces.length;
   const status = traceGroupStatus(allTraces);
-  const progress = status.total
-    ? Math.max(status.running ? 8 : 0, Math.round(((status.completed + status.failed) / status.total) * 100))
-    : 0;
 
   return (
     <article className="message-shell role-tool tool-message-group">
@@ -648,9 +802,6 @@ function ToolMessageGroup(props: {
             {status.completed}/{count} 完成
             {status.failed ? ` · ${status.failed} 失败` : ""}
           </span>
-          <span className="tool-summary-progress" aria-hidden="true">
-            <span style={{ width: `${progress}%` }} />
-          </span>
         </span>
         <ChevronDown
           size={13}
@@ -659,76 +810,433 @@ function ToolMessageGroup(props: {
         />
       </div>
       {!isCollapsed ? (
-        <div className="trace-timeline">
-          {messages.map((message) =>
-            (message.traces ?? []).map((trace) => {
-              const traceKey = `${message.id}:${trace.id}`;
-              const isExpanded = expandedTraceIds.has(traceKey);
-              const statusClass =
-                trace.status === "completed"
-                  ? "is-completed"
-                  : trace.status === "error"
-                    ? "has-error"
-                    : trace.status === "started"
-                      ? "is-running"
-                      : "";
+        <TraceTimeline
+          expandedTraceIds={expandedTraceIds}
+          items={traceItems}
+          onToggleTrace={onToggleTrace}
+        />
+      ) : null}
+    </article>
+  );
+}
 
-              return (
-                <div
-                  key={trace.id}
-                  className={`trace-step ${statusClass}`}
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    onToggleTrace(traceKey);
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter" || e.key === " ") {
-                      e.preventDefault();
-                      onToggleTrace(traceKey);
-                    }
-                  }}
-                  role="button"
-                  tabIndex={0}
-                >
-                  <div className="trace-step-header">
-                    <span className="trace-step-title">{compactTraceTitle(trace)}</span>
-                    <small className="trace-step-duration">
-                      {formatTraceDuration(trace.startedAt, trace.completedAt)}
-                    </small>
-                    <ChevronDown
-                      size={12}
-                      className="trace-step-chevron"
-                      style={{ transform: isExpanded ? "rotate(180deg)" : "none" }}
-                    />
-                  </div>
-                  {isExpanded && (trace.result || trace.params) ? (
-                    <div className="trace-step-detail">
-                      <div className="trace-step-detail-head">
-                        <span>{trace.name}</span>
-                        <span>{trace.status === "completed" ? "成功" : trace.status}</span>
-                      </div>
-                      {trace.result ? <pre>{formatTraceValue(trace.result)}</pre> : null}
-                      {!trace.result && trace.params ? <pre>{formatTraceValue(trace.params)}</pre> : null}
-                    </div>
-                  ) : null}
-                </div>
-              );
-            }),
-          )}
+function formatSoloProcessDuration(messages: ChatMessage[]) {
+  const starts = messages.map((message) => timestampMs(message.createdAt)).filter((value): value is number => value !== undefined);
+  const ends = messages
+    .map((message) => timestampMs(message.completedAt ?? message.createdAt))
+    .filter((value): value is number => value !== undefined);
+  if (starts.length === 0 || ends.length === 0) {
+    return "已折叠";
+  }
+  const startedAt = Math.min(...starts);
+  const completedAt = Math.max(...ends);
+  if (completedAt < startedAt) {
+    return "已折叠";
+  }
+  return `用时 ${formatDurationMs(completedAt - startedAt)}`;
+}
+
+function SoloProcessMessageGroup(props: {
+  messages: ChatMessage[];
+  isCollapsed: boolean;
+  onToggleCollapsed: () => void;
+}) {
+  const { messages, isCollapsed, onToggleCollapsed } = props;
+  const hasError = messages.some((message) => message.status === "error");
+  const label = `已折叠 ${messages.length} 条执行过程`;
+
+  return (
+    <article className="message-shell role-assistant mode-solo solo-process-group">
+      <div
+        aria-expanded={!isCollapsed}
+        className={`assistant-process-summary ${hasError ? "has-error" : ""}`}
+        onClick={onToggleCollapsed}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggleCollapsed();
+          }
+        }}
+        role="button"
+        tabIndex={0}
+      >
+        <span className={`tool-summary-dot ${hasError ? "has-error" : "is-completed"}`} />
+        <span className="tool-summary-copy">
+          <span className="assistant-process-label">{label}</span>
+          <span className="tool-summary-meta">{formatSoloProcessDuration(messages)}</span>
+        </span>
+        <ChevronDown
+          size={13}
+          className="trace-group-chevron"
+          style={{ transform: isCollapsed ? "none" : "rotate(180deg)" }}
+        />
+      </div>
+      {!isCollapsed ? (
+        <div className="assistant-process-detail">
+          {messages.map((message) => (
+            <div key={message.id} className="assistant-process-progress">
+              {renderMessageMarkdown(message.content)}
+            </div>
+          ))}
         </div>
       ) : null}
     </article>
   );
 }
 
-const MessageArticle = memo(function MessageArticle({
-  message,
-  expandedTraceIds,
-  onToggleTrace,
-}: {
+type AssistantTextBlockItem = Extract<AssistantMessageBlock, { kind: "text" }>;
+
+type AssistantProcessTimelineItem =
+  | {
+      id: string;
+      kind: "text";
+      content: string;
+      timestamp?: number;
+      order: number;
+    }
+  | {
+      id: string;
+      kind: "trace";
+      trace: AgentExecutionTrace;
+      timestamp?: number;
+      order: number;
+    };
+
+function buildAssistantProcessTimeline(params: {
+  message: ChatMessage;
+  progressBlocks: AssistantTextBlockItem[];
+  soloProcessMessages: ChatMessage[];
+  traces: AgentExecutionTrace[];
+}) {
+  const { message, progressBlocks, soloProcessMessages, traces } = params;
+  const timeline: AssistantProcessTimelineItem[] = [];
+  const includedTextIds = new Set(progressBlocks.map((block) => block.id));
+  const traceMap = new Map(traces.map((trace) => [trace.id, trace]));
+  const includedTraceIds = new Set<string>();
+  let order = 0;
+
+  for (const block of message.blocks ?? []) {
+    if (block.kind === "text") {
+      if (includedTextIds.has(block.id) && block.content) {
+        timeline.push({
+          id: block.id,
+          kind: "text",
+          content: block.content,
+          timestamp: timestampMs(message.createdAt),
+          order,
+        });
+        order += 1;
+      }
+      continue;
+    }
+
+    const trace = traceMap.get(block.trace.id) ?? block.trace;
+    includedTraceIds.add(trace.id);
+    timeline.push({
+      id: `trace-${trace.id}`,
+      kind: "trace",
+      trace,
+      timestamp: timestampMs(trace.startedAt),
+      order,
+    });
+    order += 1;
+  }
+
+  for (const block of progressBlocks) {
+    if (!includedTextIds.has(block.id) || !block.content) {
+      continue;
+    }
+    if (timeline.some((item) => item.id === block.id)) {
+      continue;
+    }
+    timeline.push({
+      id: block.id,
+      kind: "text",
+      content: block.content,
+      timestamp: timestampMs(message.createdAt),
+      order,
+    });
+    order += 1;
+  }
+
+  for (const processMessage of soloProcessMessages) {
+    timeline.push({
+      id: processMessage.id,
+      kind: "text",
+      content: processMessage.content,
+      timestamp: timestampMs(processMessage.createdAt),
+      order,
+    });
+    order += 1;
+  }
+
+  for (const trace of traces) {
+    if (includedTraceIds.has(trace.id)) {
+      continue;
+    }
+    timeline.push({
+      id: `trace-${trace.id}`,
+      kind: "trace",
+      trace,
+      timestamp: timestampMs(trace.startedAt),
+      order,
+    });
+    order += 1;
+  }
+
+  return timeline.sort((left, right) => {
+    if (left.timestamp !== undefined && right.timestamp !== undefined && left.timestamp !== right.timestamp) {
+      return left.timestamp - right.timestamp;
+    }
+    if (left.timestamp !== undefined && right.timestamp === undefined) {
+      return -1;
+    }
+    if (left.timestamp === undefined && right.timestamp !== undefined) {
+      return 1;
+    }
+    return left.order - right.order;
+  });
+}
+
+function AssistantProcessSummary(props: {
+  message: ChatMessage;
+  progressBlocks: AssistantTextBlockItem[];
+  soloProcessMessages: ChatMessage[];
+  traces: AgentExecutionTrace[];
+  expandedTraceIds: Set<string>;
+  onToggleTrace: (traceKey: string) => void;
+  isCollapsed: boolean;
+  onToggleCollapsed: () => void;
+}) {
+  const {
+    message,
+    progressBlocks,
+    soloProcessMessages,
+    traces,
+    expandedTraceIds,
+    onToggleTrace,
+    isCollapsed,
+    onToggleCollapsed,
+  } = props;
+  const hasError = traces.some((trace) => trace.status === "error");
+  const isRunning = traces.some((trace) => trace.status === "started");
+  const durationLabel = formatMessageDuration(message, traces);
+  const timelineItems = buildAssistantProcessTimeline({
+    message,
+    progressBlocks,
+    soloProcessMessages,
+    traces,
+  });
+
+  return (
+    <div className="assistant-process">
+      <div
+        aria-expanded={!isCollapsed}
+        className={`assistant-process-summary ${hasError ? "has-error" : ""} ${isRunning ? "is-running" : ""}`}
+        onClick={onToggleCollapsed}
+        onKeyDown={(e) => {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            onToggleCollapsed();
+          }
+        }}
+        role="button"
+        tabIndex={0}
+      >
+        <span
+          className={`tool-summary-dot ${hasError ? "has-error" : isRunning ? "is-running" : "is-completed"}`}
+        />
+        <span className="tool-summary-copy">
+          <span className="assistant-process-label">{durationLabel}</span>
+        </span>
+        <ChevronDown
+          size={13}
+          className="trace-group-chevron"
+          style={{ transform: isCollapsed ? "none" : "rotate(180deg)" }}
+        />
+      </div>
+      {!isCollapsed ? (
+        <div className="assistant-process-detail">
+          {timelineItems.map((item) =>
+            item.kind === "text" ? (
+              <div key={item.id} className="assistant-process-progress">
+                {renderMessageMarkdown(item.content)}
+              </div>
+            ) : (
+              <TraceTimeline
+                key={item.id}
+                expandedTraceIds={expandedTraceIds}
+                items={[{ key: traceKeyFromMessage(message, item.trace), trace: item.trace }]}
+                onToggleTrace={onToggleTrace}
+              />
+            ),
+          )}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function LiveAssistantContent(props: {
   message: ChatMessage;
   expandedTraceIds: Set<string>;
   onToggleTrace: (traceKey: string) => void;
+}) {
+  const { message, expandedTraceIds, onToggleTrace } = props;
+  const blocks = message.blocks ?? [];
+
+  if (blocks.length > 0) {
+    return (
+      <div className="assistant-blocks">
+        {groupAssistantBlocks(blocks).map((block) =>
+          block.kind === "text" ? (
+            block.content ? (
+              <div
+                key={block.id}
+                className={`assistant-text-panel ${block.purpose === "progress" ? "is-progress" : ""}`}
+              >
+                {renderMessageMarkdown(block.content)}
+              </div>
+            ) : null
+          ) : block.kind === "trace-group" ? (
+            <TraceTimeline
+              key={block.id}
+              expandedTraceIds={expandedTraceIds}
+              items={block.traces.map((trace) => ({
+                key: traceKeyFromMessage(message, trace),
+                trace,
+              }))}
+              onToggleTrace={onToggleTrace}
+            />
+          ) : (
+            <TraceTimeline
+              key={block.id}
+              expandedTraceIds={expandedTraceIds}
+              items={[{ key: traceKeyFromMessage(message, block.trace), trace: block.trace }]}
+              onToggleTrace={onToggleTrace}
+            />
+          ),
+        )}
+        {message.content && !blocks.some((block) => block.kind === "text" && block.content) ? (
+          <div className="assistant-text-panel">{renderMessageMarkdown(message.content)}</div>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <>
+      {message.content ? (
+        <div className="assistant-text-panel">{renderMessageMarkdown(message.content)}</div>
+      ) : null}
+      {message.traces && message.traces.length > 0 ? (
+        <TraceTimeline
+          expandedTraceIds={expandedTraceIds}
+          items={message.traces.map((trace) => ({
+            key: traceKeyFromMessage(message, trace),
+            trace,
+          }))}
+          onToggleTrace={onToggleTrace}
+        />
+      ) : null}
+    </>
+  );
+}
+
+function AssistantMessageContent(props: {
+  message: ChatMessage;
+  soloProcessMessages: ChatMessage[];
+  expandedTraceIds: Set<string>;
+  onToggleTrace: (traceKey: string) => void;
+  isProcessCollapsed: boolean;
+  onToggleProcessCollapsed: () => void;
+  collapseProcess: boolean;
+}) {
+  const {
+    message,
+    soloProcessMessages,
+    expandedTraceIds,
+    onToggleTrace,
+    isProcessCollapsed,
+    onToggleProcessCollapsed,
+    collapseProcess,
+  } = props;
+  const blocks = message.blocks ?? [];
+  const traces = collectUniqueMessageTraces(message);
+  const isSoloHandoff = traces.some(isSoloHandoffTrace);
+
+  if (message.status === "pending" || (!collapseProcess && (isSoloHandoff || message.mode === "solo"))) {
+    return (
+      <LiveAssistantContent
+        expandedTraceIds={expandedTraceIds}
+        message={message}
+        onToggleTrace={onToggleTrace}
+      />
+    );
+  }
+
+  const textBlocks = blocks.filter(
+    (block): block is AssistantTextBlockItem => block.kind === "text",
+  );
+  const progressBlocks = textBlocks.filter((block) => block.purpose === "progress");
+  const finalBlocks = textBlocks.filter((block) => block.purpose !== "progress");
+  const processBlocks = isSoloHandoff
+    ? textBlocks.filter((block) => Boolean(block.content))
+    : progressBlocks;
+  const visibleFinalBlocks = isSoloHandoff ? [] : finalBlocks;
+  const shouldShowProcess =
+    processBlocks.length > 0 || soloProcessMessages.length > 0 || traces.length > 0;
+  const fallbackFinalContent =
+    !isSoloHandoff && finalBlocks.length === 0 && message.content && progressBlocks.length === 0
+      ? message.content
+      : "";
+
+  return (
+    <div className="assistant-blocks is-complete">
+      {shouldShowProcess ? (
+        <AssistantProcessSummary
+          expandedTraceIds={expandedTraceIds}
+          isCollapsed={isProcessCollapsed}
+          message={message}
+          onToggleCollapsed={onToggleProcessCollapsed}
+          onToggleTrace={onToggleTrace}
+          progressBlocks={processBlocks}
+          soloProcessMessages={soloProcessMessages}
+          traces={traces}
+        />
+      ) : null}
+
+      {visibleFinalBlocks.map((block) =>
+        block.content ? (
+          <div key={block.id} className="assistant-final-card">
+            {renderMessageMarkdown(block.content)}
+          </div>
+        ) : null,
+      )}
+
+      {fallbackFinalContent ? (
+        <div className="assistant-final-card">{renderMessageMarkdown(fallbackFinalContent)}</div>
+      ) : null}
+    </div>
+  );
+}
+
+const MessageArticle = memo(function MessageArticle({
+  message,
+  soloProcessMessages,
+  expandedTraceIds,
+  onToggleTrace,
+  isProcessCollapsed,
+  onToggleProcessCollapsed,
+  collapseProcess,
+}: {
+  message: ChatMessage;
+  soloProcessMessages: ChatMessage[];
+  expandedTraceIds: Set<string>;
+  onToggleTrace: (traceKey: string) => void;
+  isProcessCollapsed: boolean;
+  onToggleProcessCollapsed: () => void;
+  collapseProcess: boolean;
 }) {
   return (
     <article
@@ -749,7 +1257,17 @@ const MessageArticle = memo(function MessageArticle({
 
       {shouldShowMessageLabel(message) ? <div className="message-label">{message.label}</div> : null}
 
-      {message.blocks && message.blocks.length > 0 ? (
+      {message.role === "assistant" ? (
+        <AssistantMessageContent
+          expandedTraceIds={expandedTraceIds}
+          isProcessCollapsed={isProcessCollapsed}
+          message={message}
+          onToggleProcessCollapsed={onToggleProcessCollapsed}
+          onToggleTrace={onToggleTrace}
+          soloProcessMessages={soloProcessMessages}
+          collapseProcess={collapseProcess}
+        />
+      ) : message.blocks && message.blocks.length > 0 ? (
         <div className="assistant-blocks">
           {groupAssistantBlocks(message.blocks).map((block) =>
             block.kind === "text" ? (
@@ -787,7 +1305,8 @@ const MessageArticle = memo(function MessageArticle({
 
       <AttachmentList attachments={message.attachments} />
 
-      {(!message.blocks || message.blocks.length === 0) &&
+      {message.role !== "assistant" &&
+      (!message.blocks || message.blocks.length === 0) &&
       message.traces &&
       message.traces.length > 0 ? (
         <TraceGroup
@@ -838,7 +1357,7 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const [expandedTraceIds, setExpandedTraceIds] = useState<Set<string>>(new Set());
-  const [expandedToolGroups, setExpandedToolGroups] = useState<Set<string>>(new Set());
+  const [expandedProcessGroups, setExpandedProcessGroups] = useState<Set<string>>(new Set());
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const streamRef = useRef<HTMLDivElement | null>(null);
@@ -876,6 +1395,11 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
   }, [filteredSlashItems]);
 
   const flatItems = useMemo(() => groupedItems.flatMap((group) => group.items), [groupedItems]);
+  const isSoloBusy =
+    soloStatus.state === "running" ||
+    soloStatus.state === "paused" ||
+    soloStatus.state === "waiting_user_confirmation";
+  const collapseProcess = !isSoloBusy;
 
   const visibleMessages = useMemo(
     () =>
@@ -884,7 +1408,10 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
       ),
     [messages],
   );
-  const messageItems = useMemo(() => buildMessageListItems(visibleMessages), [visibleMessages]);
+  const messageItems = useMemo(
+    () => buildMessageListItems(visibleMessages, collapseProcess),
+    [collapseProcess, visibleMessages],
+  );
 
   const estimateVirtualItemSize = useCallback(
     (index: number) => estimateMessageListItemSize(messageItems[index]),
@@ -955,8 +1482,8 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
     });
   }, []);
 
-  const toggleToolGroup = useCallback((groupId: string) => {
-    setExpandedToolGroups((prev) => {
+  const toggleProcessGroup = useCallback((groupId: string) => {
+    setExpandedProcessGroups((prev) => {
       const next = new Set(prev);
       if (next.has(groupId)) {
         next.delete(groupId);
@@ -1110,10 +1637,6 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
     void submit();
   };
 
-  const isSoloBusy =
-    soloStatus.state === "running" ||
-    soloStatus.state === "paused" ||
-    soloStatus.state === "waiting_user_confirmation";
   const permissionIsAll = settings.permissions.mode === "all";
   const virtualRows = messageVirtualizer.getVirtualItems();
 
@@ -1170,14 +1693,24 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
                       messages={item.messages}
                       expandedTraceIds={expandedTraceIds}
                       onToggleTrace={toggleTrace}
-                      isCollapsed={!expandedToolGroups.has(item.id)}
-                      onToggleCollapsed={() => toggleToolGroup(item.id)}
+                      isCollapsed={!expandedProcessGroups.has(item.id)}
+                      onToggleCollapsed={() => toggleProcessGroup(item.id)}
+                    />
+                  ) : item.kind === "solo-process-group" ? (
+                    <SoloProcessMessageGroup
+                      messages={item.messages}
+                      isCollapsed={!expandedProcessGroups.has(item.id)}
+                      onToggleCollapsed={() => toggleProcessGroup(item.id)}
                     />
                   ) : (
                     <MessageArticle
+                      collapseProcess={collapseProcess}
                       expandedTraceIds={expandedTraceIds}
+                      isProcessCollapsed={!expandedProcessGroups.has(`assistant-process-${item.message.id}`)}
                       message={item.message}
+                      onToggleProcessCollapsed={() => toggleProcessGroup(`assistant-process-${item.message.id}`)}
                       onToggleTrace={toggleTrace}
+                      soloProcessMessages={item.soloProcessMessages ?? []}
                     />
                   )}
                 </div>

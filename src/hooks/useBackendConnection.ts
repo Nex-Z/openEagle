@@ -256,6 +256,7 @@ function createChatMessage(params: {
   role: ChatMessage["role"];
   content: string;
   createdAt: string;
+  completedAt?: string;
   requestId?: string;
   mode?: ChatMessage["mode"];
   status?: ChatMessage["status"];
@@ -268,6 +269,7 @@ function createChatMessage(params: {
     role: params.role,
     content: params.content,
     createdAt: params.createdAt,
+    completedAt: params.completedAt,
     requestId: params.requestId,
     mode: params.mode,
     status: params.status,
@@ -332,6 +334,7 @@ function upsertAssistantTrace(
       role: "assistant",
       content: collectAssistantContent(blocks),
       createdAt: message?.createdAt ?? trace.startedAt,
+      completedAt: message?.completedAt,
       status: message?.status ?? "pending",
       mode: message?.mode,
       label: message?.label,
@@ -371,6 +374,7 @@ function applyAssistantDelta(
       role: "assistant",
       content: collectAssistantContent(blocks),
       createdAt: message?.createdAt ?? timestamp,
+      completedAt: message?.completedAt,
       status: "pending",
       traces: message?.traces ?? [],
       blocks,
@@ -1003,6 +1007,7 @@ export function useBackendConnection(
                 role: "assistant",
                 content: collectAssistantContent(blocks),
                 createdAt: message?.createdAt ?? envelope.timestamp,
+                completedAt: message?.completedAt,
                 status: "pending",
                 attachments: message?.attachments,
                 traces: message?.traces ?? [],
@@ -1024,6 +1029,7 @@ export function useBackendConnection(
               role: "assistant",
               content: collectAssistantContent(blocks),
               createdAt: message?.createdAt ?? envelope.timestamp,
+              completedAt: message?.completedAt,
               status: "pending",
               attachments: message?.attachments,
               traces: message?.traces ?? [],
@@ -1089,6 +1095,7 @@ export function useBackendConnection(
               role: "assistant",
               content,
               createdAt: message?.createdAt ?? envelope.timestamp,
+              completedAt: envelope.timestamp,
               status: "done",
               attachments: envelope.payload.attachments ?? message?.attachments,
               traces: message?.traces ?? [],
@@ -1125,6 +1132,7 @@ export function useBackendConnection(
                 role: "assistant",
                 content: collectAssistantContent(blocks),
                 createdAt: message?.createdAt ?? envelope.timestamp,
+                completedAt: message?.completedAt,
                 status: "pending",
                 traces: message?.traces ?? [],
                 blocks,
@@ -1143,7 +1151,7 @@ export function useBackendConnection(
               message.role === "assistant" &&
               message.requestId === envelope.requestId &&
               message.status === "pending"
-                ? { ...message, status: "done" }
+                ? { ...message, status: "done", completedAt: message.completedAt ?? envelope.timestamp }
                 : message,
             ),
           );
@@ -1469,7 +1477,7 @@ export function useBackendConnection(
             message.role === "assistant" &&
             message.requestId === envelope.requestId &&
             message.status === "pending"
-              ? { ...message, status: "error" as const }
+              ? { ...message, status: "error" as const, completedAt: message.completedAt ?? envelope.timestamp }
               : message,
           );
 
