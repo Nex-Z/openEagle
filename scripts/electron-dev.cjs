@@ -1,3 +1,4 @@
+const fs = require("node:fs");
 const http = require("node:http");
 const path = require("node:path");
 const { spawn, spawnSync } = require("node:child_process");
@@ -63,6 +64,45 @@ function runPnpmChecked(args) {
   if (result.status !== 0) {
     process.exit(result.status ?? 1);
   }
+}
+
+function walkFiles(dir, predicate) {
+  if (!fs.existsSync(dir)) return [];
+  const files = [];
+  for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    const fullPath = path.join(dir, entry.name);
+    if (entry.isDirectory()) {
+      files.push(...walkFiles(fullPath, predicate));
+    } else if (predicate(fullPath)) {
+      files.push(fullPath);
+    }
+  }
+  return files;
+}
+
+function mtimeMs(file) {
+  try {
+    return fs.statSync(file).mtimeMs;
+  } catch {
+    return 0;
+  }
+}
+
+function needsElectronCompile() {
+  const electronRoot = path.join(root, "electron");
+  const outputRoot = path.join(root, "dist-electron");
+  const outputs = walkFiles(outputRoot, (file) => file.endsWith(".js"));
+  if (outputs.length === 0 || !fs.existsSync(path.join(outputRoot, "main.js"))) {
+    return true;
+  }
+
+  const inputs = [
+    path.join(root, "tsconfig.electron.json"),
+    ...walkFiles(electronRoot, (file) => file.endsWith(".ts")),
+  ];
+  const newestInput = Math.max(...inputs.map(mtimeMs));
+  const oldestOutput = Math.min(...outputs.map(mtimeMs));
+  return newestInput > oldestOutput;
 }
 
 function urlReady(url, timeoutMs = 1000) {
@@ -145,7 +185,9 @@ async function main() {
     viteReady = waitForUrl(devUrl, 20_000);
   }
 
-  runPnpmChecked(["exec", "tsc", "-p", "tsconfig.electron.json"]);
+  if (needsElectronCompile()) {
+    runPnpmChecked(["exec", "tsc", "-p", "tsconfig.electron.json"]);
+  }
   runChecked(process.execPath, [path.join(root, "scripts", "ensure-cjs-package.cjs")]);
 
   if (!(await viteReady)) {

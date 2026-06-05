@@ -3,7 +3,6 @@ const { spawn } = require("node:child_process");
 
 const root = path.resolve(__dirname, "..");
 const backendRoot = path.join(root, "backend");
-const isWindows = process.platform === "win32";
 
 function argValue(name, fallback) {
   const index = process.argv.indexOf(name);
@@ -22,7 +21,7 @@ const child = spawn(
   {
     cwd: backendRoot,
     env: { ...process.env, PYTHONUTF8: "1", PYTHONUNBUFFERED: "1" },
-    shell: isWindows,
+    shell: false,
     stdio: "inherit",
   },
 );
