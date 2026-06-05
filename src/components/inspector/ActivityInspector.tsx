@@ -217,6 +217,8 @@ function ActivityInspectorComponent(props: ActivityInspectorProps) {
   const [previewImage, setPreviewImage] = useState<string | null>(null);
   const attemptedPathsRef = useRef<Set<string>>(new Set());
   const prevAssetsRef = useRef<typeof assets>([]);
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const shouldStickToBottomRef = useRef(true);
   const stepText = currentStepText(soloStep);
   const recentTraces = useMemo(() => traces.slice(0, 6), [traces]);
   const recentToolResults = useMemo(
@@ -282,6 +284,32 @@ function ActivityInspectorComponent(props: ActivityInspectorProps) {
       cancelled = true;
     };
   }, [assets]);
+
+  // 监听滚动事件，判断是否接近底部
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) {
+      return;
+    }
+    const handleScroll = () => {
+      const remaining = el.scrollHeight - el.scrollTop - el.clientHeight;
+      shouldStickToBottomRef.current = remaining <= 40;
+    };
+    handleScroll();
+    el.addEventListener("scroll", handleScroll);
+    return () => el.removeEventListener("scroll", handleScroll);
+  }, []);
+
+  // 新轨迹到达时自动滚动到底部
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el || !shouldStickToBottomRef.current) {
+      return;
+    }
+    requestAnimationFrame(() => {
+      el.scrollTo({ top: el.scrollHeight, behavior: "auto" });
+    });
+  }, [recentTraces.length]);
 
   const statusTone = useMemo(() => {
     switch (soloStatus.state) {
@@ -353,7 +381,7 @@ function ActivityInspectorComponent(props: ActivityInspectorProps) {
             </button>
           </div>
 
-          <div className="inspector-scroll">
+          <div className="inspector-scroll" ref={scrollRef}>
             {activeTab === "activity" ? (
               <>
                 {soloPlan && <SoloPlanChecklist plan={soloPlan} />}
