@@ -2974,6 +2974,10 @@ a {
   width: 100%;
 }
 
+.message-virtual-row.has-expanded-content {
+  z-index: 2;
+}
+
 .empty-message-state {
   gap: 12px;
   padding: 34px;
@@ -3259,6 +3263,7 @@ a {
 
 .trace-step {
   position: relative;
+  flex: 0 0 auto;
   min-width: 0;
   min-height: 28px;
   padding: 6px 9px;
@@ -3268,6 +3273,10 @@ a {
   color: var(--text-muted);
   font-family: var(--font-mono);
   font-size: 11px;
+}
+
+.trace-step.is-expanded {
+  z-index: 1;
 }
 
 .trace-step:hover {
@@ -3339,6 +3348,8 @@ a {
 }
 
 .trace-step-detail {
+  position: relative;
+  z-index: 1;
   margin-top: 6px;
   padding: 8px 10px;
   border-radius: 8px;

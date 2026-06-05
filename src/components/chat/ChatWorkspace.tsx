@@ -626,6 +626,30 @@ function estimateMessageListItemSize(item: MessageListItem | undefined) {
   return estimateMessageSize(item.message) + (item.soloProcessMessages?.length ?? 0) * 36;
 }
 
+function messageListItemHasExpandedContent(
+  item: MessageListItem,
+  expandedTraceIds: Set<string>,
+  expandedProcessGroups: Set<string>,
+) {
+  if (item.kind === "tool-group") {
+    return (
+      expandedProcessGroups.has(item.id) ||
+      item.messages.some((message) =>
+        (message.traces ?? []).some((trace) => expandedTraceIds.has(traceKeyFromMessage(message, trace))),
+      )
+    );
+  }
+  if (item.kind === "solo-process-group") {
+    return expandedProcessGroups.has(item.id);
+  }
+  return (
+    expandedProcessGroups.has(`assistant-process-${item.message.id}`) ||
+    collectUniqueMessageTraces(item.message).some((trace) =>
+      expandedTraceIds.has(traceKeyFromMessage(item.message, trace)),
+    )
+  );
+}
+
 type TraceTimelineItem = {
   key: string;
   trace: AgentExecutionTrace;
@@ -650,7 +674,7 @@ function TraceTimeline(props: {
         return (
           <div
             key={item.key}
-            className={`trace-step ${traceStatusClass(trace)}`}
+            className={`trace-step ${traceStatusClass(trace)} ${isExpanded ? "is-expanded" : ""}`}
             onClick={(e) => {
               e.stopPropagation();
               onToggleTrace(item.key);
@@ -1434,6 +1458,11 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
   });
 
   useEffect(() => {
+    const frame = requestAnimationFrame(() => messageVirtualizer.measure());
+    return () => cancelAnimationFrame(frame);
+  }, [expandedProcessGroups, expandedTraceIds, messageVirtualizer]);
+
+  useEffect(() => {
     const element = textareaRef.current;
     if (!element) {
       return;
@@ -1680,14 +1709,22 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
               if (!item) {
                 return null;
               }
+              const hasExpandedContent = messageListItemHasExpandedContent(
+                item,
+                expandedTraceIds,
+                expandedProcessGroups,
+              );
 
               return (
                 <div
                   key={item.id}
                   ref={messageVirtualizer.measureElement}
-                  className="message-virtual-row"
+                  className={`message-virtual-row ${hasExpandedContent ? "has-expanded-content" : ""}`}
                   data-index={virtualRow.index}
-                  style={{ transform: `translateY(${virtualRow.start}px)` }}
+                  style={{
+                    transform: `translateY(${virtualRow.start}px)`,
+                    zIndex: hasExpandedContent ? messageItems.length - virtualRow.index + 1 : undefined,
+                  }}
                 >
                   {item.kind === "tool-group" ? (
                     <ToolMessageGroup
