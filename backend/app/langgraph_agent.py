@@ -23,7 +23,7 @@ from .config import AgentConfig, ContextConfig
 from .context_cleanup import compact_messages_for_prompt_with_ai
 from .models import AttachmentRef
 
-MAX_TOOL_ROUNDS = 20
+MAX_TOOL_ROUNDS = 100
 MAX_INLINE_ATTACHMENT_CHARS = 24_000
 MAX_INLINE_ATTACHMENT_TOTAL_CHARS = 48_000
 TEXT_ATTACHMENT_EXTENSIONS = {
@@ -85,6 +85,8 @@ class AgentGraphState(TypedDict):
     traces: list[ToolTraceEvent]
     confirmations: list[ToolConfirmationEvent]
     rounds: int
+    tool_rounds: int
+    force_final: bool
     stream_model: bool
 
 
@@ -272,6 +274,7 @@ class LangGraphToolAgent:
         summarizer: ContextSummarizer | None = None,
         snapshot: ContextSnapshot | None = None,
         vision: bool = False,
+        max_tool_rounds: int = MAX_TOOL_ROUNDS,
     ) -> None:
         self.agent_config = agent_config
         self.system_prompt = "\n\n".join(instructions) if isinstance(instructions, list) else instructions
@@ -282,6 +285,7 @@ class LangGraphToolAgent:
         self.summarizer = summarizer
         self.snapshot = snapshot
         self.vision = vision
+        self.max_tool_rounds = max(1, max_tool_rounds)
         self.client = _openai_client(agent_config, vision=vision)
         self.model_id = _model_id(agent_config, vision=vision)
         self.graph = self._build_graph()
@@ -290,13 +294,19 @@ class LangGraphToolAgent:
         graph = StateGraph(AgentGraphState)
         graph.add_node("model", self._model_node)
         graph.add_node("tools", self._tools_node)
+        graph.add_node("final", self._final_node)
         graph.set_entry_point("model")
         graph.add_conditional_edges(
             "model",
             self._route_from_model,
-            {"tools": "tools", "end": END},
+            {"tools": "tools", "final": "final", "end": END},
         )
-        graph.add_edge("tools", "model")
+        graph.add_conditional_edges(
+            "tools",
+            self._route_from_tools,
+            {"model": "model", "final": "final"},
+        )
+        graph.add_edge("final", END)
         return graph.compile()
 
     async def run(self, user_content: str | list[dict[str, Any]]) -> LangGraphRunResult:
@@ -310,6 +320,8 @@ class LangGraphToolAgent:
             "traces": [],
             "confirmations": [],
             "rounds": 0,
+            "tool_rounds": 0,
+            "force_final": False,
             "stream_model": False,
         }
         state = await self.graph.ainvoke(initial)
@@ -335,6 +347,8 @@ class LangGraphToolAgent:
             "traces": [],
             "confirmations": [],
             "rounds": 0,
+            "tool_rounds": 0,
+            "force_final": False,
             "stream_model": stream_model,
         }
         final_state: AgentGraphState | None = None
@@ -454,8 +468,9 @@ class LangGraphToolAgent:
         traces = list(state["traces"])
         confirmations = list(state["confirmations"])
         tool_messages: list[ToolMessage] = []
+        tool_calls = list(state["last_tool_calls"])
 
-        for tool_call in state["last_tool_calls"]:
+        for tool_call in tool_calls:
             call_id = str(tool_call.get("id") or f"tool-call-{len(traces) + 1}")
             name = str(tool_call.get("name") or "unknown")
             arguments = tool_call.get("args")
@@ -508,13 +523,88 @@ class LangGraphToolAgent:
             "last_tool_calls": [],
             "traces": traces,
             "confirmations": confirmations,
+            "tool_rounds": state["tool_rounds"] + 1,
+            "force_final": False,
         }
 
-    @staticmethod
-    def _route_from_model(state: AgentGraphState) -> str:
-        if state["last_tool_calls"] and state["rounds"] < MAX_TOOL_ROUNDS:
+    async def _final_node(self, state: AgentGraphState) -> AgentGraphState:
+        messages = self._messages_for_final_answer(list(state["messages"]))
+        openai_messages = list(convert_to_openai_messages(messages))
+        request: dict[str, Any] = {
+            "model": self.model_id,
+            "messages": openai_messages,
+        }
+        if state.get("stream_model"):
+            content, _ = await self._stream_chat_completion(request)
+        else:
+            response = await self.client.chat.completions.create(**request)
+            content = response.choices[0].message.content or ""
+        content = content.strip() or self._fallback_final_content(state)
+        trace = ToolTraceEvent(
+            trace_id=f"finalize-{state['rounds']}-{state['tool_rounds']}",
+            kind="agent",
+            name="finalize_answer",
+            status="completed",
+            summary="已停止继续调用工具，并基于现有结果生成最终回复。",
+            params={
+                "rounds": state["rounds"],
+                "toolRounds": state["tool_rounds"],
+                "traceCount": len(state["traces"]),
+            },
+            started_at=utc_now(),
+            completed_at=utc_now(),
+        )
+        self._write_stream_event(trace)
+        return {
+            **state,
+            "messages": [*messages, AIMessage(content=content)],
+            "last_tool_calls": [],
+            "content": content,
+            "traces": [*state["traces"], trace],
+            "force_final": False,
+        }
+
+    def _route_from_model(self, state: AgentGraphState) -> str:
+        if state["force_final"]:
+            return "final"
+        if state["last_tool_calls"] and state["tool_rounds"] < self.max_tool_rounds:
             return "tools"
+        if state["last_tool_calls"]:
+            return "final"
+        if state["traces"] and not str(state.get("content") or "").strip():
+            return "final"
         return "end"
+
+    @staticmethod
+    def _route_from_tools(state: AgentGraphState) -> str:
+        return "final" if state["force_final"] else "model"
+
+    @staticmethod
+    def _messages_for_final_answer(messages: list[BaseMessage]) -> list[BaseMessage]:
+        if messages and isinstance(messages[-1], AIMessage) and messages[-1].tool_calls:
+            messages = messages[:-1]
+        final_instruction = (
+            "停止继续调用工具。不要再提出新的工具调用。"
+            "请只基于上文用户请求、已经得到的工具观察和可确定事实，给出面向用户的最终答复。"
+            "如果已有工具结果不足以完成任务，要明确说明已经得到什么、缺什么、下一步建议是什么。"
+            "不要留空，不要只说执行结束。"
+        )
+        if messages and isinstance(messages[0], SystemMessage):
+            return [
+                SystemMessage(content=f"{messages[0].content}\n\n{final_instruction}"),
+                *messages[1:],
+            ]
+        return [SystemMessage(content=final_instruction), *messages]
+
+    @staticmethod
+    def _fallback_final_content(state: AgentGraphState) -> str:
+        trace_count = len(state.get("traces") or [])
+        if trace_count:
+            return (
+                f"我已经停止继续调用工具。前面共产生了 {trace_count} 条工具记录，"
+                "但模型没有生成可用的最终结论；请缩小目标或让我按更明确的步骤重新执行。"
+            )
+        return "我这轮没有生成可用回复。请再补充一句你的目标，我会重新处理。"
 
     async def _invoke_single_tool(
         self,

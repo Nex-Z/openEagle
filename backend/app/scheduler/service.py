@@ -28,6 +28,10 @@ ConfigGetter = Callable[[], AppConfig]
 MemoryContextGetter = Callable[[str | None], str]
 
 
+def _log(message: str) -> None:
+    print(f"[SCHEDULER] {utc_now()} {message}", flush=True)
+
+
 class SchedulerService:
     def __init__(
         self,
@@ -50,6 +54,7 @@ class SchedulerService:
             return
         self._scheduler.start()
         self._running = True
+        _log("started")
         self.reload_tasks()
 
     def shutdown(self) -> None:
@@ -57,11 +62,13 @@ class SchedulerService:
             return
         self._scheduler.shutdown(wait=False)
         self._running = False
+        _log("stopped")
 
     def add_task(self, task: ScheduledTask) -> None:
         job_id = self._job_id(task.id)
         self.remove_task(task.id)
         if not task.enabled:
+            _log(f"task disabled id={task.id}")
             return
         try:
             trigger = CronTrigger.from_crontab(task.schedule_expr)
@@ -75,10 +82,16 @@ class SchedulerService:
             next_run = self._scheduler.get_job(job_id)
             if next_run and next_run.next_run_time:
                 update_task_next_run(task.id, next_run.next_run_time.isoformat())
+                _log(
+                    "task registered "
+                    f"id={task.id} schedule={task.schedule_expr} next_run={next_run.next_run_time.isoformat()}"
+                )
             else:
                 update_task_next_run(task.id, None)
+                _log(f"task registered id={task.id} schedule={task.schedule_expr} next_run=-")
         except Exception as exc:
             update_task_next_run(task.id, None)
+            _log(f"task register failed id={task.id} schedule={task.schedule_expr} error={exc}")
             raise ValueError(f"无效调度表达式: {task.schedule_expr}") from exc
 
     def remove_task(self, task_id: str) -> None:
@@ -93,14 +106,25 @@ class SchedulerService:
         self.add_task(task)
 
     def reload_tasks(self) -> None:
-        for task in list_tasks():
+        tasks = list_tasks()
+        registered = 0
+        disabled = 0
+        invalid = 0
+        for task in tasks:
             if not task.enabled:
+                disabled += 1
                 update_task_next_run(task.id, None)
                 continue
             try:
                 self.add_task(task)
+                registered += 1
             except ValueError:
+                invalid += 1
                 continue
+        _log(
+            "reload complete "
+            f"total={len(tasks)} registered={registered} disabled={disabled} invalid={invalid}"
+        )
 
     @staticmethod
     def _job_id(task_id: str) -> str:
@@ -117,6 +141,10 @@ class SchedulerService:
         )
         create_execution(execution)
         update_task_last_run(task_id, utc_now())
+        _log(
+            "task execution started "
+            f"id={task_id} execution={execution.id} worker={task.worker_kind}"
+        )
 
         try:
             config = self._config_getter()
@@ -152,14 +180,26 @@ class SchedulerService:
                     if not result:
                         result = "任务执行完成，但未返回结果。"
                     complete_execution(execution.id, result)
+                    _log(
+                        "task execution completed "
+                        f"id={task_id} execution={execution.id} result_len={len(result)}"
+                    )
                     await self._deliver_result(task, result)
                     return
 
             result = "".join(result_parts) if result_parts else "任务执行完成，但未返回结果。"
             complete_execution(execution.id, result)
+            _log(
+                "task execution completed "
+                f"id={task_id} execution={execution.id} result_len={len(result)}"
+            )
             await self._deliver_result(task, result)
         except Exception as exc:
             fail_execution(execution.id, str(exc))
+            _log(
+                "task execution failed "
+                f"id={task_id} execution={execution.id} error={type(exc).__name__}: {exc}"
+            )
             await self._deliver_result(task, error=str(exc))
 
     async def _deliver_result(
@@ -181,6 +221,7 @@ class SchedulerService:
                     },
                 )
             except Exception:
+                _log(f"task result delivery failed id={task.id}")
                 pass
 
 

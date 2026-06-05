@@ -119,6 +119,13 @@ class SafetyAssessmentTest(unittest.TestCase):
         self.assertEqual(classify_command_risk("rg TODO src").level, "safe")
         self.assertEqual(classify_command_risk("python build.py").level, "confirm")
         self.assertEqual(classify_command_risk("git reset --hard HEAD").level, "blocked")
+        self.assertEqual(
+            classify_command_risk(
+                "wmic logicaldisk get size,freespace,caption,volumename /format:list"
+            ).level,
+            "safe",
+        )
+        self.assertEqual(classify_command_risk("format C:").level, "blocked")
         self.assertEqual(classify_command_risk("").level, "blocked")
 
     def test_file_mutation_actions_are_confirmed_and_bounded(self) -> None:

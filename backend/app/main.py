@@ -119,6 +119,55 @@ def slog(message: str) -> None:
     print(f"[SOLO] {utc_now()} {message}", flush=True)
 
 
+def blog(message: str) -> None:
+    print(f"[BACKEND] {utc_now()} {message}", flush=True)
+
+
+def _short_log_id(value: str | None, limit: int = 18) -> str:
+    if not value:
+        return "-"
+    if len(value) <= limit:
+        return value
+    return f"{value[:limit]}..."
+
+
+def _client_payload_summary(type_: str, payload: dict[str, Any]) -> str:
+    if type_ == "client:send_message":
+        content = str(payload.get("content") or "")
+        attachments = payload.get("attachments")
+        attachment_count = len(attachments) if isinstance(attachments, list) else 0
+        return f" content_len={len(content)} attachments={attachment_count}"
+    if type_ == "client:update_settings":
+        settings = payload.get("settings")
+        if isinstance(settings, dict):
+            return (
+                f" tools={len(settings.get('tools') or [])}"
+                f" mcp={len(settings.get('mcp') or [])}"
+                f" skills={len(settings.get('skills') or [])}"
+            )
+    if type_.startswith("client:memory_"):
+        notes = payload.get("notes")
+        note_count = len(notes) if isinstance(notes, list) else 0
+        return f" notes={note_count}"
+    if type_.startswith("client:scheduled_task_"):
+        task = payload.get("task")
+        task_id = payload.get("taskId")
+        if isinstance(task, dict):
+            task_id = task.get("id") or task_id
+        return f" task={_short_log_id(str(task_id) if task_id else None)}"
+    return ""
+
+
+def log_client_event(envelope: Envelope) -> None:
+    blog(
+        "ws recv "
+        f"type={envelope.type} "
+        f"request={_short_log_id(envelope.request_id)} "
+        f"conversation={_short_log_id(envelope.conversation_id)}"
+        f"{_client_payload_summary(envelope.type, envelope.payload)}"
+    )
+
+
 _APP_KEYWORDS: dict[str, list[str]] = {
     "VS Code": ["vscode", "vs code", "visual studio code", "代码编辑器"],
     "Chrome": ["chrome", "谷歌浏览器", "网页", "浏览器"],
@@ -181,8 +230,12 @@ def solo_stability_summary(session: SoloSessionState, final_reason: str) -> dict
 async def announce_ready() -> None:
     global scheduler_service
     db_path = workspace_root / ".open-eagle" / "scheduler.db"
+    memory_db_path = workspace_root / ".open-eagle" / "memory.db"
+    blog(f"startup workspace={workspace_root}")
     init_db(db_path)
-    init_memory_db(workspace_root / ".open-eagle" / "memory.db")
+    blog(f"scheduler db ready path={db_path}")
+    init_memory_db(memory_db_path)
+    blog(f"memory db ready path={memory_db_path}")
     scheduler_service = SchedulerService(
         config_getter=runtime_state.get_config,
         memory_context_getter=memory_service.prompt_context,
@@ -223,6 +276,7 @@ async def send_envelope(
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket) -> None:
     await websocket.accept()
+    blog(f"ws accepted client={websocket.client}")
     send_lock = asyncio.Lock()
     active_solo: SoloSessionState | None = None
     active_solo_task: asyncio.Task[None] | None = None
@@ -254,11 +308,22 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         request_id: str,
         conversation_id: str,
     ) -> None:
+        payload = memory_service.state_payload()
+        notes = payload.get("notes")
+        profiles = payload.get("profiles")
+        soul = payload.get("soul")
+        blog(
+            "memory emit "
+            f"type={type_} request={_short_log_id(request_id)} "
+            f"notes={len(notes) if isinstance(notes, list) else 0} "
+            f"profiles={len(profiles) if isinstance(profiles, list) else 0} "
+            f"soul={len(soul) if isinstance(soul, list) else 0}"
+        )
         await safe_send(
             type_,
             request_id,
             conversation_id,
-            memory_service.state_payload(),
+            payload,
         )
 
     async def emit_memory_trace(
@@ -299,7 +364,8 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         async def _distill() -> None:
             try:
                 changed = await memory_service.distill_event(event_id)
-            except Exception:
+            except Exception as exc:  # noqa: BLE001
+                blog(f"memory distill failed event={_short_log_id(event_id)} error={type(exc).__name__}: {exc}")
                 return
             if changed:
                 try:
@@ -312,7 +378,11 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         params={"eventId": event_id},
                     )
                     await emit_memory_state("server:memory_updated", request_id, conversation_id)
-                except Exception:
+                except Exception as exc:  # noqa: BLE001
+                    blog(
+                        "memory distill notification failed "
+                        f"event={_short_log_id(event_id)} error={type(exc).__name__}: {exc}"
+                    )
                     return
 
         asyncio.create_task(_distill())
@@ -1683,6 +1753,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     # Send persisted settings to frontend on connection
     persisted = load_persisted_settings()
     if persisted:
+        blog("settings persisted state sent to client")
         await safe_send(
             "server:settings_loaded",
             "init",
@@ -1694,6 +1765,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         while True:
             raw = await websocket.receive_text()
             envelope = Envelope.model_validate_json(raw)
+            log_client_event(envelope)
 
             if envelope.type == "client:update_settings":
                 next_config = AppConfig.model_validate(envelope.payload["settings"])
@@ -1701,7 +1773,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 # Persist settings to file (alongside memory and scheduled tasks)
                 try:
                     save_persisted_settings(envelope.payload["settings"])
-                except Exception:
+                    blog("settings persisted")
+                except Exception as exc:  # noqa: BLE001
+                    blog(f"settings persist failed error={type(exc).__name__}: {exc}")
                     pass
                 await safe_send(
                     "server:status",
@@ -2125,6 +2199,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
 
             if envelope.type == "client:scheduled_task_list":
                 tasks = scheduler_list_tasks()
+                blog(f"scheduled tasks listed count={len(tasks)}")
                 await safe_send(
                     "server:scheduled_tasks",
                     envelope.request_id,
@@ -2144,6 +2219,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 scheduler_create_task(task)
                 if scheduler_service is not None:
                     scheduler_service.add_task(task)
+                blog(
+                    "scheduled task created "
+                    f"id={_short_log_id(task.id)} enabled={task.enabled} schedule={task.schedule_expr}"
+                )
                 await safe_send(
                     "server:scheduled_task_created",
                     envelope.request_id,
@@ -2159,6 +2238,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 scheduler_update_task(task)
                 if scheduler_service is not None:
                     scheduler_service.update_task(task)
+                blog(
+                    "scheduled task updated "
+                    f"id={_short_log_id(task.id)} enabled={task.enabled} schedule={task.schedule_expr}"
+                )
                 await safe_send(
                     "server:scheduled_task_updated",
                     envelope.request_id,
@@ -2172,6 +2255,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 if scheduler_service is not None:
                     scheduler_service.remove_task(task_id)
                 scheduler_delete_task(task_id)
+                blog(f"scheduled task deleted id={_short_log_id(task_id)}")
                 await safe_send(
                     "server:scheduled_task_deleted",
                     envelope.request_id,
@@ -2183,6 +2267,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             if envelope.type == "client:scheduled_task_history":
                 task_id = str(envelope.payload.get("taskId", ""))
                 executions = scheduler_get_history(task_id)
+                blog(
+                    "scheduled task history "
+                    f"id={_short_log_id(task_id)} count={len(executions)}"
+                )
                 await safe_send(
                     "server:scheduled_task_history",
                     envelope.request_id,
@@ -2217,8 +2305,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 attachments=payload.attachments,
             )
     except WebSocketDisconnect:
+        blog(f"ws disconnected client={websocket.client}")
         return
     except Exception as exc:  # noqa: BLE001
+        blog(f"ws error client={websocket.client} error={type(exc).__name__}: {exc}")
         await safe_send(
             "server:error",
             "server-error",
@@ -2232,6 +2322,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await im_bridge.stop()
             except Exception:
                 pass
+        blog(f"ws cleanup complete client={websocket.client}")
 
 
 def find_free_port(host: str) -> int:
@@ -2285,6 +2376,7 @@ async def monitor_parent_process(server: uvicorn.Server) -> None:
 async def serve(host: str, port: int) -> None:
     actual_port = port if port != 0 else find_free_port(host)
     app.state.ws_port = actual_port
+    blog(f"serve starting host={host} port={actual_port}")
     server = uvicorn.Server(
         uvicorn.Config(
             app,

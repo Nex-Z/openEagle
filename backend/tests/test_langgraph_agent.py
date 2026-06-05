@@ -94,6 +94,32 @@ class _FakeTextClient:
         self.chat = _FakeTextChat()
 
 
+class _LoopingToolCompletions:
+    def __init__(self, tool_call_count: int = 1) -> None:
+        self.requests: list[dict[str, Any]] = []
+        self.tool_call_count = tool_call_count
+
+    async def create(self, **request: Any) -> _FakeResponse:
+        self.requests.append(request)
+        if "tools" not in request:
+            return _FakeResponse(_FakeMessage("final answer"))
+        tool_calls = [
+            _FakeToolCall(f"call-{len(self.requests)}-{index}", "echo", '{"text":"hi"}')
+            for index in range(self.tool_call_count)
+        ]
+        return _FakeResponse(_FakeMessage("", tool_calls))
+
+
+class _LoopingToolChat:
+    def __init__(self, tool_call_count: int = 1) -> None:
+        self.completions = _LoopingToolCompletions(tool_call_count=tool_call_count)
+
+
+class _LoopingToolClient:
+    def __init__(self, tool_call_count: int = 1) -> None:
+        self.chat = _LoopingToolChat(tool_call_count=tool_call_count)
+
+
 class LangGraphAgentTest(unittest.TestCase):
     def test_attachment_user_content_includes_file_part_for_non_image(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
@@ -215,6 +241,54 @@ class LangGraphAgentTest(unittest.TestCase):
         self.assertEqual([event.status for event in events[:2]], ["started", "completed"])
         self.assertIsInstance(events[-1], LangGraphRunResult)
         self.assertEqual(events[-1].content, "done")
+
+    def test_langgraph_runner_forces_final_answer_after_tool_round_limit(self) -> None:
+        calls: list[str] = []
+
+        def echo(text: str) -> str:
+            calls.append(text)
+            return f"echo:{text}"
+
+        tool = StructuredTool.from_function(func=echo, name="echo", description="Echo")
+        runner = LangGraphToolAgent(
+            agent_config=AgentConfig(provider="openai", api_key="test-key"),
+            instructions="system",
+            tools=[tool],
+            max_tool_rounds=1,
+        )
+        fake_client = _LoopingToolClient()
+        runner.client = fake_client
+
+        result = asyncio.run(runner.run("hello"))
+
+        self.assertEqual(result.content, "final answer")
+        self.assertEqual(calls, ["hi"])
+        self.assertNotIn("tools", fake_client.chat.completions.requests[-1])
+        self.assertEqual(result.traces[-1].name, "finalize_answer")
+
+    def test_langgraph_runner_executes_all_tool_calls_in_a_round(self) -> None:
+        calls: list[str] = []
+
+        def echo(text: str) -> str:
+            calls.append(text)
+            return f"echo:{text}"
+
+        tool = StructuredTool.from_function(func=echo, name="echo", description="Echo")
+        runner = LangGraphToolAgent(
+            agent_config=AgentConfig(provider="openai", api_key="test-key"),
+            instructions="system",
+            tools=[tool],
+            max_tool_rounds=1,
+        )
+        fake_client = _LoopingToolClient(tool_call_count=2)
+        runner.client = fake_client
+
+        result = asyncio.run(runner.run("hello"))
+
+        self.assertEqual(result.content, "final answer")
+        self.assertEqual(calls, ["hi", "hi"])
+        self.assertFalse(any("skipped" in str(trace.result) for trace in result.traces))
+        self.assertNotIn("tools", fake_client.chat.completions.requests[-1])
 
 
 if __name__ == "__main__":
