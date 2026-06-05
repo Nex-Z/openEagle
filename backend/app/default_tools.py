@@ -486,7 +486,7 @@ class OpenEagleDefaultTools:
 
     def _run_guarded_tool(self, name: str, params: dict[str, object]) -> str:
         assessment = assess_tool_action(name, params, self.workspace_root)
-        if assessment.level == "blocked":
+        if assessment.level == "blocked" and not (assessment.overridable and self.permission_mode == "all"):
             return f"Error: {assessment.reason}"
         if assessment.level == "confirm" and self._should_confirm():
             return self._create_confirmation(name, assessment.reason, params)
@@ -1316,7 +1316,7 @@ def build_configured_tools(
                         "tail": tail,
                     }
                     assessment = assess_tool_action("configured_tool", params, root)
-                    if assessment.level == "blocked":
+                    if assessment.level == "blocked" and not (assessment.overridable and permission_mode == "all"):
                         return f"Error: {assessment.reason}"
                     if assessment.level == "confirm" and permission_mode != "all":
                         return create_confirmation_response(
@@ -1350,7 +1350,7 @@ def build_configured_tools(
                         "tail": tail,
                     }
                     assessment = assess_tool_action("configured_tool", params, root)
-                    if assessment.level == "blocked":
+                    if assessment.level == "blocked" and not (assessment.overridable and permission_mode == "all"):
                         return f"Error: {assessment.reason}"
                     if assessment.level == "confirm" and permission_mode != "all":
                         return create_confirmation_response(

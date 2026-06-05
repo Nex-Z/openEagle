@@ -601,7 +601,7 @@ class SoloCapabilityRuntime:
         assessment = self.assess_action("run_configured_tool", action_args)
         if assessment is None:
             return "Error: 无法评估自定义工具风险。"
-        if assessment.level == "blocked":
+        if assessment.level == "blocked" and not (assessment.overridable and self.permission_mode == "all"):
             return f"Error: {assessment.reason}"
         if assessment.level == "confirm" and self.permission_mode != "all":
             return self._confirmation_payload(
@@ -648,7 +648,7 @@ class SoloCapabilityRuntime:
         assessment = self.assess_action("call_mcp_tool", action_args)
         if assessment is None:
             return "Error: 无法评估 MCP 工具风险。"
-        if assessment.level == "blocked":
+        if assessment.level == "blocked" and not (assessment.overridable and self.permission_mode == "all"):
             return f"Error: {assessment.reason}"
         if assessment.level == "confirm" and self.permission_mode != "all":
             return self._confirmation_payload(

@@ -29,6 +29,7 @@ SAFE_COMMAND_PATTERNS = [
     r"^(dir|ls|pwd)(\s|$)",
     r"^(where|where\.exe)(\s|$)",
     r"^(get-childitem|gci|get-content|gc|select-string)(\s|$)",
+    r"^wmic\s+logicaldisk\s+get\s+",
 ]
 BLOCKED_COMMAND_PATTERNS = [
     r"\brm\s+-rf\b",
@@ -37,7 +38,7 @@ BLOCKED_COMMAND_PATTERNS = [
     r"\berase\s+",
     r"\brmdir\b",
     r"\brd\s+/s\b",
-    r"\bformat\b",
+    r"(?<![/\w.-])format(?:\.com|\.exe)?(?=\s|$)",
     r"\bshutdown\b",
     r"\brestart-computer\b",
     r"\bstop-computer\b",
@@ -68,6 +69,7 @@ HARD_SOLO_BLOCK_REASONS = (
 class RiskAssessment:
     level: RiskLevel
     reason: str
+    overridable: bool = False
 
 
 class BlockedActionError(ValueError):
@@ -106,7 +108,7 @@ def classify_command_risk(command: str) -> RiskAssessment:
 
     for pattern in BLOCKED_COMMAND_PATTERNS:
         if re.search(pattern, lowered):
-            return RiskAssessment("blocked", "命令包含明确高危操作，已阻断。")
+            return RiskAssessment("blocked", "命令包含明确高危操作，已阻断。", overridable=True)
 
     if any(operator in lowered for operator in COMMAND_WRITE_OPERATORS):
         return RiskAssessment("confirm", "命令包含输出重定向，可能写入文件。")
