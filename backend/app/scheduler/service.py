@@ -18,6 +18,7 @@ from .store import (
     create_execution,
     fail_execution,
     get_task,
+    list_tasks,
     update_task_last_run,
     update_task_next_run,
 )
@@ -49,6 +50,7 @@ class SchedulerService:
             return
         self._scheduler.start()
         self._running = True
+        self.reload_tasks()
 
     def shutdown(self) -> None:
         if not self._running:
@@ -89,6 +91,16 @@ class SchedulerService:
 
     def update_task(self, task: ScheduledTask) -> None:
         self.add_task(task)
+
+    def reload_tasks(self) -> None:
+        for task in list_tasks():
+            if not task.enabled:
+                update_task_next_run(task.id, None)
+                continue
+            try:
+                self.add_task(task)
+            except ValueError:
+                continue
 
     @staticmethod
     def _job_id(task_id: str) -> str:

@@ -1846,6 +1846,7 @@ export function useBackendConnection(
       payload: memory,
       timestamp: new Date().toISOString(),
     };
+    setMemoryState(memory);
     socket.send(JSON.stringify(envelope));
     return true;
   }, [conversationId]);

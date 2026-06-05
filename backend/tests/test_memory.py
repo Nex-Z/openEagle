@@ -309,6 +309,33 @@ class MemoryServiceTest(unittest.TestCase):
         self.assertEqual(changed_note.source, "manual")
         self.assertEqual(changed_note.text, "用户改过的笔记")
 
+    def test_manual_save_archives_notes_missing_from_payload(self) -> None:
+        self.service.save_manual(
+            {
+                "notes": [
+                    {"id": "note-keep", "text": "保留笔记", "status": "active"},
+                    {"id": "note-delete", "text": "删除笔记", "status": "active"},
+                ]
+            }
+        )
+
+        self.service.save_manual(
+            {
+                "notes": [
+                    {"id": "note-keep", "text": "保留笔记", "status": "active"},
+                ]
+            }
+        )
+
+        state = self.service.state()
+        keep = next(note for note in state.notes if note.id == "note-keep")
+        deleted = next(note for note in state.notes if note.id == "note-delete")
+        payload = self.service.state_payload()
+
+        self.assertEqual(keep.status, "active")
+        self.assertEqual(deleted.status, "archived")
+        self.assertEqual([note["id"] for note in payload["notes"]], ["note-keep"])
+
     def test_distillation_applies_model_json(self) -> None:
         service = MemoryService(
             config_getter=lambda: AppConfig(

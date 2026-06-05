@@ -276,7 +276,10 @@ class MemoryService:
         return store.get_state()
 
     def state_payload(self) -> dict[str, Any]:
-        return self.state().model_dump(by_alias=True, exclude_none=True)
+        return store.get_state(include_archived=False).model_dump(
+            by_alias=True,
+            exclude_none=True,
+        )
 
     def tool_state_payload(self, *, include_archived: bool = False) -> dict[str, Any]:
         state = store.get_state(
@@ -371,6 +374,7 @@ class MemoryService:
         notes = payload.get("notes")
         if isinstance(notes, list):
             existing_notes = {note.id: note for note in store.get_state().notes}
+            seen_note_ids: set[str] = set()
             for raw_note in notes:
                 if not isinstance(raw_note, dict):
                     continue
@@ -378,6 +382,8 @@ class MemoryService:
                 if not text:
                     continue
                 note_id = str(raw_note.get("id") or "").strip()
+                if note_id:
+                    seen_note_ids.add(note_id)
                 existing = existing_notes.get(note_id)
                 tags = _normalize_tags(raw_note.get("tags"))
                 confidence = self._safe_confidence(
@@ -413,6 +419,13 @@ class MemoryService:
                     ),
                     source="manual",
                 )
+            for note_id, existing in existing_notes.items():
+                if existing.status == "active" and note_id not in seen_note_ids:
+                    store.archive_note(
+                        note_id,
+                        source="manual",
+                        reason="用户笔记已从设置页移除。",
+                    )
 
     def save_user_note(
         self,
