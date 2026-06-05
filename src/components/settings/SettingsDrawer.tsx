@@ -95,6 +95,104 @@ function createMcpConfig(): McpServerConfig {
   };
 }
 
+/**
+ * 解析用户粘贴的 MCP JSON 配置，支持以下格式：
+ * - Claude Desktop mcpServers 格式：{ "mcpServers": { "name": { "command": ..., "args": ... } } }
+ * - 单个 server 对象（command+args 或 transport+endpoint）
+ * - server 数组
+ * - 包装对象 { "servers": [...] }
+ */
+function parseMcpJson(jsonStr: string): McpServerConfig[] {
+  const parsed: unknown = JSON.parse(jsonStr);
+
+  function endpointFromClaudeServer(server: Record<string, unknown>): string {
+    const command = typeof server.command === "string" ? server.command : null;
+    if (command) {
+      const parts = [command];
+      if (Array.isArray(server.args)) {
+        parts.push(...server.args.map((a) => String(a)));
+      }
+      return parts.join(" ");
+    }
+    return typeof server.url === "string" ? server.url : "";
+  }
+
+  function transportFromClaudeServer(server: Record<string, unknown>): McpServerConfig["transport"] {
+    if (typeof server.command === "string") return "stdio";
+    const type = typeof server.type === "string" ? server.type : typeof server.transport === "string" ? server.transport : null;
+    if (type === "sse" || type === "http" || type === "streamable-http") return type;
+    const url = typeof server.url === "string" ? server.url : "";
+    if (url.endsWith("/sse")) return "sse";
+    return "streamable-http";
+  }
+
+  /** 从 args 数组中推断包名作为 MCP 名称，例如 ["chrome-devtools-mcp@latest"] → "chrome-devtools-mcp" */
+  function inferNameFromArgs(args: unknown[]): string | null {
+    for (const arg of args) {
+      if (typeof arg !== "string" || arg.startsWith("-")) continue;
+      // 去除 npm scope：@xxx/pkg → pkg
+      let name = arg.replace(/^@[^/]+\//, "");
+      // 去除版本号：pkg@latest、pkg@1.0.0 → pkg
+      name = name.replace(/@[^@]*$/, "");
+      if (name) return name;
+    }
+    return null;
+  }
+
+  function normalizeOne(raw: Record<string, unknown>, fallbackName: string): McpServerConfig {
+    const inferred = typeof raw.name === "string"
+      ? raw.name
+      : (Array.isArray(raw.args) ? inferNameFromArgs(raw.args) : null) ?? fallbackName;
+    const name = inferred;
+    const transport = (typeof raw.transport === "string" ? raw.transport : null) ?? ("command" in raw ? "stdio" : "streamable-http");
+    const endpoint = (typeof raw.endpoint === "string" ? raw.endpoint : null)
+      ?? ("command" in raw ? endpointFromClaudeServer(raw) : null)
+      ?? (typeof raw.url === "string" ? raw.url : "");
+    return {
+      id: crypto.randomUUID(),
+      name,
+      transport: (["stdio", "http", "sse", "streamable-http"].includes(transport) ? transport : "stdio") as McpServerConfig["transport"],
+      endpoint,
+      description: typeof raw.description === "string" ? raw.description : "",
+      enabled: raw.enabled !== false && raw.disabled !== true,
+    };
+  }
+
+  // { "mcpServers": { "name": {...} } }
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && "mcpServers" in parsed) {
+    const mcpServers = (parsed as Record<string, unknown>).mcpServers;
+    if (mcpServers && typeof mcpServers === "object" && !Array.isArray(mcpServers)) {
+      return Object.entries(mcpServers as Record<string, unknown>)
+        .filter((entry): entry is [string, Record<string, unknown>] => entry[1] != null && typeof entry[1] === "object")
+        .map(([key, val]) => normalizeOne(val, key));
+    }
+  }
+
+  // { "servers": [...] }
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed) && "servers" in parsed) {
+    const servers = (parsed as Record<string, unknown>).servers;
+    if (Array.isArray(servers)) {
+      return servers
+        .filter((s): s is Record<string, unknown> => s != null && typeof s === "object")
+        .map((s, i) => normalizeOne(s, `MCP ${i + 1}`));
+    }
+  }
+
+  // array of servers
+  if (Array.isArray(parsed)) {
+    return parsed
+      .filter((s): s is Record<string, unknown> => s != null && typeof s === "object")
+      .map((s, i) => normalizeOne(s, `MCP ${i + 1}`));
+  }
+
+  // single server object
+  if (parsed && typeof parsed === "object") {
+    return [normalizeOne(parsed as Record<string, unknown>, "导入的 MCP")];
+  }
+
+  throw new Error("无法识别的 JSON 格式");
+}
+
 function createSkillConfig(): SkillConfig {
   return {
     id: crypto.randomUUID(),
@@ -287,6 +385,9 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
   } = props;
   const [expandedToolId, setExpandedToolId] = useState<string | null>(null);
   const [expandedMcpId, setExpandedMcpId] = useState<string | null>(null);
+  const [mcpImportOpen, setMcpImportOpen] = useState(false);
+  const [mcpImportText, setMcpImportText] = useState("");
+  const [mcpImportError, setMcpImportError] = useState<string | null>(null);
   const [expandedSkillId, setExpandedSkillId] = useState<string | null>(null);
   const [expandedMemoryNoteId, setExpandedMemoryNoteId] = useState<string | null>(null);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
@@ -1475,6 +1576,16 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
                     </button>
                     <button
                       className="ghost-button"
+                      onClick={() => {
+                        setMcpImportOpen((v) => !v);
+                        setMcpImportError(null);
+                      }}
+                      type="button"
+                    >
+                      {mcpImportOpen ? "收起导入" : "导入 JSON"}
+                    </button>
+                    <button
+                      className="ghost-button"
                       onClick={() =>
                         onChange({
                           ...settings,
@@ -1487,6 +1598,66 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
                     </button>
                   </div>
                 </div>
+                {mcpImportOpen ? (
+                  <div className="mcp-import-box">
+                    <textarea
+                      className="form-textarea"
+                      placeholder={'粘贴 MCP 配置 JSON，例如：\n{\n  "command": "npx",\n  "args": ["chrome-devtools-mcp@latest"]\n}'}
+                      value={mcpImportText}
+                      onChange={(e) => {
+                        setMcpImportText(e.target.value);
+                        setMcpImportError(null);
+                      }}
+                      style={{ minHeight: 120, fontFamily: "monospace", fontSize: 12 }}
+                    />
+                    {mcpImportError ? (
+                      <div style={{ color: "var(--color-danger, #e74c3c)", fontSize: 12, marginTop: 4 }}>
+                        {mcpImportError}
+                      </div>
+                    ) : null}
+                    <div style={{ display: "flex", gap: 6, marginTop: 6 }}>
+                      <button
+                        className="ghost-button"
+                        onClick={() => {
+                          if (!mcpImportText.trim()) {
+                            setMcpImportError("请粘贴 JSON 配置");
+                            return;
+                          }
+                          try {
+                            const configs = parseMcpJson(mcpImportText);
+                            if (configs.length === 0) {
+                              setMcpImportError("未解析到任何 MCP 配置");
+                              return;
+                            }
+                            onChange({
+                              ...settings,
+                              mcp: [...settings.mcp, ...configs],
+                            });
+                            setMcpImportText("");
+                            setMcpImportOpen(false);
+                            setMcpImportError(null);
+                          } catch (err) {
+                            setMcpImportError(`解析失败：${err instanceof Error ? err.message : String(err)}`);
+                          }
+                        }}
+                        type="button"
+                      >
+                        解析并添加
+                      </button>
+                      <button
+                        className="ghost-button"
+                        onClick={() => {
+                          setMcpImportOpen(false);
+                          setMcpImportText("");
+                          setMcpImportError(null);
+                        }}
+                        type="button"
+                      >
+                        取消
+                      </button>
+                    </div>
+                  </div>
+                ) : null}
                 <div className="config-list">
                     {settings.mcp.map((server) => (
                       <ConfigListItem

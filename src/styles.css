@@ -4122,6 +4122,13 @@ a {
   gap: 8px;
 }
 
+.mcp-import-box {
+  padding: 12px;
+  border-radius: 10px;
+  border: 1px dashed rgba(20, 88, 214, 0.18);
+  background: rgba(20, 88, 214, 0.03);
+}
+
 .config-row {
   padding: 12px;
   border-radius: 12px;
