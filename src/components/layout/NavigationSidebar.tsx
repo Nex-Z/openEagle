@@ -1,4 +1,5 @@
 import { memo, useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import {
   CirclePlus,
   Feather,
@@ -71,19 +72,44 @@ function NavigationSidebarComponent(props: NavigationSidebarProps) {
     onCloseMobile,
   } = props;
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
+  const [menuPosition, setMenuPosition] = useState<{ left: number; top: number } | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
   const statusCopy = sidebarStatusCopy(backend);
+  const openConversation = conversations.find((conversation) => conversation.id === openMenuId);
 
   useEffect(() => {
     const handlePointerDown = (event: PointerEvent) => {
-      if (!containerRef.current?.contains(event.target as Node)) {
+      const target = event.target as Node;
+      if (
+        !containerRef.current?.contains(target) &&
+        !menuRef.current?.contains(target)
+      ) {
         setOpenMenuId(null);
+        setMenuPosition(null);
       }
     };
 
     window.addEventListener("pointerdown", handlePointerDown);
     return () => window.removeEventListener("pointerdown", handlePointerDown);
   }, []);
+
+  useEffect(() => {
+    if (!openMenuId) {
+      return;
+    }
+    const closeMenu = () => {
+      setOpenMenuId(null);
+      setMenuPosition(null);
+    };
+
+    window.addEventListener("resize", closeMenu);
+    window.addEventListener("scroll", closeMenu, true);
+    return () => {
+      window.removeEventListener("resize", closeMenu);
+      window.removeEventListener("scroll", closeMenu, true);
+    };
+  }, [openMenuId]);
 
   return (
     <>
@@ -161,32 +187,33 @@ function NavigationSidebarComponent(props: NavigationSidebarProps) {
                       className="conversation-menu-trigger"
                       onClick={(event) => {
                         event.stopPropagation();
-                        setOpenMenuId((current) =>
-                          current === conversation.id ? null : conversation.id,
+                        const shouldOpen = openMenuId !== conversation.id;
+                        if (!shouldOpen) {
+                          setOpenMenuId(null);
+                          setMenuPosition(null);
+                          return;
+                        }
+
+                        const rect = event.currentTarget.getBoundingClientRect();
+                        const menuWidth = 142;
+                        const menuHeight = 46;
+                        const maxLeft = Math.max(8, window.innerWidth - menuWidth - 8);
+                        const left = Math.min(
+                          Math.max(8, rect.right - menuWidth),
+                          maxLeft,
                         );
+                        const top =
+                          rect.bottom + 6 + menuHeight <= window.innerHeight - 8
+                            ? rect.bottom + 6
+                            : Math.max(8, rect.top - menuHeight - 6);
+
+                        setOpenMenuId(conversation.id);
+                        setMenuPosition({ left, top });
                       }}
                       type="button"
                     >
                       <MoreHorizontal size={16} />
                     </button>
-
-                    {openMenuId === conversation.id ? (
-                      <div className="floating-menu" role="menu">
-                        <button
-                          className="floating-menu-item danger"
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onDeleteConversation(conversation.id);
-                            setOpenMenuId(null);
-                          }}
-                          role="menuitem"
-                          type="button"
-                        >
-                          <Trash2 size={14} />
-                          删除会话
-                        </button>
-                      </div>
-                    ) : null}
                   </div>
                 </div>
               );
@@ -215,6 +242,32 @@ function NavigationSidebarComponent(props: NavigationSidebarProps) {
           </div>
         </footer>
       </aside>
+      {openConversation && menuPosition && typeof document !== "undefined"
+        ? createPortal(
+            <div
+              ref={menuRef}
+              className="floating-menu conversation-floating-menu"
+              role="menu"
+              style={{ left: menuPosition.left, top: menuPosition.top }}
+            >
+              <button
+                className="floating-menu-item danger"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  onDeleteConversation(openConversation.id);
+                  setOpenMenuId(null);
+                  setMenuPosition(null);
+                }}
+                role="menuitem"
+                type="button"
+              >
+                <Trash2 size={14} />
+                删除会话
+              </button>
+            </div>,
+            document.body,
+          )
+        : null}
     </>
   );
 }

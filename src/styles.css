@@ -525,6 +525,15 @@ a {
   background: color-mix(in srgb, var(--danger) 10%, transparent);
 }
 
+.conversation-floating-menu {
+  position: fixed;
+  right: auto;
+  width: max-content;
+  min-width: 142px;
+  max-width: calc(100vw - 16px);
+  z-index: 80;
+}
+
 .nav-sidebar-footer {
   margin-top: auto;
 }
