@@ -307,15 +307,16 @@ class WechatAdapter:
         account = self._account or self._resolve_account()
         if not getattr(account, "configured", False) or not getattr(account, "token", None):
             await self._emit_status("error", "微信 ClawBot 凭据未找到，请重新扫码绑定。")
-            return
+            raise RuntimeError("微信 ClawBot 凭据未找到，请重新扫码绑定。")
         try:
             from wechat_clawbot.api.client import WeixinApiOptions
-            from wechat_clawbot.messaging.inbound import get_context_token
+            from wechat_clawbot.messaging.inbound import get_context_token, restore_context_tokens
             from wechat_clawbot.messaging.send import send_message_weixin
-        except ImportError:
+        except ImportError as exc:
             await self._emit_status("error", "缺少 wechat-clawbot 依赖，请先同步后端依赖。")
-            return
+            raise RuntimeError("缺少 wechat-clawbot 依赖，请先同步后端依赖。") from exc
 
+        restore_context_tokens(account.account_id)
         opts = WeixinApiOptions(
             base_url=account.base_url,
             token=account.token,

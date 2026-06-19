@@ -11,6 +11,7 @@ from app.im.bridge import IMBridge, IM_RECEIVED_ACK_TEXT, bind_config_getter
 from app.im.commands import parse_im_command
 from app.im.feishu import parse_message_receive_event
 from app.im.models import IMEvent, IMMessageSource
+from app.im.outbound import RemoteOutboundService
 from app.im.routing import build_conversation_binding, is_source_allowed
 from app.im.telegram import parse_update, split_telegram_text
 from app.im.wechat import WechatAdapter, parse_weixin_message
@@ -155,6 +156,73 @@ class FakeIMAdapter:
 class FakeAttachmentStore:
     def public_dicts(self, attachments):
         return [item.model_dump(by_alias=True, exclude_none=True) for item in attachments]
+
+
+class RemoteOutboundServiceTest(unittest.IsolatedAsyncioTestCase):
+    async def test_wechat_delivery_does_not_require_live_im_bridge(self) -> None:
+        sent = []
+
+        class FakeWechatAdapter:
+            def __init__(self, config, on_event, on_status) -> None:
+                self.config = config
+
+            async def send_text(self, message) -> None:
+                sent.append(message)
+
+        service = RemoteOutboundService(
+            lambda: AppConfig(
+                wechat=WechatConfig(enabled=True, accountId="wx-account"),
+            )
+        )
+        with patch("app.im.outbound.WechatAdapter", FakeWechatAdapter):
+            await service.send_text("wechat", "wx_user", "定时任务结果")
+
+        self.assertEqual(len(sent), 1)
+        self.assertEqual(sent[0].source.user_id, "wx_user")
+        self.assertEqual(sent[0].text, "定时任务结果")
+
+
+class IMBridgeScheduledDeliveryTest(unittest.IsolatedAsyncioTestCase):
+    async def test_persisted_target_can_be_sent_without_live_conversation_binding(self) -> None:
+        fake = FakeIMAdapter()
+        bridge = IMBridge(
+            send_client=lambda *args: _record_async([], args),
+            handle_chat=lambda *args: _record_async([], args, result="chat"),
+            start_solo=lambda *args: _record_async([], args, result="solo"),
+            solo_control=lambda *args: _record_async([], args, result="control"),
+            tool_decision=lambda *args: _record_async([], args, result="tool"),
+        )
+        bridge._telegram_adapter = fake
+
+        await bridge.send_to_target("telegram", "-100123", "定时任务结果")
+
+        self.assertEqual(len(fake.sent), 1)
+        self.assertEqual(fake.sent[0].source.channel, "telegram")
+        self.assertEqual(fake.sent[0].source.chat_id, "-100123")
+        self.assertEqual(fake.sent[0].text, "定时任务结果")
+
+    def test_delivery_target_uses_original_remote_chat(self) -> None:
+        bridge = IMBridge(
+            send_client=lambda *args: _record_async([], args),
+            handle_chat=lambda *args: _record_async([], args, result="chat"),
+            start_solo=lambda *args: _record_async([], args, result="solo"),
+            solo_control=lambda *args: _record_async([], args, result="control"),
+            tool_decision=lambda *args: _record_async([], args, result="tool"),
+        )
+        binding = build_conversation_binding(
+            IMMessageSource(
+                channel="feishu",
+                chat_id="oc_chat",
+                chat_type="group",
+                user_id="ou_user",
+            )
+        )
+        bridge._bindings[binding.conversation_id] = binding
+
+        self.assertEqual(
+            bridge.delivery_target(binding.conversation_id),
+            ("feishu", "oc_chat"),
+        )
 
 
 class IMBridgeAttachmentTest(unittest.IsolatedAsyncioTestCase):
@@ -600,6 +668,51 @@ class WechatEventParseTest(unittest.TestCase):
         assert event is not None
         self.assertEqual(event.source.chat_type, "group")
         self.assertEqual(event.source.chat_id, "wx_group")
+
+
+class WechatOutboundContextTest(unittest.IsolatedAsyncioTestCase):
+    async def test_send_restores_persisted_context_token_before_delivery(self) -> None:
+        restored = []
+        sent = []
+
+        class FakeAccount:
+            configured = True
+            token = "token"
+            account_id = "wx-account"
+            base_url = "https://example.test"
+
+        async def fake_send(to, text, opts):
+            sent.append((to, text, opts.context_token))
+            return {"messageId": "message-1"}
+
+        adapter = WechatAdapter(
+            WechatConfig(enabled=True, accountId="wx-account"),
+            on_event=lambda *_args: _record_async([], ()),
+            on_status=lambda *_args: _record_async([], ()),
+        )
+        adapter._account = FakeAccount()
+        source = IMMessageSource(
+            channel="wechat",
+            chat_id="wx-user",
+            chat_type="private",
+            user_id="wx-user",
+        )
+
+        with (
+            patch(
+                "wechat_clawbot.messaging.inbound.restore_context_tokens",
+                lambda account_id: restored.append(account_id),
+            ),
+            patch(
+                "wechat_clawbot.messaging.inbound.get_context_token",
+                lambda account_id, user_id: "ctx-restored",
+            ),
+            patch("wechat_clawbot.messaging.send.send_message_weixin", fake_send),
+        ):
+            await adapter._send_plain_text(source, "测试消息")
+
+        self.assertEqual(restored, ["wx-account"])
+        self.assertEqual(sent, [("wx-user", "测试消息", "ctx-restored")])
 
 
 class WechatBindTest(unittest.IsolatedAsyncioTestCase):

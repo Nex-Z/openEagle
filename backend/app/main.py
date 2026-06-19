@@ -19,8 +19,13 @@ from .capability_files import load_file_backed_settings, save_file_backed_settin
 from .config import AppConfig, load_config
 from .confirmations import ToolConfirmationStore
 from .default_tools import build_default_tools, execute_confirmed_tool
-from .im.bridge import IMBridge, IM_RECEIVED_ACK_TEXT, bind_config_getter
+from .im.bridge import (
+    IMBridge,
+    IM_RECEIVED_ACK_TEXT,
+    bind_config_getter,
+)
 from .im.models import IMConversationBinding
+from .im.outbound import RemoteOutboundService
 from .memory import MemoryService, init_db as init_memory_db
 from .models import (
     AttachmentRef,
@@ -38,7 +43,14 @@ from .models import (
 from .paths import resolve_workspace_root
 from .runtime_state import RuntimeState
 from .safety import assess_solo_action, is_repairable_solo_block
-from .scheduler import SchedulerService, init_db, set_scheduler_service
+from .scheduler import (
+    SchedulerService,
+    init_db,
+    set_scheduled_task_origin_resolver,
+    set_scheduler_service,
+)
+from .scheduler.delivery import prepare_scheduled_task_delivery
+from .scheduler.models import ScheduledTask, ScheduledTaskExecution
 from .scheduler.store import (
     create_task as scheduler_create_task,
     delete_task as scheduler_delete_task,
@@ -95,6 +107,7 @@ def save_persisted_settings(settings: dict[str, Any]) -> None:
 memory_service = MemoryService(config_getter=runtime_state.get_config)
 confirmed_tool_results: dict[str, str] = {}
 scheduler_service: SchedulerService | None = None
+background_tasks: set[asyncio.Task[Any]] = set()
 ATTACHMENT_WS_MAX_SIZE = 192 * 1024 * 1024
 PARENT_PID_ENV = "OPEN_EAGLE_PARENT_PID"
 WINDOWS_SYNCHRONIZE = 0x00100000
@@ -236,8 +249,10 @@ async def announce_ready() -> None:
     blog(f"scheduler db ready path={db_path}")
     init_memory_db(memory_db_path)
     blog(f"memory db ready path={memory_db_path}")
+    remote_outbound = RemoteOutboundService(runtime_state.get_config)
     scheduler_service = SchedulerService(
         config_getter=runtime_state.get_config,
+        send_remote=remote_outbound.send_text,
         memory_context_getter=memory_service.prompt_context,
     )
     set_scheduler_service(scheduler_service)
@@ -1748,6 +1763,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         reply_attachments=attachment_store.pop_reply_attachments,
     )
     bind_config_getter(im_bridge, runtime_state.get_config)
+    set_scheduled_task_origin_resolver(im_bridge.delivery_target)
     await im_bridge.update_config(runtime_state.get_config())
 
     # Send persisted settings to frontend on connection
@@ -2213,9 +2229,24 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 continue
 
             if envelope.type == "client:scheduled_task_create":
-                from .scheduler.models import ScheduledTask
-
                 task = ScheduledTask.model_validate(envelope.payload.get("task", {}))
+                try:
+                    prepare_scheduled_task_delivery(
+                        task,
+                        runtime_state.get_config(),
+                        envelope.conversation_id,
+                    )
+                except ValueError as exc:
+                    await safe_send(
+                        "server:error",
+                        envelope.request_id,
+                        envelope.conversation_id,
+                        ErrorPayload(
+                            message=str(exc),
+                            code="scheduled_task_delivery_invalid",
+                        ).model_dump(),
+                    )
+                    continue
                 scheduler_create_task(task)
                 if scheduler_service is not None:
                     scheduler_service.add_task(task)
@@ -2232,9 +2263,24 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 continue
 
             if envelope.type == "client:scheduled_task_update":
-                from .scheduler.models import ScheduledTask
-
                 task = ScheduledTask.model_validate(envelope.payload.get("task", {}))
+                try:
+                    prepare_scheduled_task_delivery(
+                        task,
+                        runtime_state.get_config(),
+                        envelope.conversation_id,
+                    )
+                except ValueError as exc:
+                    await safe_send(
+                        "server:error",
+                        envelope.request_id,
+                        envelope.conversation_id,
+                        ErrorPayload(
+                            message=str(exc),
+                            code="scheduled_task_delivery_invalid",
+                        ).model_dump(),
+                    )
+                    continue
                 scheduler_update_task(task)
                 if scheduler_service is not None:
                     scheduler_service.update_task(task)
@@ -2262,6 +2308,88 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     envelope.conversation_id,
                     {"taskId": task_id},
                 )
+                continue
+
+            if envelope.type == "client:scheduled_task_run":
+                task_id = str(envelope.payload.get("taskId", "")).strip()
+                if scheduler_service is None:
+                    await safe_send(
+                        "server:error",
+                        envelope.request_id,
+                        envelope.conversation_id,
+                        ErrorPayload(
+                            message="定时任务服务尚未初始化",
+                            code="scheduler_unavailable",
+                        ).model_dump(),
+                    )
+                    continue
+                try:
+                    run_task = scheduler_service.trigger_task_now(task_id)
+                except (ValueError, RuntimeError) as exc:
+                    await safe_send(
+                        "server:error",
+                        envelope.request_id,
+                        envelope.conversation_id,
+                        ErrorPayload(
+                            message=str(exc),
+                            code="scheduled_task_run_rejected",
+                        ).model_dump(),
+                    )
+                    continue
+
+                await safe_send(
+                    "server:scheduled_task_run_started",
+                    envelope.request_id,
+                    envelope.conversation_id,
+                    {"taskId": task_id},
+                )
+                blog(f"scheduled task manual run started id={_short_log_id(task_id)}")
+
+                async def notify_manual_run(
+                    current_task_id: str = task_id,
+                    current_request_id: str = envelope.request_id,
+                    current_conversation_id: str = envelope.conversation_id,
+                    current_run_task: asyncio.Task[ScheduledTaskExecution | None] = run_task,
+                ) -> None:
+                    try:
+                        await current_run_task
+                    except Exception as exc:  # noqa: BLE001
+                        blog(
+                            "scheduled task manual run crashed "
+                            f"id={_short_log_id(current_task_id)} "
+                            f"error={type(exc).__name__}: {exc}"
+                        )
+                    task = scheduler_get_task(current_task_id)
+                    executions = scheduler_get_history(current_task_id)
+                    payload: dict[str, Any] = {
+                        "taskId": current_task_id,
+                        "executions": [
+                            item.model_dump(by_alias=True, exclude_none=True)
+                            for item in executions
+                        ],
+                    }
+                    if task is not None:
+                        payload["task"] = task.model_dump(
+                            by_alias=True,
+                            exclude_none=True,
+                        )
+                    try:
+                        await safe_send(
+                            "server:scheduled_task_run_finished",
+                            current_request_id,
+                            current_conversation_id,
+                            payload,
+                        )
+                    except Exception as exc:  # noqa: BLE001
+                        blog(
+                            "scheduled task manual run notification failed "
+                            f"id={_short_log_id(current_task_id)} "
+                            f"error={type(exc).__name__}: {exc}"
+                        )
+
+                notification_task = asyncio.create_task(notify_manual_run())
+                background_tasks.add(notification_task)
+                notification_task.add_done_callback(background_tasks.discard)
                 continue
 
             if envelope.type == "client:scheduled_task_history":
@@ -2322,6 +2450,9 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 await im_bridge.stop()
             except Exception:
                 pass
+        set_scheduled_task_origin_resolver(None)
+        if scheduler_service is not None and scheduler_service._send_event is safe_send:
+            scheduler_service._send_event = None
         blog(f"ws cleanup complete client={websocket.client}")
 
 

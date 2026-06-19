@@ -11,7 +11,7 @@ export default defineConfig({
   },
   build: {
     rollupOptions: {
-      input: ["index.html", "solo-overlay.html"]
+      input: ["index.html", "solo-overlay.html", "quick-assistant.html"]
     }
   },
   clearScreen: false

@@ -11,7 +11,13 @@ from ..context_cleanup import should_cleanup_for_idle
 from ..models import AttachmentRef
 from .commands import parse_im_command
 from .feishu import FeishuAdapter
-from .models import IMConversationBinding, IMEvent, IMOutboundMessage, IMStatus
+from .models import (
+    IMConversationBinding,
+    IMEvent,
+    IMMessageSource,
+    IMOutboundMessage,
+    IMStatus,
+)
 from .routing import build_conversation_binding, is_source_allowed
 from .telegram import TelegramAdapter
 from .wechat import WechatAdapter
@@ -203,6 +209,31 @@ class IMBridge:
             )
         )
 
+    def delivery_target(self, conversation_id: str) -> tuple[str, str] | None:
+        binding = self._bindings.get(conversation_id)
+        if binding is None:
+            return None
+        return binding.source.channel, binding.source.chat_id
+
+    async def send_to_target(self, channel: str, chat_id: str, text: str) -> None:
+        adapter = self._adapter_for_channel(channel)
+        if adapter is None:
+            raise RuntimeError(f"远程渠道未启用或尚未就绪: {channel}")
+        clean_text = text.strip()
+        if not clean_text:
+            return
+        await adapter.send_text(
+            IMOutboundMessage(
+                source=IMMessageSource(
+                    channel=channel,  # type: ignore[arg-type]
+                    chat_id=chat_id,
+                    chat_type="private",
+                    user_id=chat_id,
+                ),
+                text=clean_text,
+            )
+        )
+
     async def _handle_event(self, event: IMEvent) -> None:
         app_config = await self._current_config()
         config = resolve_channel_config(app_config, event.source.channel)
@@ -379,11 +410,17 @@ class IMBridge:
         binding = self._bindings.get(conversation_id)
         if binding is None:
             return None
-        if binding.source.channel == "feishu":
+        return self._adapter_for_channel(binding.source.channel)
+
+    def _adapter_for_channel(
+        self,
+        channel: str,
+    ) -> FeishuAdapter | TelegramAdapter | WechatAdapter | None:
+        if channel == "feishu":
             return self._feishu_adapter
-        if binding.source.channel == "telegram":
+        if channel == "telegram":
             return self._telegram_adapter
-        if binding.source.channel == "wechat":
+        if channel == "wechat":
             return self._wechat_adapter
         return None
 

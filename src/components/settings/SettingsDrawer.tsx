@@ -5,6 +5,7 @@ import QRCode from "qrcode";
 import { ThemeToggle } from "../ThemeToggle";
 import type {
   AppSettings,
+  ImChannel,
   IMStatusPayload,
   MemoryState,
   McpServerConfig,
@@ -21,6 +22,7 @@ export type SettingsSection =
   | "general"
   | "models"
   | "im"
+  | "quick_assistant"
   | "solo"
   | "tools"
   | "mcp"
@@ -37,6 +39,7 @@ interface SettingsDrawerProps {
   wechatBindStatus: WechatBindStatusPayload | null;
   scheduledTasks: ScheduledTask[];
   scheduledTaskHistory: Record<string, ScheduledTaskExecution[]>;
+  runningScheduledTaskIds: ReadonlySet<string>;
   memoryState: MemoryState;
   onRefreshSoloDisplays: () => boolean;
   onRefreshSettings: () => boolean;
@@ -50,6 +53,7 @@ interface SettingsDrawerProps {
   onUpdateScheduledTask: (task: ScheduledTask) => boolean;
   onDeleteScheduledTask: (taskId: string) => boolean;
   onRequestScheduledTaskHistory: (taskId: string) => boolean;
+  onRunScheduledTask: (taskId: string) => boolean;
   onChange: (settings: AppSettings) => void;
   onClose: () => void;
   onSectionChange: (section: SettingsSection) => void;
@@ -63,6 +67,7 @@ const sectionMeta: Array<{
   { id: "general", title: "General", summary: "外观与基础体验。" },
   { id: "models", title: "Models", summary: "文本模型和视觉模型接入。" },
   { id: "im", title: "IM", summary: "飞书、Telegram 与微信远程接入。" },
+  { id: "quick_assistant", title: "悬浮助理", summary: "快捷唤起、选区读取与截图上下文。" },
   { id: "solo", title: "桌面执行", summary: "显示器预览与截图目标。" },
   { id: "tools", title: "Tools", summary: "本地工具入口。" },
   { id: "mcp", title: "MCP", summary: "MCP Server 配置。" },
@@ -246,6 +251,85 @@ function joinLines(value: string[]) {
   return value.join("\n");
 }
 
+type ScheduledDeliveryChannel = "local" | ImChannel;
+
+interface ScheduledDeliveryOption {
+  value: ScheduledDeliveryChannel;
+  label: string;
+  available: boolean;
+  unavailableReason?: string;
+  targetSuggestions: string[];
+}
+
+function uniqueNonEmpty(values: Array<string | undefined>) {
+  return Array.from(new Set(values.map((value) => value?.trim()).filter(Boolean) as string[]));
+}
+
+function scheduledDeliveryOptions(settings: AppSettings): ScheduledDeliveryOption[] {
+  const providerByType = new Map(
+    settings.im.providers.map((provider) => [provider.type, provider]),
+  );
+  const feishu = providerByType.get("feishu");
+  const telegram = providerByType.get("telegram");
+  const wechat = providerByType.get("wechat");
+
+  const feishuEnabled = feishu?.enabled ?? settings.feishu.enabled;
+  const feishuAppId = feishu?.appId ?? settings.feishu.appId;
+  const feishuAppSecret = feishu?.appSecret ?? settings.feishu.appSecret;
+  const feishuReady = feishuEnabled && Boolean(feishuAppId?.trim() && feishuAppSecret?.trim());
+
+  const telegramEnabled = telegram?.enabled ?? settings.telegram.enabled;
+  const telegramToken = telegram?.botToken ?? settings.telegram.botToken;
+  const telegramReady = telegramEnabled && Boolean(telegramToken?.trim());
+
+  const wechatEnabled = wechat?.enabled ?? settings.wechat.enabled;
+  const wechatAccountId = wechat?.accountId ?? settings.wechat.accountId;
+  const wechatReady = wechatEnabled && Boolean(wechatAccountId?.trim());
+
+  return [
+    {
+      value: "local",
+      label: "本地客户端",
+      available: true,
+      targetSuggestions: [],
+    },
+    {
+      value: "feishu",
+      label: "飞书",
+      available: feishuReady,
+      unavailableReason: feishuEnabled ? "缺少 App ID 或 App Secret" : "尚未启用",
+      targetSuggestions: uniqueNonEmpty(feishu?.allowedChatIds ?? settings.feishu.allowedChatIds),
+    },
+    {
+      value: "telegram",
+      label: "Telegram",
+      available: telegramReady,
+      unavailableReason: telegramEnabled ? "缺少 Bot Token" : "尚未启用",
+      targetSuggestions: uniqueNonEmpty([
+        ...(telegram?.allowedChatIds ?? settings.telegram.allowedChatIds),
+        ...(telegram?.allowedUserIds ?? settings.telegram.allowedUserIds),
+      ]),
+    },
+    {
+      value: "wechat",
+      label: "微信",
+      available: wechatReady,
+      unavailableReason: wechatEnabled ? "尚未完成扫码绑定" : "尚未启用",
+      targetSuggestions: uniqueNonEmpty([
+        ...(wechat?.allowedChatIds ?? settings.wechat.allowedChatIds),
+        ...(wechat?.allowedUserIds ?? settings.wechat.allowedUserIds),
+      ]),
+    },
+  ];
+}
+
+function scheduledTaskDeliveryLabel(task: ScheduledTask) {
+  if (task.imChannel === "feishu") return "飞书";
+  if (task.imChannel === "telegram") return "Telegram";
+  if (task.imChannel === "wechat") return "微信";
+  return "本地客户端";
+}
+
 function readBoundedInteger(value: string, fallback: number, min = 0) {
   const next = Number(value);
   if (!Number.isFinite(next)) {
@@ -306,6 +390,7 @@ function ConfigListItem(props: {
   onToggleEnabled: (value: boolean) => void;
   onToggleExpanded: () => void;
   onDelete: () => void;
+  headerActions?: React.ReactNode;
   children: React.ReactNode;
 }) {
   const {
@@ -316,6 +401,7 @@ function ConfigListItem(props: {
     onToggleEnabled,
     onToggleExpanded,
     onDelete,
+    headerActions,
     children,
   } = props;
 
@@ -327,6 +413,7 @@ function ConfigListItem(props: {
           <span>{subtitle}</span>
         </div>
         <div className="config-row-actions">
+          {headerActions}
           <label className="toggle-inline">
             <input
               checked={enabled}
@@ -366,6 +453,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
     wechatBindStatus,
     scheduledTasks,
     scheduledTaskHistory,
+    runningScheduledTaskIds,
     memoryState,
     onRefreshSoloDisplays,
     onRefreshSettings,
@@ -379,6 +467,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
     onUpdateScheduledTask,
     onDeleteScheduledTask,
     onRequestScheduledTaskHistory,
+    onRunScheduledTask,
     onChange,
     onClose,
     onSectionChange,
@@ -547,6 +636,16 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
       ...settings,
       context: {
         ...settings.context,
+        ...patch,
+      },
+    });
+  };
+
+  const updateQuickAssistantSettings = (patch: Partial<AppSettings["quickAssistant"]>) => {
+    onChange({
+      ...settings,
+      quickAssistant: {
+        ...settings.quickAssistant,
         ...patch,
       },
     });
@@ -780,6 +879,100 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
                       value={settings.context.middleMessageCharLimit}
                     />
                   </label>
+                </section>
+              </div>
+            ) : null}
+
+            {activeSection === "quick_assistant" ? (
+              <div className="settings-stack">
+                <section className="settings-panel">
+                  <div className="settings-panel-head">
+                    <div>
+                      <span className="card-kicker">Quick Assistant</span>
+                      <strong>悬浮助理</strong>
+                    </div>
+                    <label className="toggle-inline" title="启用悬浮助理">
+                      <input
+                        checked={settings.quickAssistant.enabled}
+                        onChange={(event) =>
+                          updateQuickAssistantSettings({ enabled: event.target.checked })
+                        }
+                        type="checkbox"
+                      />
+                      <span className="toggle-track" />
+                    </label>
+                  </div>
+
+                  <label className="form-field">
+                    <span>全局快捷键</span>
+                    <input
+                      disabled={!settings.quickAssistant.enabled}
+                      onChange={(event) =>
+                        updateQuickAssistantSettings({ hotkey: event.target.value })
+                      }
+                      placeholder="Control+Alt+Space"
+                      value={settings.quickAssistant.hotkey}
+                    />
+                    <span className="form-hint">
+                      使用 Electron accelerator 格式，例如 Control+Alt+Space。
+                    </span>
+                  </label>
+
+                  <div className="config-row">
+                    <div className="config-row-head">
+                      <div className="config-row-copy">
+                        <strong>自动读取选中文字</strong>
+                        <span>唤起悬浮窗后异步读取当前选区，用于生成上下文 chip。</span>
+                      </div>
+                      <div className="config-row-actions">
+                        <label className="toggle-inline">
+                          <input
+                            checked={settings.quickAssistant.autoReadSelection}
+                            disabled={!settings.quickAssistant.enabled}
+                            onChange={(event) =>
+                              updateQuickAssistantSettings({ autoReadSelection: event.target.checked })
+                            }
+                            type="checkbox"
+                          />
+                          <span className="toggle-track" />
+                        </label>
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="config-row">
+                    <div className="config-row-head">
+                      <div className="config-row-copy">
+                        <strong>恢复默认快捷键</strong>
+                        <span>回到默认的 Control+Alt+Space。</span>
+                      </div>
+                      <div className="config-row-actions">
+                        <button
+                          className="ghost-button"
+                          disabled={!settings.quickAssistant.enabled}
+                          onClick={() => updateQuickAssistantSettings({ hotkey: "Control+Alt+Space" })}
+                          type="button"
+                        >
+                          恢复默认
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                </section>
+
+                <section className="settings-panel">
+                  <div className="settings-panel-head">
+                    <div>
+                      <span className="card-kicker">Capture</span>
+                      <strong>截图上下文</strong>
+                    </div>
+                    <Monitor size={16} />
+                  </div>
+                  <div className="form-hint">
+                    <span>悬浮助理不会在唤起时自动读取屏幕。</span>
+                    <span>只有点击截图按钮并完成框选后，截图才会作为图片上下文发送。</span>
+                    <span>关闭“自动读取选中文字”后，唤起只打开输入框，不会模拟复制当前选区。</span>
+                  </div>
                 </section>
               </div>
             ) : null}
@@ -2120,6 +2313,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
 
                   {taskFormOpen ? (
                     <ScheduledTaskForm
+                      settings={settings}
                       task={editingTask}
                       onSave={(data) => {
                         if (editingTask) {
@@ -2144,6 +2338,17 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
                     {scheduledTasks.map((task) => (
                       <ConfigListItem
                         key={task.id}
+                        headerActions={
+                          <button
+                            className="ghost-button"
+                            disabled={runningScheduledTaskIds.has(task.id)}
+                            onClick={() => onRunScheduledTask(task.id)}
+                            title="立即执行一次，并按当前配置发送结果"
+                            type="button"
+                          >
+                            {runningScheduledTaskIds.has(task.id) ? "执行中…" : "立即执行"}
+                          </button>
+                        }
                         enabled={task.enabled}
                         expanded={expandedTaskId === task.id}
                         onDelete={() => onDeleteScheduledTask(task.id)}
@@ -2158,7 +2363,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
                             setHistoryTaskId(task.id);
                           }
                         }}
-                        subtitle={`${task.scheduleExpr} · ${task.workerKind}`}
+                        subtitle={`${task.scheduleExpr} · ${task.workerKind} · ${scheduledTaskDeliveryLabel(task)}`}
                         title={task.name || "未命名任务"}
                       >
                         <label className="form-field">
@@ -2210,6 +2415,10 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
                           </select>
                         </label>
                         <div className="form-hint">
+                          <span>
+                            结果发送到: {scheduledTaskDeliveryLabel(task)}
+                            {task.imChatId ? ` · ${task.imChatId}` : ""}
+                          </span>
                           {task.nextRunAt ? (
                             <span>下次执行: {new Date(task.nextRunAt).toLocaleString()}</span>
                           ) : null}
@@ -2236,18 +2445,32 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
 }
 
 function ScheduledTaskForm(props: {
+  settings: AppSettings;
   task: ScheduledTask | null;
   onSave: (data: Omit<ScheduledTask, "id" | "createdAt" | "updatedAt">
 ) => void;
   onCancel: () => void;
 }) {
-  const { task, onSave, onCancel } = props;
+  const { settings, task, onSave, onCancel } = props;
   const [name, setName] = useState(task?.name ?? "");
   const [prompt, setPrompt] = useState(task?.prompt ?? "");
   const [scheduleExpr, setScheduleExpr] = useState(task?.scheduleExpr ?? "0 20 * * *");
   const [workerKind, setWorkerKind] = useState<ScheduledTask["workerKind"]>(
     task?.workerKind ?? "general",
   );
+  const [deliveryChannel, setDeliveryChannel] = useState<ScheduledDeliveryChannel>(
+    task?.imChannel ?? "local",
+  );
+  const [deliveryTarget, setDeliveryTarget] = useState(task?.imChatId ?? "");
+  const deliveryOptions = scheduledDeliveryOptions(settings);
+  const selectedDelivery = deliveryOptions.find(
+    (option) => option.value === deliveryChannel,
+  ) ?? deliveryOptions[0];
+  const remoteDelivery = deliveryChannel !== "local";
+  const canSave =
+    Boolean(name.trim() && prompt.trim() && scheduleExpr.trim()) &&
+    selectedDelivery.available &&
+    (!remoteDelivery || Boolean(deliveryTarget.trim()));
 
   return (
     <div className="config-row-body" style={{ marginBottom: 12 }}>
@@ -2281,14 +2504,74 @@ function ScheduledTaskForm(props: {
           <option value="solo">solo</option>
         </select>
       </label>
+      <label className="form-field">
+        <span>结果发送到</span>
+        <select
+          onChange={(event) => {
+            const nextChannel = event.target.value as ScheduledDeliveryChannel;
+            const nextOption = deliveryOptions.find(
+              (option) => option.value === nextChannel,
+            );
+            setDeliveryChannel(nextChannel);
+            setDeliveryTarget(
+              nextChannel === "local" ? "" : (nextOption?.targetSuggestions[0] ?? ""),
+            );
+          }}
+          value={deliveryChannel}
+        >
+          {deliveryOptions.map((option) => (
+            <option disabled={!option.available} key={option.value} value={option.value}>
+              {option.label}
+              {option.available ? "" : `（${option.unavailableReason}）`}
+            </option>
+          ))}
+        </select>
+        <span className="form-hint">
+          未启用或凭据不完整的远程渠道不可选择；本地客户端结果会进入当前会话。
+        </span>
+      </label>
+      {remoteDelivery ? (
+        <label className="form-field">
+          <span>接收会话 ID</span>
+          <input
+            list={`scheduled-target-${deliveryChannel}`}
+            onChange={(event) => setDeliveryTarget(event.target.value)}
+            placeholder={
+              deliveryChannel === "feishu"
+                ? "填写飞书 chat_id"
+                : deliveryChannel === "telegram"
+                  ? "填写 Telegram chat_id 或私聊 user_id"
+                  : "填写微信用户或群聊 ID"
+            }
+            value={deliveryTarget}
+          />
+          <datalist id={`scheduled-target-${deliveryChannel}`}>
+            {selectedDelivery.targetSuggestions.map((target) => (
+              <option key={target} value={target} />
+            ))}
+          </datalist>
+          <span className="form-hint">
+            已配置的白名单 ID 会作为候选；也可以手工填写机器人能够发送到的会话 ID。
+          </span>
+        </label>
+      ) : null}
       <div className="inline-actions">
         <button
           className="ghost-button"
           onClick={() =>
-            onSave({ name, prompt, scheduleExpr, workerKind, enabled: true, scheduleType: "cron" })
+            onSave({
+              name,
+              prompt,
+              scheduleExpr,
+              workerKind,
+              enabled: true,
+              scheduleType: "cron",
+              imChannel: deliveryChannel === "local" ? undefined : deliveryChannel,
+              imChatId: remoteDelivery ? deliveryTarget.trim() : undefined,
+            })
           }
           type="button"
-          disabled={!name.trim() || !prompt.trim() || !scheduleExpr.trim()}
+          disabled={!canSave}
         >
           保存
         </button>

@@ -22,6 +22,13 @@ const ALLOWED_INVOKE_CHANNELS = [
   "notify_solo_result",
   "load_app_settings",
   "save_app_settings",
+  "show_quick_assistant",
+  "hide_quick_assistant",
+  "configure_quick_assistant",
+  "quick_assistant_ready",
+  "read_active_selection",
+  "capture_context_screenshot",
+  "update_quick_assistant",
 ];
 
 const ALLOWED_LISTEN_CHANNELS = [
@@ -30,12 +37,20 @@ const ALLOWED_LISTEN_CHANNELS = [
   "solo://overlay_state",
   "solo://overlay_control",
   "solo://user_dismissed",
+  "quick://context",
+  "quick://state",
+  "quick://submit",
 ];
 
 const ALLOWED_SEND_CHANNELS = [
   "solo:user-dismissed",
   "solo:overlay-control",
   "solo:overlay-layout",
+  "quick:submit",
+  "quick:dismiss",
+  "quick:open-main",
+  "quick:screenshot-selection",
+  "quick:screenshot-cancel",
 ];
 
 contextBridge.exposeInMainWorld("electronAPI", {

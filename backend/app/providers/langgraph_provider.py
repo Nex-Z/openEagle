@@ -12,6 +12,7 @@ from ..config import AgentConfig, AppConfig, McpConfig, SkillConfig, ToolConfig
 from ..confirmations import ToolConfirmationStore
 from ..langgraph_agent import (
     ContentChunkEvent,
+    ImageBlockFormat,
     LangGraphRunResult,
     LangGraphToolAgent,
     ToolTraceEvent,
@@ -42,6 +43,41 @@ def _attachment_prompt(prompt: str, attachments: list[AttachmentRef]) -> str:
     ]
     base = prompt.strip() or "请结合附件处理当前请求。"
     return f"{base}\n\n用户本轮附加了以下文件:\n" + "\n".join(rows)
+
+
+def _has_image_attachment(attachments: list[AttachmentRef] | None) -> bool:
+    return any(item.kind == "image" for item in attachments or [])
+
+
+def _is_image_block_compat_error(exc: Exception) -> bool:
+    message = str(exc).lower()
+    has_image_marker = any(
+        marker in message
+        for marker in ("image_url", "image", "source", "base64", "vision")
+    )
+    has_compat_marker = any(
+        marker in message
+        for marker in (
+            "unknown variant",
+            "expected",
+            "invalid_request",
+            "invalid request",
+            "deserialize",
+            "unsupported",
+            "not supported",
+        )
+    )
+    return has_image_marker and has_compat_marker
+
+
+def _image_compat_fallback_prompt(prompt: str) -> str:
+    return (
+        f"{prompt}\n\n"
+        "注意：当前 openai-like 端点同时拒绝了 OpenAI image_url 和 Anthropic image source 图片消息，"
+        "本轮无法直接读取图片像素，只能参考附件文件名和元数据。"
+        "请明确说明这个限制，并建议用户切换到原生 anthropic provider、"
+        "原生 openai provider，或使用支持视觉输入的 openai-like 端点后重试。"
+    )
 
 
 class LangGraphAgentProvider:
@@ -191,6 +227,7 @@ class LangGraphAgentProvider:
         selected_tools: list[ToolConfig],
         selected_mcp: list[McpConfig],
         selected_skills: list[SkillConfig],
+        preserve_anthropic_image_blocks: bool = False,
     ) -> LangGraphToolAgent:
         instructions = build_chat_instructions(
             conversation_id=conversation_id,
@@ -232,6 +269,7 @@ class LangGraphAgentProvider:
                 content,
                 payload,
             ),
+            preserve_anthropic_image_blocks=preserve_anthropic_image_blocks,
         )
 
     async def reply(
@@ -246,23 +284,54 @@ class LangGraphAgentProvider:
         cleaned_prompt, selected_tools, selected_mcp, selected_skills, _ = (
             self._extract_selected_capabilities(prompt)
         )
-        runner = self._build_runner(
-            conversation_id,
-            selected_tools=selected_tools,
-            selected_mcp=selected_mcp,
-            selected_skills=selected_skills,
-        )
+
+        def build_runner(preserve_anthropic_image_blocks: bool = False) -> LangGraphToolAgent:
+            return self._build_runner(
+                conversation_id,
+                selected_tools=selected_tools,
+                selected_mcp=selected_mcp,
+                selected_skills=selected_skills,
+                preserve_anthropic_image_blocks=preserve_anthropic_image_blocks,
+            )
+
+        runner = build_runner()
         user_prompt = _attachment_prompt(
             cleaned_prompt or "请结合已选能力处理当前请求。",
             attachments or [],
         )
-        result = await runner.run(
-            attachment_user_content(
-                user_prompt,
+        include_file_parts = self._agent_config.provider == "openai"
+
+        def user_content(
+            image_block_format: ImageBlockFormat,
+            prompt_override: str | None = None,
+        ) -> str | list[dict[str, Any]]:
+            return attachment_user_content(
+                prompt_override or user_prompt,
                 attachments,
-                include_file_parts=self._agent_config.provider == "openai",
+                include_file_parts=include_file_parts,
+                include_image_parts=image_block_format != "none",
+                image_block_format=image_block_format,
             )
-        )
+
+        try:
+            result = await runner.run(user_content("openai"))
+        except Exception as exc:
+            if (
+                self._agent_config.provider != "openai-like"
+                or not _has_image_attachment(attachments)
+                or not _is_image_block_compat_error(exc)
+            ):
+                raise
+            try:
+                anthropic_runner = build_runner(preserve_anthropic_image_blocks=True)
+                result = await anthropic_runner.run(user_content("anthropic"))
+            except Exception as anthropic_exc:
+                if not _is_image_block_compat_error(anthropic_exc):
+                    raise
+                fallback_runner = build_runner()
+                result = await fallback_runner.run(
+                    user_content("none", _image_compat_fallback_prompt(user_prompt))
+                )
         return result.content
 
     async def stream_reply(
@@ -280,39 +349,103 @@ class LangGraphAgentProvider:
         for trace in selection_traces:
             yield trace
 
-        runner = self._build_runner(
-            conversation_id,
-            selected_tools=selected_tools,
-            selected_mcp=selected_mcp,
-            selected_skills=selected_skills,
-        )
+        def build_runner(preserve_anthropic_image_blocks: bool = False) -> LangGraphToolAgent:
+            return self._build_runner(
+                conversation_id,
+                selected_tools=selected_tools,
+                selected_mcp=selected_mcp,
+                selected_skills=selected_skills,
+                preserve_anthropic_image_blocks=preserve_anthropic_image_blocks,
+            )
+
+        runner = build_runner()
         user_prompt = _attachment_prompt(
             cleaned_prompt or "请结合已选能力处理当前请求。",
             attachments or [],
         )
         emitted_content = False
-        async for event in runner.stream(
-            attachment_user_content(
-                user_prompt,
+        include_file_parts = self._agent_config.provider == "openai"
+
+        def user_content(
+            image_block_format: ImageBlockFormat,
+            prompt_override: str | None = None,
+        ) -> str | list[dict[str, Any]]:
+            return attachment_user_content(
+                prompt_override or user_prompt,
                 attachments,
-                include_file_parts=self._agent_config.provider == "openai",
+                include_file_parts=include_file_parts,
+                include_image_parts=image_block_format != "none",
+                image_block_format=image_block_format,
             )
-        ):
-            if isinstance(event, ContentChunkEvent):
-                emitted_content = True
-                yield ReplyChunk(content=event.content)
-                continue
-            if isinstance(event, ToolTraceEvent):
-                if event.status == "completed" and (event.result or "").startswith(
-                    "CONFIRMATION_REQUIRED "
+
+        async def emit_runner_events(
+            active_runner: LangGraphToolAgent,
+            content: str | list[dict[str, Any]],
+        ) -> AsyncIterator[ProviderStreamEvent]:
+            nonlocal emitted_content
+            async for event in active_runner.stream(content):
+                if isinstance(event, ContentChunkEvent):
+                    emitted_content = True
+                    yield ReplyChunk(content=event.content)
+                    continue
+                if isinstance(event, ToolTraceEvent):
+                    if event.status == "completed" and (event.result or "").startswith(
+                        "CONFIRMATION_REQUIRED "
+                    ):
+                        confirmation_id = (event.result or "").split(" ", 1)[1].split(":", 1)[0].strip()
+                        if confirmation_id:
+                            yield ReplyToolConfirmation(confirmation_id=confirmation_id)
+                    yield _reply_trace(event)
+                    continue
+                if isinstance(event, LangGraphRunResult) and event.content and not emitted_content:
+                    yield ReplyChunk(content=event.content)
+
+        try:
+            async for event in emit_runner_events(runner, user_content("openai")):
+                yield event
+        except Exception as exc:
+            if (
+                emitted_content
+                or self._agent_config.provider != "openai-like"
+                or not _has_image_attachment(attachments)
+                or not _is_image_block_compat_error(exc)
+            ):
+                raise
+            yield ReplyTrace(
+                trace_id=f"image-url-fallback-{utc_now()}",
+                kind="agent",
+                name="attachment-compat",
+                status="completed",
+                summary="当前 openai-like 端点不接受 OpenAI image_url 图片消息，已改用 Anthropic image source 重试。",
+                params={"provider": self._agent_config.provider},
+                result=str(exc),
+                started_at=utc_now(),
+                completed_at=utc_now(),
+            )
+            try:
+                anthropic_runner = build_runner(preserve_anthropic_image_blocks=True)
+                async for event in emit_runner_events(anthropic_runner, user_content("anthropic")):
+                    yield event
+            except Exception as anthropic_exc:
+                if emitted_content or not _is_image_block_compat_error(anthropic_exc):
+                    raise
+                yield ReplyTrace(
+                    trace_id=f"image-block-fallback-{utc_now()}",
+                    kind="agent",
+                    name="attachment-compat",
+                    status="completed",
+                    summary="当前 openai-like 端点也不接受 Anthropic 图片消息，已改用文本附件摘要重试。",
+                    params={"provider": self._agent_config.provider},
+                    result=str(anthropic_exc),
+                    started_at=utc_now(),
+                    completed_at=utc_now(),
+                )
+                fallback_runner = build_runner()
+                async for event in emit_runner_events(
+                    fallback_runner,
+                    user_content("none", _image_compat_fallback_prompt(user_prompt))
                 ):
-                    confirmation_id = (event.result or "").split(" ", 1)[1].split(":", 1)[0].strip()
-                    if confirmation_id:
-                        yield ReplyToolConfirmation(confirmation_id=confirmation_id)
-                yield _reply_trace(event)
-                continue
-            if isinstance(event, LangGraphRunResult) and event.content and not emitted_content:
-                yield ReplyChunk(content=event.content)
+                    yield event
 
 
 def _reply_trace(trace: ToolTraceEvent) -> ReplyTrace:

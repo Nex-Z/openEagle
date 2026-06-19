@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from datetime import UTC, datetime
 
 from .models import ScheduledTask
@@ -7,11 +8,20 @@ from .service import SchedulerService
 from .store import create_task
 
 _scheduler_service: SchedulerService | None = None
+ScheduledTaskOriginResolver = Callable[[str], tuple[str, str] | None]
+_origin_resolver: ScheduledTaskOriginResolver | None = None
 
 
 def set_scheduler_service(service: SchedulerService) -> None:
     global _scheduler_service
     _scheduler_service = service
+
+
+def set_scheduled_task_origin_resolver(
+    resolver: ScheduledTaskOriginResolver | None,
+) -> None:
+    global _origin_resolver
+    _origin_resolver = resolver
 
 
 def create_scheduled_task(
@@ -37,12 +47,20 @@ def create_scheduled_task(
         return "Error: scheduler service not initialized."
 
     try:
+        im_channel: str | None = None
+        im_chat_id: str | None = None
+        if conversation_id and _origin_resolver is not None:
+            origin = _origin_resolver(conversation_id)
+            if origin is not None:
+                im_channel, im_chat_id = origin
         task = ScheduledTask(
             name=name,
             prompt=prompt,
             schedule_expr=schedule_expr,
             worker_kind=worker_kind,  # type: ignore[arg-type]
             conversation_id=conversation_id,
+            im_channel=im_channel,
+            im_chat_id=im_chat_id,
             created_at=datetime.now(UTC).isoformat(),
             updated_at=datetime.now(UTC).isoformat(),
         )

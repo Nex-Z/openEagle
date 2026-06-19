@@ -111,9 +111,11 @@ export interface AttachmentRef {
   previewUrl?: string;
 }
 
+export type ImChannel = "feishu" | "telegram" | "wechat";
+
 export interface ImProviderSettings {
   id: string;
-  type: "feishu" | "telegram" | "wechat";
+  type: ImChannel;
   name: string;
   enabled: boolean;
   appId?: string;
@@ -169,6 +171,12 @@ export interface SoloSettings {
   preferredDisplayIndex: number;
 }
 
+export interface QuickAssistantSettings {
+  enabled: boolean;
+  hotkey: string;
+  autoReadSelection: boolean;
+}
+
 export interface ToolConfig {
   id: string;
   name: string;
@@ -214,6 +222,7 @@ export interface AppSettings {
   permissions: PermissionSettings;
   context: ContextSettings;
   solo: SoloSettings;
+  quickAssistant: QuickAssistantSettings;
   tools: ToolConfig[];
   builtinTools: BuiltinToolConfig[];
   mcp: McpServerConfig[];
@@ -430,6 +439,37 @@ export interface SoloOverlayState {
   confirmationReason?: string;
 }
 
+export type QuickContextKind = "selection" | "screenshot" | "manual";
+
+export interface QuickContextItem {
+  id: string;
+  kind: QuickContextKind;
+  title: string;
+  content?: string;
+  attachmentId?: string;
+  createdAt: string;
+}
+
+export interface QuickAssistantSubmitPayload {
+  quickRequestId: string;
+  content: string;
+  actionId?: string;
+  contextItems: QuickContextItem[];
+  attachments?: AttachmentRef[];
+  createdAt: string;
+}
+
+export interface QuickAssistantRuntimeState {
+  quickRequestId?: string;
+  requestId?: string;
+  status?: "idle" | "pending" | "done" | "error" | "solo";
+  content?: string;
+  detail?: string;
+  backendReady?: boolean;
+  backendDetail?: string;
+  attachments?: AttachmentRef[];
+}
+
 export interface ConversationSummary {
   id: string;
   title: string;
@@ -483,7 +523,7 @@ export interface ScheduledTask {
   enabled: boolean;
   workerKind: "general" | "coding" | "research" | "solo";
   conversationId?: string;
-  imChannel?: string;
+  imChannel?: ImChannel;
   imChatId?: string;
   createdAt: string;
   updatedAt: string;

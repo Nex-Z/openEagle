@@ -437,6 +437,9 @@ export function useBackendConnection(
   const [scheduledTaskHistory, setScheduledTaskHistory] = useState<
     Record<string, ScheduledTaskExecution[]>
   >({});
+  const [runningScheduledTaskIds, setRunningScheduledTaskIds] = useState<Set<string>>(
+    () => new Set(),
+  );
   const [memoryState, setMemoryState] = useState<MemoryState>(emptyMemoryState);
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
@@ -450,6 +453,7 @@ export function useBackendConnection(
   const skipNextMessageSyncRef = useRef(true);
   const parentMessageSyncTimerRef = useRef<number | null>(null);
   const pendingMessageDeltasRef = useRef<Map<string, PendingMessageDelta>>(new Map());
+  const pendingScheduledRunRequestsRef = useRef<Map<string, string>>(new Map());
   const deltaFlushTimerRef = useRef<number | null>(null);
   const activeSoloRequestIdRef = useRef<string | null>(null);
   const notifiedSoloRequestIdsRef = useRef<Set<string>>(new Set());
@@ -1452,6 +1456,50 @@ export function useBackendConnection(
         return;
       }
 
+      if (envelope.type === "server:scheduled_task_run_started") {
+        const taskId = envelope.payload.taskId as string;
+        if (taskId) {
+          setRunningScheduledTaskIds((current) => {
+            if (current.has(taskId)) return current;
+            const next = new Set(current);
+            next.add(taskId);
+            return next;
+          });
+        }
+        return;
+      }
+
+      if (envelope.type === "server:scheduled_task_run_finished") {
+        const taskId = envelope.payload.taskId as string;
+        const task = envelope.payload.task as ScheduledTask | undefined;
+        const executions = (envelope.payload.executions ?? []) as ScheduledTaskExecution[];
+        pendingScheduledRunRequestsRef.current.delete(envelope.requestId);
+        setRunningScheduledTaskIds((current) => {
+          if (!current.has(taskId)) return current;
+          const next = new Set(current);
+          next.delete(taskId);
+          return next;
+        });
+        if (task) {
+          setScheduledTasks((current) =>
+            current.map((item) => (item.id === task.id ? task : item)),
+          );
+        }
+        if (taskId) {
+          setScheduledTaskHistory((current) => ({ ...current, [taskId]: executions }));
+        }
+        const latestExecution = executions[0];
+        setStatusLine(
+          latestExecution?.status === "failed" ? "定时任务执行失败" : "定时任务执行完成",
+        );
+        setStatusDetail(
+          latestExecution?.status === "failed"
+            ? latestExecution.error ?? "任务执行或结果投递失败。"
+            : "手动执行已完成，结果已按任务配置发送。",
+        );
+        return;
+      }
+
       if (envelope.type === "server:scheduled_task_executed") {
         const taskName = (envelope.payload.taskName as string) ?? "定时任务";
         const result = (envelope.payload.result as string) ?? "";
@@ -1468,6 +1516,15 @@ export function useBackendConnection(
       }
 
       if (envelope.type === "server:error") {
+        const pendingTaskId = pendingScheduledRunRequestsRef.current.get(envelope.requestId);
+        if (pendingTaskId) {
+          pendingScheduledRunRequestsRef.current.delete(envelope.requestId);
+          setRunningScheduledTaskIds((current) => {
+            const next = new Set(current);
+            next.delete(pendingTaskId);
+            return next;
+          });
+        }
         setStatusLine("后端服务异常");
         setStatusDetail(
           envelope.payload.detail ?? envelope.payload.message ?? "未知错误",
@@ -1702,7 +1759,7 @@ export function useBackendConnection(
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       setStatusLine("后端服务未就绪");
       setStatusDetail("当前连接尚未建立完成，消息未发送。");
-      return false;
+      return { ok: false };
     }
 
     const now = new Date().toISOString();
@@ -1741,7 +1798,7 @@ export function useBackendConnection(
     socket.send(JSON.stringify(envelope));
     setStatusLine("AI 正在思考");
     setStatusDetail("请求已发送，等待模型开始生成。");
-    return true;
+    return { ok: true, requestId };
   }, [conversationId]);
 
   const pauseSolo = useCallback(() => sendSoloControl({ action: "pause" }), [sendSoloControl]);
@@ -1831,6 +1888,28 @@ export function useBackendConnection(
     (taskId: string) => sendScheduledTaskMessage("client:scheduled_task_history", { taskId }),
     [sendScheduledTaskMessage],
   );
+  const runScheduledTask = useCallback((taskId: string) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+    const requestId = createId("scheduled-run");
+    const envelope: Envelope<Record<string, unknown>> = {
+      type: "client:scheduled_task_run",
+      requestId,
+      conversationId,
+      payload: { taskId },
+      timestamp: new Date().toISOString(),
+    };
+    pendingScheduledRunRequestsRef.current.set(requestId, taskId);
+    setRunningScheduledTaskIds((current) => {
+      const next = new Set(current);
+      next.add(taskId);
+      return next;
+    });
+    socket.send(JSON.stringify(envelope));
+    return true;
+  }, [conversationId]);
 
   const saveMemoryState = useCallback((memory: MemoryState) => {
     const socket = socketRef.current;
@@ -1897,6 +1976,7 @@ export function useBackendConnection(
     setOverlayVisible,
     scheduledTasks,
     scheduledTaskHistory,
+    runningScheduledTaskIds,
     memoryState,
     requestMemoryState,
     saveMemoryState,
@@ -1905,5 +1985,6 @@ export function useBackendConnection(
     updateScheduledTask,
     deleteScheduledTask,
     requestScheduledTaskHistory,
+    runScheduledTask,
   };
 }

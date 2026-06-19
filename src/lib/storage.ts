@@ -187,6 +187,11 @@ export const defaultSettings: AppSettings = {
   solo: {
     preferredDisplayIndex: 1,
   },
+  quickAssistant: {
+    enabled: true,
+    hotkey: "Control+Alt+Space",
+    autoReadSelection: true,
+  },
   tools: [],
   builtinTools: DEFAULT_BUILTIN_TOOLS,
   mcp: [],
@@ -306,6 +311,10 @@ export function loadSettings(): AppSettings {
       solo: {
         ...defaultSettings.solo,
         ...parsed.solo,
+      },
+      quickAssistant: {
+        ...defaultSettings.quickAssistant,
+        ...parsed.quickAssistant,
       },
       tools: normalizeTools(parsed.tools),
       builtinTools: normalizeBuiltinTools(parsed.builtinTools),

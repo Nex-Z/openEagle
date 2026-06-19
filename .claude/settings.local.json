@@ -30,7 +30,8 @@
       "Bash(dd if=\"C:/Users/17602/AppData/Local/Temp/open-eagle-migrate-debug.txt\" bs=1 skip=1230 count=100)",
       "Bash(xxd)",
       "Bash(node scripts/ensure-cjs-package.cjs)",
-      "Bash(git merge *)"
+      "Bash(git merge *)",
+      "PowerShell(if \\(-not $env:V2EX_TOKEN\\) { \"V2EX_TOKEN not set\" } else { \"Token found\" })"
     ]
   }
 }

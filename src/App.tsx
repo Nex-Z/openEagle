@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { onCloseRequested } from "./lib/electron-bridge";
+import { invoke, listen, onCloseRequested } from "./lib/electron-bridge";
 import { ChatWorkspace } from "./components/chat/ChatWorkspace";
 import { ActivityInspector } from "./components/inspector/ActivityInspector";
 import { AppShell } from "./components/layout/AppShell";
@@ -28,6 +28,9 @@ import type {
   ChatMessage,
   ConversationSummary,
   PermissionMode,
+  QuickAssistantRuntimeState,
+  QuickAssistantSubmitPayload,
+  SoloStatusPayload,
 } from "./types/protocol";
 
 function createConversation(seed?: Partial<ConversationSummary>): ConversationSummary {
@@ -98,6 +101,82 @@ function collectAssetMessages(messages: ChatMessage[]) {
     .reverse();
 }
 
+function collectAssistantText(message: ChatMessage | undefined) {
+  if (!message) {
+    return "";
+  }
+  const blockText =
+    message.blocks
+      ?.filter((block) => block.kind === "text")
+      .map((block) => block.content)
+      .join("\n\n")
+      .trim() ?? "";
+  return blockText || message.content.trim();
+}
+
+function quickStateFromMessages(
+  quickRequestId: string,
+  requestId: string,
+  messages: ChatMessage[],
+  soloStatus: SoloStatusPayload,
+): QuickAssistantRuntimeState | null {
+  const requestMessages = messages.filter((message) => message.requestId === requestId);
+  if (requestMessages.length === 0) {
+    return {
+      quickRequestId,
+      requestId,
+      status: "pending",
+      detail: "请求已发送。",
+    };
+  }
+
+  const hasSoloMessages = requestMessages.some((message) => message.mode === "solo");
+  const assistantMessages = requestMessages.filter((message) => message.role === "assistant");
+  const regularAssistant =
+    assistantMessages.find((message) => message.mode !== "solo") ??
+    assistantMessages[assistantMessages.length - 1];
+  const latestAssistant = assistantMessages[assistantMessages.length - 1];
+  const content = collectAssistantText(regularAssistant) || collectAssistantText(latestAssistant);
+
+  if (hasSoloMessages) {
+    const terminalSolo =
+      soloStatus.state === "completed" ||
+      soloStatus.state === "aborted" ||
+      soloStatus.state === "error";
+    return {
+      quickRequestId,
+      requestId,
+      status: terminalSolo ? (soloStatus.state === "error" ? "error" : "done") : "solo",
+      content: terminalSolo ? content : "",
+      detail: terminalSolo
+        ? soloStatus.detail ?? content
+        : soloStatus.detail ?? "已交给桌面执行，主窗口会显示完整过程。",
+    };
+  }
+
+  if (!regularAssistant) {
+    return {
+      quickRequestId,
+      requestId,
+      status: "pending",
+      detail: "等待模型开始输出。",
+    };
+  }
+
+  return {
+    quickRequestId,
+    requestId,
+    status: regularAssistant.status === "error"
+      ? "error"
+      : regularAssistant.status === "done"
+        ? "done"
+        : "pending",
+    content,
+    detail: regularAssistant.status === "pending" ? "正在生成回复。" : undefined,
+    attachments: regularAssistant.attachments,
+  };
+}
+
 export default function App() {
   const [conversationStore, setConversationStore] = useState<PersistedConversation[]>(
     createFallbackConversationStore,
@@ -163,6 +242,8 @@ export default function App() {
   const pendingDeletedConversationIdsRef = useRef<Set<string>>(new Set());
   const conversationStoreRef = useRef(conversationStore);
   const conversationsHydratedRef = useRef(conversationsHydrated);
+  const quickRequestMapRef = useRef<Map<string, string>>(new Map());
+  const quickLastStateRef = useRef("");
   const conversations = useMemo(
     () => conversationStore.map((item) => item.summary),
     [conversationStore],
@@ -289,6 +370,7 @@ export default function App() {
     rejectToolConfirmation,
     scheduledTasks,
     scheduledTaskHistory,
+    runningScheduledTaskIds,
     memoryState,
     requestMemoryState,
     saveMemoryState,
@@ -297,6 +379,7 @@ export default function App() {
     updateScheduledTask,
     deleteScheduledTask,
     requestScheduledTaskHistory,
+    runScheduledTask,
   } = useBackendConnection(
     activeConversationId,
     settings,
@@ -369,6 +452,108 @@ export default function App() {
       });
     },
   );
+
+  useEffect(() => {
+    if (!isElectronRuntime()) {
+      return;
+    }
+    void invoke("configure_quick_assistant", {
+      settings: settings.quickAssistant,
+    }).catch(() => {});
+  }, [
+    settings.quickAssistant.autoReadSelection,
+    settings.quickAssistant.enabled,
+    settings.quickAssistant.hotkey,
+  ]);
+
+  useEffect(() => {
+    if (!isElectronRuntime()) {
+      return;
+    }
+    const detail = canSend ? "" : statusDetail ?? statusLine;
+    void invoke("update_quick_assistant", {
+      state: {
+        backendReady: canSend,
+        backendDetail: detail,
+      } satisfies QuickAssistantRuntimeState,
+    }).catch(() => {});
+  }, [canSend, statusDetail, statusLine]);
+
+  useEffect(() => {
+    if (!isElectronRuntime()) {
+      return;
+    }
+    const unlisten = listen<QuickAssistantSubmitPayload>("quick://submit", (event) => {
+      const payload = event.payload;
+      const quickRequestId = payload?.quickRequestId;
+      const content = payload?.content?.trim() ?? "";
+      if (!quickRequestId || !content) {
+        void invoke("update_quick_assistant", {
+          state: {
+            quickRequestId,
+            status: "error",
+            detail: "消息内容为空。",
+            backendReady: canSend,
+          } satisfies QuickAssistantRuntimeState,
+        }).catch(() => {});
+        return;
+      }
+
+      const result = sendMessage(content, payload.attachments ?? []);
+      if (!result.ok || !result.requestId) {
+        void invoke("update_quick_assistant", {
+          state: {
+            quickRequestId,
+            status: "error",
+            detail: "后端服务未就绪，消息未发送。",
+            backendReady: canSend,
+          } satisfies QuickAssistantRuntimeState,
+        }).catch(() => {});
+        return;
+      }
+
+      quickRequestMapRef.current.set(result.requestId, quickRequestId);
+      void invoke("update_quick_assistant", {
+        state: {
+          quickRequestId,
+          requestId: result.requestId,
+          status: "pending",
+          content: "",
+          detail: "请求已发送。",
+          backendReady: canSend,
+        } satisfies QuickAssistantRuntimeState,
+      }).catch(() => {});
+    });
+
+    return () => {
+      unlisten.then((fn) => fn());
+    };
+  }, [canSend, sendMessage]);
+
+  useEffect(() => {
+    if (!isElectronRuntime() || quickRequestMapRef.current.size === 0) {
+      return;
+    }
+
+    for (const [requestId, quickRequestId] of quickRequestMapRef.current) {
+      const state = quickStateFromMessages(quickRequestId, requestId, messages, soloStatus);
+      if (!state) {
+        continue;
+      }
+      const nextState: QuickAssistantRuntimeState = {
+        ...state,
+        backendReady: canSend,
+      };
+      const serialized = JSON.stringify(nextState);
+      if (serialized !== quickLastStateRef.current) {
+        quickLastStateRef.current = serialized;
+        void invoke("update_quick_assistant", { state: nextState }).catch(() => {});
+      }
+      if (state.status === "done" || state.status === "error") {
+        quickRequestMapRef.current.delete(requestId);
+      }
+    }
+  }, [canSend, messages, soloStatus]);
 
   useEffect(() => {
     saveSettings(settings);
@@ -689,6 +874,7 @@ export default function App() {
         memoryState={memoryState}
         scheduledTasks={scheduledTasks}
         scheduledTaskHistory={scheduledTaskHistory}
+        runningScheduledTaskIds={runningScheduledTaskIds}
         onCancelWechatBind={cancelWechatBind}
         onChange={setSettings}
         onClose={handleCloseSettings}
@@ -703,6 +889,7 @@ export default function App() {
         onUpdateScheduledTask={updateScheduledTask}
         onDeleteScheduledTask={deleteScheduledTask}
         onRequestScheduledTaskHistory={requestScheduledTaskHistory}
+        onRunScheduledTask={runScheduledTask}
         onSaveMemoryState={saveMemoryState}
         open={settingsDrawerOpen}
         settings={settings}

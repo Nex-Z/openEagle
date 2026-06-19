@@ -56,6 +56,16 @@ class SoloConfig(BaseModel):
     }
 
 
+class QuickAssistantConfig(BaseModel):
+    enabled: bool = True
+    hotkey: str = "Control+Alt+Space"
+    auto_read_selection: bool = Field(default=True, alias="autoReadSelection")
+
+    model_config = {
+        "populate_by_name": True,
+    }
+
+
 class PermissionConfig(BaseModel):
     mode: str = "default"
 
@@ -166,6 +176,10 @@ class AppConfig(BaseModel):
     permissions: PermissionConfig = PermissionConfig()
     context: ContextConfig = ContextConfig()
     solo: SoloConfig = SoloConfig()
+    quick_assistant: QuickAssistantConfig = Field(
+        default_factory=QuickAssistantConfig,
+        alias="quickAssistant",
+    )
     tools: list[ToolConfig] = Field(default_factory=list)
     builtin_tools: list[BuiltinToolConfig] = Field(default_factory=list, alias="builtinTools")
     mcp: list[McpConfig] = Field(default_factory=list)

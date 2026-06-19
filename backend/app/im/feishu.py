@@ -124,7 +124,7 @@ class FeishuAdapter:
 
     async def send_text(self, message: IMOutboundMessage) -> None:
         if self._api_client is None:
-            return
+            self._api_client = self._build_api_client()
         if message.text.strip():
             await self._send_text_message(message)
         for attachment in message.attachments:
@@ -139,8 +139,8 @@ class FeishuAdapter:
                 CreateMessageRequest,
                 CreateMessageRequestBody,
             )
-        except ImportError:
-            return
+        except ImportError as exc:
+            raise RuntimeError("缺少 lark-oapi 依赖，请先同步后端依赖。") from exc
 
         request = (
             CreateMessageRequest.builder()
@@ -161,6 +161,24 @@ class FeishuAdapter:
                 f"log_id={response.get_log_id()}"
             )
             await self._emit_status("error", detail)
+            raise RuntimeError(detail)
+
+    def _build_api_client(self) -> Any:
+        if not self._config.enabled:
+            raise RuntimeError("飞书入口未启用。")
+        if not self._config.app_id or not self._config.app_secret:
+            raise RuntimeError("飞书 App ID 或 App Secret 未配置。")
+        try:
+            import lark_oapi as lark
+        except ImportError as exc:
+            raise RuntimeError("缺少 lark-oapi 依赖，请先同步后端依赖。") from exc
+        return (
+            lark.Client.builder()
+            .app_id(self._config.app_id)
+            .app_secret(self._config.app_secret)
+            .log_level(lark.LogLevel.INFO)
+            .build()
+        )
 
     async def _send_attachment(
         self,

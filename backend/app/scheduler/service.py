@@ -24,6 +24,7 @@ from .store import (
 )
 
 SendEvent = Callable[[str, str, str, dict[str, Any]], Awaitable[None]]
+SendRemote = Callable[[str, str, str], Awaitable[None]]
 ConfigGetter = Callable[[], AppConfig]
 MemoryContextGetter = Callable[[str | None], str]
 
@@ -38,16 +39,20 @@ class SchedulerService:
         *,
         config_getter: ConfigGetter,
         send_event: SendEvent | None = None,
+        send_remote: SendRemote | None = None,
         memory_context_getter: MemoryContextGetter | None = None,
     ) -> None:
         from ..subagent_manager import SubAgentManager
 
         self._config_getter = config_getter
         self._send_event = send_event
+        self._send_remote = send_remote
         self._memory_context_getter = memory_context_getter
         self._scheduler = AsyncIOScheduler()
         self._subagents = SubAgentManager()
         self._running = False
+        self._running_task_ids: set[str] = set()
+        self._manual_tasks: set[asyncio.Task[ScheduledTaskExecution | None]] = set()
 
     def start(self) -> None:
         if self._running:
@@ -105,6 +110,24 @@ class SchedulerService:
     def update_task(self, task: ScheduledTask) -> None:
         self.add_task(task)
 
+    def trigger_task_now(
+        self,
+        task_id: str,
+    ) -> asyncio.Task[ScheduledTaskExecution | None]:
+        task = get_task(task_id)
+        if task is None:
+            raise ValueError("定时任务不存在")
+        if task_id in self._running_task_ids:
+            raise RuntimeError("该定时任务正在执行，请等待本次执行完成")
+
+        self._running_task_ids.add(task_id)
+        manual_task = asyncio.create_task(
+            self._execute_task(task_id, allow_disabled=True, already_claimed=True)
+        )
+        self._manual_tasks.add(manual_task)
+        manual_task.add_done_callback(self._manual_tasks.discard)
+        return manual_task
+
     def reload_tasks(self) -> None:
         tasks = list_tasks()
         registered = 0
@@ -130,10 +153,23 @@ class SchedulerService:
     def _job_id(task_id: str) -> str:
         return f"scheduled-task-{task_id}"
 
-    async def _execute_task(self, task_id: str) -> None:
+    async def _execute_task(
+        self,
+        task_id: str,
+        *,
+        allow_disabled: bool = False,
+        already_claimed: bool = False,
+    ) -> ScheduledTaskExecution | None:
         task = get_task(task_id)
-        if task is None or not task.enabled:
-            return
+        if task is None or (not task.enabled and not allow_disabled):
+            if already_claimed:
+                self._running_task_ids.discard(task_id)
+            return None
+        if not already_claimed:
+            if task_id in self._running_task_ids:
+                _log(f"task execution skipped id={task_id} reason=already_running")
+                return None
+            self._running_task_ids.add(task_id)
 
         execution = ScheduledTaskExecution(
             task_id=task_id,
@@ -179,50 +215,102 @@ class SchedulerService:
                         result = "".join(result_parts)
                     if not result:
                         result = "任务执行完成，但未返回结果。"
-                    complete_execution(execution.id, result)
-                    _log(
-                        "task execution completed "
-                        f"id={task_id} execution={execution.id} result_len={len(result)}"
-                    )
-                    await self._deliver_result(task, result)
-                    return
+                    await self._complete_and_deliver(task, execution, result)
+                    return execution
 
             result = "".join(result_parts) if result_parts else "任务执行完成，但未返回结果。"
-            complete_execution(execution.id, result)
-            _log(
-                "task execution completed "
-                f"id={task_id} execution={execution.id} result_len={len(result)}"
-            )
-            await self._deliver_result(task, result)
+            await self._complete_and_deliver(task, execution, result)
+            return execution
         except Exception as exc:
-            fail_execution(execution.id, str(exc))
+            task_error = str(exc)
+            fail_execution(execution.id, task_error)
             _log(
                 "task execution failed "
                 f"id={task_id} execution={execution.id} error={type(exc).__name__}: {exc}"
             )
-            await self._deliver_result(task, error=str(exc))
+            try:
+                await self._deliver_result(task, error=task_error)
+            except Exception as delivery_exc:
+                combined_error = f"{task_error}\n结果投递失败: {delivery_exc}"
+                fail_execution(execution.id, combined_error)
+                _log(
+                    "task failure delivery failed "
+                    f"id={task_id} execution={execution.id} "
+                    f"error={type(delivery_exc).__name__}: {delivery_exc}"
+                )
+            return execution
+        finally:
+            self._sync_next_run(task_id)
+            self._running_task_ids.discard(task_id)
+
+    async def _complete_and_deliver(
+        self,
+        task: ScheduledTask,
+        execution: ScheduledTaskExecution,
+        result: str,
+    ) -> None:
+        try:
+            await self._deliver_result(task, result)
+        except Exception as exc:
+            delivery_error = f"任务已完成，但结果投递失败: {exc}"
+            fail_execution(execution.id, delivery_error, result=result)
+            _log(
+                "task result delivery failed "
+                f"id={task.id} execution={execution.id} "
+                f"error={type(exc).__name__}: {exc}"
+            )
+            return
+
+        complete_execution(execution.id, result)
+        _log(
+            "task execution completed "
+            f"id={task.id} execution={execution.id} result_len={len(result)}"
+        )
+
+    def _sync_next_run(self, task_id: str) -> None:
+        job = self._scheduler.get_job(self._job_id(task_id))
+        next_run_at = (
+            job.next_run_time.isoformat()
+            if job is not None and job.next_run_time is not None
+            else None
+        )
+        update_task_next_run(task_id, next_run_at)
+        _log(f"task next run updated id={task_id} next_run={next_run_at or '-'}")
 
     async def _deliver_result(
         self, task: ScheduledTask, result: str | None = None, error: str | None = None
     ) -> None:
         text = result or f"任务执行失败: {error}"
 
-        if self._send_event and task.conversation_id:
-            try:
-                await self._send_event(
-                    "server:scheduled_task_executed",
-                    f"scheduled-{task.id}",
-                    task.conversation_id,
-                    {
-                        "taskId": task.id,
-                        "taskName": task.name,
-                        "result": text,
-                        "error": error,
-                    },
-                )
-            except Exception:
-                _log(f"task result delivery failed id={task.id}")
-                pass
+        if task.im_channel and task.im_chat_id:
+            if self._send_remote is None:
+                raise RuntimeError("远程投递服务未初始化")
+            remote_text = f"【定时任务：{task.name}】\n\n{text}"
+            await self._send_remote(task.im_channel, task.im_chat_id, remote_text)
+            _log(
+                "task remote result delivered "
+                f"id={task.id} channel={task.im_channel} target={task.im_chat_id}"
+            )
+            return
+
+        if task.conversation_id:
+            if self._send_event is None:
+                raise RuntimeError("本地客户端未连接")
+            await self._send_event(
+                "server:scheduled_task_executed",
+                f"scheduled-{task.id}",
+                task.conversation_id,
+                {
+                    "taskId": task.id,
+                    "taskName": task.name,
+                    "result": text,
+                    "error": error,
+                },
+            )
+            _log(f"task local result delivered id={task.id}")
+            return
+
+        raise RuntimeError("定时任务没有可用的结果投递目标")
 
 
 class _AutoConfirmStore:

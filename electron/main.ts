@@ -1,10 +1,17 @@
-import { app, BrowserWindow, protocol, screen } from "electron";
+import { app, BrowserWindow, protocol, screen, globalShortcut } from "electron";
 import path from "node:path";
 import fs from "node:fs";
 import { spawnBackend, killBackend, getBackendState, onBackendStateChange } from "./backend-manager";
 import { registerIpcHandlers } from "./ipc-handlers";
 import { initLogPath, emitPrefixedLog } from "./log";
 import { hideSoloOverlay } from "./overlay";
+import {
+  configureQuickAssistant,
+  hideQuickAssistant,
+  preloadQuickAssistant,
+  registerQuickAssistantIpc,
+  registerQuickAssistantShortcut,
+} from "./quick-assistant";
 import { loadAppSettings, saveAppSettings } from "./conversations";
 import { migrateTauriSettings } from "./migrate-tauri-settings";
 
@@ -21,6 +28,29 @@ if (process.platform === "win32") {
 }
 
 let mainWindow: BrowserWindow | null = null;
+
+interface QuickAssistantStartupSettings {
+  enabled?: boolean;
+  hotkey?: string;
+  autoReadSelection?: boolean;
+}
+
+function quickAssistantSettingsFrom(settings: unknown): QuickAssistantStartupSettings | undefined {
+  if (!settings || typeof settings !== "object") {
+    return undefined;
+  }
+  const quickAssistant = (settings as { quickAssistant?: unknown }).quickAssistant;
+  if (!quickAssistant || typeof quickAssistant !== "object") {
+    return undefined;
+  }
+  const candidate = quickAssistant as Record<string, unknown>;
+  return {
+    enabled: typeof candidate.enabled === "boolean" ? candidate.enabled : undefined,
+    hotkey: typeof candidate.hotkey === "string" ? candidate.hotkey : undefined,
+    autoReadSelection:
+      typeof candidate.autoReadSelection === "boolean" ? candidate.autoReadSelection : undefined,
+  };
+}
 
 function appIconPath(): string {
   return path.resolve(
@@ -70,6 +100,7 @@ function createMainWindow() {
   mainWindow.on("closed", () => {
     mainWindow = null;
     hideSoloOverlay();
+    hideQuickAssistant(true);
     killBackend();
     app.quit();
   });
@@ -131,21 +162,32 @@ function registerAssetProtocol() {
 app.whenReady().then(async () => {
   registerAssetProtocol();
   registerIpcHandlers(isDev);
+  registerQuickAssistantIpc(isDev, () => mainWindow);
 
   initLogPath(isDev);
   emitPrefixedLog(false, "[APP]", "Electron app starting");
 
   // One-time migration: import Tauri settings if settings file doesn't exist
   const existingSettings = loadAppSettings();
+  let startupQuickAssistantSettings = quickAssistantSettingsFrom(existingSettings);
   if (!existingSettings) {
     const tauriSettings = await migrateTauriSettings();
     if (tauriSettings) {
       saveAppSettings(tauriSettings);
+      startupQuickAssistantSettings = quickAssistantSettingsFrom(tauriSettings);
       emitPrefixedLog(false, "[APP]", "Migrated settings from Tauri webview");
     }
   }
 
   const win = createMainWindow();
+  if (startupQuickAssistantSettings) {
+    configureQuickAssistant(startupQuickAssistantSettings, isDev);
+  } else {
+    registerQuickAssistantShortcut(isDev);
+  }
+  setTimeout(() => {
+    preloadQuickAssistant(isDev);
+  }, 1200);
 
   // Show window once backend is connected (or on error after 15s)
   let windowShown = false;
@@ -173,11 +215,14 @@ app.whenReady().then(async () => {
 
 app.on("window-all-closed", () => {
   hideSoloOverlay();
+  hideQuickAssistant(true);
   killBackend();
   app.quit();
 });
 
 app.on("before-quit", () => {
+  globalShortcut.unregisterAll();
   hideSoloOverlay();
+  hideQuickAssistant(true);
   killBackend();
 });

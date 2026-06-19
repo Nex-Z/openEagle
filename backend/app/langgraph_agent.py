@@ -8,7 +8,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, TypedDict
+from typing import Any, Literal, TypedDict
 
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage, SystemMessage, ToolMessage
 from langchain_core.messages import convert_to_openai_messages
@@ -26,6 +26,7 @@ from .models import AttachmentRef
 MAX_TOOL_ROUNDS = 100
 MAX_INLINE_ATTACHMENT_CHARS = 24_000
 MAX_INLINE_ATTACHMENT_TOTAL_CHARS = 48_000
+ImageBlockFormat = Literal["openai", "anthropic", "none"]
 TEXT_ATTACHMENT_EXTENSIONS = {
     ".css",
     ".csv",
@@ -149,6 +150,59 @@ def encode_file_data_url(path: Path, mime_type: str) -> str:
     return f"data:{mime_type};base64,{encoded}"
 
 
+def _anthropic_image_block_from_data_url(data_url: str) -> dict[str, Any] | None:
+    if not data_url.startswith("data:") or ";base64," not in data_url:
+        return None
+    media_type, encoded = data_url[5:].split(";base64,", 1)
+    return {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": media_type or "image/png",
+            "data": encoded,
+        },
+    }
+
+
+def _restore_anthropic_image_content(content: Any) -> Any:
+    if not isinstance(content, list):
+        return content
+    restored_blocks: list[Any] = []
+    changed = False
+    for block in content:
+        if isinstance(block, dict) and block.get("type") == "image_url":
+            image_url = block.get("image_url")
+            url = image_url.get("url") if isinstance(image_url, dict) else image_url
+            if isinstance(url, str):
+                restored = _anthropic_image_block_from_data_url(url)
+                if restored is not None:
+                    restored_blocks.append(restored)
+                    changed = True
+                    continue
+        restored_blocks.append(block)
+    return restored_blocks if changed else content
+
+
+def _restore_anthropic_image_blocks(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    restored: list[dict[str, Any]] = []
+    for message in messages:
+        content = message.get("content")
+        next_content = _restore_anthropic_image_content(content)
+        restored.append({**message, "content": next_content} if next_content is not content else message)
+    return restored
+
+
+def _convert_messages_for_chat(
+    messages: list[BaseMessage],
+    *,
+    preserve_anthropic_image_blocks: bool,
+) -> list[dict[str, Any]]:
+    converted = list(convert_to_openai_messages(messages))
+    if preserve_anthropic_image_blocks:
+        return _restore_anthropic_image_blocks(converted)
+    return converted
+
+
 def _attachment_path(attachment: AttachmentRef) -> Path | None:
     if not attachment.local_path or attachment.status == "error":
         return None
@@ -183,6 +237,32 @@ def _attachment_file_part(attachment: AttachmentRef, path: Path) -> dict[str, An
         "file": {
             "filename": _attachment_name(attachment, path),
             "file_data": base64.b64encode(path.read_bytes()).decode("ascii"),
+        },
+    }
+
+
+def _attachment_image_part(
+    attachment: AttachmentRef,
+    path: Path,
+    image_block_format: ImageBlockFormat,
+) -> dict[str, Any] | None:
+    mime_type = attachment.mime_type or "image/png"
+    if image_block_format == "none":
+        return None
+    if image_block_format == "anthropic":
+        return {
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": mime_type,
+                "data": base64.standard_b64encode(path.read_bytes()).decode("ascii"),
+            },
+        }
+    return {
+        "type": "image_url",
+        "image_url": {
+            "url": encode_file_data_url(path, mime_type),
+            "detail": "auto",
         },
     }
 
@@ -229,6 +309,8 @@ def attachment_user_content(
     attachments: list[AttachmentRef] | None,
     *,
     include_file_parts: bool = True,
+    include_image_parts: bool = True,
+    image_block_format: ImageBlockFormat = "openai",
 ) -> str | list[dict[str, Any]]:
     inline_text = "" if include_file_parts else _inline_attachment_text(attachments)
     text_prompt = f"{prompt}\n\n{inline_text}" if inline_text else prompt
@@ -239,15 +321,11 @@ def attachment_user_content(
         if path is None:
             continue
         if attachment.kind == "image":
-            image_blocks.append(
-                {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": encode_file_data_url(path, attachment.mime_type or "image/png"),
-                        "detail": "auto",
-                    },
-                }
-            )
+            if not include_image_parts or image_block_format == "none":
+                continue
+            image_part = _attachment_image_part(attachment, path, image_block_format)
+            if image_part is not None:
+                image_blocks.append(image_part)
         elif include_file_parts:
             file_blocks.append(_attachment_file_part(attachment, path))
     if not image_blocks and not file_blocks:
@@ -274,6 +352,7 @@ class LangGraphToolAgent:
         summarizer: ContextSummarizer | None = None,
         snapshot: ContextSnapshot | None = None,
         vision: bool = False,
+        preserve_anthropic_image_blocks: bool = False,
         max_tool_rounds: int = MAX_TOOL_ROUNDS,
     ) -> None:
         self.agent_config = agent_config
@@ -285,6 +364,7 @@ class LangGraphToolAgent:
         self.summarizer = summarizer
         self.snapshot = snapshot
         self.vision = vision
+        self.preserve_anthropic_image_blocks = preserve_anthropic_image_blocks
         self.max_tool_rounds = max(1, max_tool_rounds)
         self.client = _openai_client(agent_config, vision=vision)
         self.model_id = _model_id(agent_config, vision=vision)
@@ -369,7 +449,10 @@ class LangGraphToolAgent:
 
     async def _model_node(self, state: AgentGraphState) -> AgentGraphState:
         messages = list(state["messages"])
-        openai_messages = list(convert_to_openai_messages(messages))
+        openai_messages = _convert_messages_for_chat(
+            messages,
+            preserve_anthropic_image_blocks=self.preserve_anthropic_image_blocks,
+        )
         if self.context_config is not None:
             cleanup = await compact_messages_for_prompt_with_ai(
                 openai_messages,
@@ -379,6 +462,8 @@ class LangGraphToolAgent:
                 snapshot=self.snapshot,
             )
             openai_messages = cleanup.messages
+            if self.preserve_anthropic_image_blocks:
+                openai_messages = _restore_anthropic_image_blocks(openai_messages)
 
         request: dict[str, Any] = {
             "model": self.model_id,
@@ -529,7 +614,10 @@ class LangGraphToolAgent:
 
     async def _final_node(self, state: AgentGraphState) -> AgentGraphState:
         messages = self._messages_for_final_answer(list(state["messages"]))
-        openai_messages = list(convert_to_openai_messages(messages))
+        openai_messages = _convert_messages_for_chat(
+            messages,
+            preserve_anthropic_image_blocks=self.preserve_anthropic_image_blocks,
+        )
         request: dict[str, Any] = {
             "model": self.model_id,
             "messages": openai_messages,

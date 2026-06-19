@@ -223,7 +223,12 @@ def complete_execution(execution_id: str, result: str) -> None:
         conn.close()
 
 
-def fail_execution(execution_id: str, error: str) -> None:
+def fail_execution(
+    execution_id: str,
+    error: str,
+    *,
+    result: str | None = None,
+) -> None:
     from datetime import UTC, datetime
 
     conn = _conn()
@@ -231,10 +236,10 @@ def fail_execution(execution_id: str, error: str) -> None:
         conn.execute(
             """
             UPDATE scheduled_task_executions
-            SET status = 'failed', error = ?, completed_at = ?
+            SET status = 'failed', result = COALESCE(?, result), error = ?, completed_at = ?
             WHERE id = ?
             """,
-            (error, datetime.now(UTC).isoformat(), execution_id),
+            (result, error, datetime.now(UTC).isoformat(), execution_id),
         )
         conn.commit()
     finally:
