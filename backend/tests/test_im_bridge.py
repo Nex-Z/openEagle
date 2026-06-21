@@ -357,6 +357,103 @@ class IMBridgeAttachmentTest(unittest.IsolatedAsyncioTestCase):
 
         self.assertEqual([message.text for message in fake.sent], [IM_RECEIVED_ACK_TEXT])
 
+    async def test_agent_progress_replaces_fixed_solo_ack_on_remote_channel(self) -> None:
+        fake = FakeIMAdapter()
+
+        async def start_solo(binding, task, request_id):
+            _ = task
+            await bridge.forward_agent_progress(
+                request_id,
+                binding.conversation_id,
+                "我来打开 Edge 浏览器，在 ChatGPT 上帮你查一下这个。",
+            )
+            await bridge.forward_agent_progress(
+                request_id,
+                binding.conversation_id,
+                "这条重复进度不应发送。",
+            )
+            return IM_RECEIVED_ACK_TEXT
+
+        bridge = IMBridge(
+            send_client=lambda *args: _record_async([], args),
+            handle_chat=lambda *args: _record_async([], args, result="chat"),
+            start_solo=start_solo,
+            solo_control=lambda *args: _record_async([], args, result="control"),
+            tool_decision=lambda *args: _record_async([], args, result="tool"),
+            attachment_store=FakeAttachmentStore(),
+        )
+        bridge._telegram_adapter = fake
+        bind_config_getter(
+            bridge,
+            lambda: AppConfig(
+                telegram=TelegramConfig(enabled=True, allowedUserIds=["42"])
+            ),
+        )
+
+        await bridge._handle_event(
+            IMEvent(
+                source=IMMessageSource(
+                    channel="telegram",
+                    chat_id="42",
+                    chat_type="private",
+                    user_id="42",
+                    message_id="progress-1",
+                ),
+                text="/solo 打开 Edge",
+            )
+        )
+
+        self.assertEqual(
+            [message.text for message in fake.sent],
+            ["我来打开 Edge 浏览器，在 ChatGPT 上帮你查一下这个。"],
+        )
+
+    async def test_agent_progress_keeps_distinct_final_reply(self) -> None:
+        fake = FakeIMAdapter()
+
+        async def handle_chat(binding, content, request_id, attachments):
+            _ = (content, attachments)
+            await bridge.forward_agent_progress(
+                request_id,
+                binding.conversation_id,
+                "我先查一下相关资料。",
+            )
+            return "已经查完，这是最终结果。"
+
+        bridge = IMBridge(
+            send_client=lambda *args: _record_async([], args),
+            handle_chat=handle_chat,
+            start_solo=lambda *args: _record_async([], args, result="solo"),
+            solo_control=lambda *args: _record_async([], args, result="control"),
+            tool_decision=lambda *args: _record_async([], args, result="tool"),
+            attachment_store=FakeAttachmentStore(),
+        )
+        bridge._telegram_adapter = fake
+        bind_config_getter(
+            bridge,
+            lambda: AppConfig(
+                telegram=TelegramConfig(enabled=True, allowedUserIds=["42"])
+            ),
+        )
+
+        await bridge._handle_event(
+            IMEvent(
+                source=IMMessageSource(
+                    channel="telegram",
+                    chat_id="42",
+                    chat_type="private",
+                    user_id="42",
+                    message_id="progress-2",
+                ),
+                text="帮我查资料",
+            )
+        )
+
+        self.assertEqual(
+            [message.text for message in fake.sent],
+            ["我先查一下相关资料。", "已经查完，这是最终结果。"],
+        )
+
     async def test_plain_conversation_routes_to_main_agent_without_processing_ack(self) -> None:
         chat_calls = []
         solo_calls = []

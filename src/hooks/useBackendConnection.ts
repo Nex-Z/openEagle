@@ -33,6 +33,7 @@ import type {
 
 const BACKEND_EVENT = "backend://status";
 const CONNECT_RETRY_LIMIT = 8;
+const FIXED_PROCESSING_ACK = "收到，开始处理。";
 const terminalSoloStates = new Set<SoloRunState>(["completed", "aborted", "error"]);
 const activeSoloStates = new Set<SoloRunState>([
   "running",
@@ -1075,10 +1076,21 @@ export function useBackendConnection(
                 ? envelope.payload.answer
                 : envelope.payload.content;
             const blocks = cloneAssistantBlocks(message);
+            const normalizedVisibleContent = visibleContent?.trim() ?? "";
+            const progressContents = blocks
+              .filter(
+                (block): block is Extract<AssistantMessageBlock, { kind: "text" }> =>
+                  block.kind === "text" && block.purpose === "progress",
+              )
+              .map((block) => block.content.trim());
+            const hideRedundantFinal =
+              progressContents.length > 0 &&
+              (normalizedVisibleContent === FIXED_PROCESSING_ACK ||
+                progressContents.includes(normalizedVisibleContent));
             const finalBlockIndex = blocks.findIndex(
               (block) => block.kind === "text" && block.purpose !== "progress",
             );
-            if (visibleContent) {
+            if (visibleContent && !hideRedundantFinal) {
               if (finalBlockIndex >= 0) {
                 const block = blocks[finalBlockIndex];
                 if (block.kind === "text") {
@@ -1094,10 +1106,7 @@ export function useBackendConnection(
                   status: "done",
                   purpose: "final",
                 };
-                const hasProgressBlock = blocks.some(
-                  (block) => block.kind === "text" && block.purpose === "progress",
-                );
-                if (hasProgressBlock) {
+                if (progressContents.length > 0) {
                   blocks.push(finalBlock);
                 } else {
                   blocks.unshift(finalBlock);

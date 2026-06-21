@@ -77,6 +77,7 @@ class IMBridge:
         self._bindings: dict[str, IMConversationBinding] = {}
         self._last_activity_at: dict[str, datetime] = {}
         self._idle_compaction_tasks: dict[str, asyncio.Task[None]] = {}
+        self._forwarded_agent_progress: dict[str, str] = {}
 
     async def update_config(self, config: AppConfig) -> None:
         await self._update_feishu(config)
@@ -220,6 +221,23 @@ class IMBridge:
             )
         )
 
+    async def forward_agent_progress(
+        self,
+        request_id: str,
+        conversation_id: str,
+        text: str,
+    ) -> None:
+        clean_text = text.strip()
+        if (
+            not clean_text
+            or request_id in self._forwarded_agent_progress
+            or conversation_id not in self._bindings
+            or self._adapter_for_conversation(conversation_id) is None
+        ):
+            return
+        await self.send_text(conversation_id, clean_text)
+        self._forwarded_agent_progress[request_id] = clean_text
+
     def delivery_target(self, conversation_id: str) -> tuple[str, str] | None:
         binding = self._bindings.get(conversation_id)
         if binding is None:
@@ -332,8 +350,12 @@ class IMBridge:
             if self._reply_attachments is not None
             else []
         )
-        if reply.strip() or reply_attachments:
-            await self.send_text(binding.conversation_id, reply, reply_attachments)
+        forwarded_progress = self._forwarded_agent_progress.pop(request_id, None)
+        remote_reply = reply
+        if forwarded_progress and reply.strip() in {forwarded_progress, IM_RECEIVED_ACK_TEXT}:
+            remote_reply = ""
+        if remote_reply.strip() or reply_attachments:
+            await self.send_text(binding.conversation_id, remote_reply, reply_attachments)
             if emit_client_reply:
                 await self._send_client(
                     "server:message",

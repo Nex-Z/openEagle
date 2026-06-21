@@ -318,6 +318,19 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         conversation_id: str,
         payload: dict[str, Any],
     ) -> None:
+        if (
+            type_ == "server:agent_progress"
+            and im_bridge is not None
+            and conversation_id.startswith("im_")
+        ):
+            try:
+                await im_bridge.forward_agent_progress(
+                    request_id,
+                    conversation_id,
+                    str(payload.get("content", "")),
+                )
+            except Exception as exc:  # noqa: BLE001
+                blog(f"IM agent progress delivery failed error={type(exc).__name__}: {exc}")
         async with send_lock:
             await send_envelope(websocket, type_, request_id, conversation_id, payload)
 
