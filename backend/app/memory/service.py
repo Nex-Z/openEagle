@@ -7,6 +7,7 @@ from typing import Any
 
 from ..config import AgentConfig, AppConfig
 from ..langgraph_agent import run_text_model
+from ..token_usage import record_model_usage
 from .models import DEFAULT_AGENT_SOUL_CORE, MemoryNotePayload, MemoryStatePayload
 from . import store
 
@@ -713,6 +714,11 @@ class MemoryService:
                 max_tokens=2048,
                 system="你只输出合法 JSON，不输出 Markdown。",
                 messages=[{"role": "user", "content": prompt}],
+            )
+            await record_model_usage(
+                "anthropic",
+                agent_config.model_id or "claude-sonnet-4-20250514",
+                getattr(response, "usage", None),
             )
             text_parts = [block.text for block in response.content if block.type == "text"]
             return "".join(text_parts)

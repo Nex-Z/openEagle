@@ -22,6 +22,7 @@ from openai import AsyncOpenAI
 from .config import AgentConfig, ContextConfig
 from .context_cleanup import compact_messages_for_prompt_with_ai
 from .models import AttachmentRef
+from .token_usage import record_model_usage
 
 MAX_TOOL_ROUNDS = 100
 MAX_INLINE_ATTACHMENT_CHARS = 24_000
@@ -476,6 +477,11 @@ class LangGraphToolAgent:
             content, tool_calls = await self._stream_chat_completion(request)
         else:
             response = await self.client.chat.completions.create(**request)
+            await record_model_usage(
+                self.agent_config.vl_provider if self.vision else self.agent_config.provider,
+                self.model_id,
+                getattr(response, "usage", None),
+            )
             message = response.choices[0].message
             content = message.content or ""
             tool_calls = []
@@ -501,10 +507,26 @@ class LangGraphToolAgent:
         }
 
     async def _stream_chat_completion(self, request: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
-        stream = await self.client.chat.completions.create(**request, stream=True)
+        try:
+            stream = await self.client.chat.completions.create(
+                **request,
+                stream=True,
+                stream_options={"include_usage": True},
+            )
+        except Exception as exc:
+            if "stream_options" not in str(exc).lower():
+                raise
+            stream = await self.client.chat.completions.create(**request, stream=True)
         content_parts: list[str] = []
         tool_call_chunks: dict[int, dict[str, Any]] = {}
         async for chunk in stream:
+            usage = getattr(chunk, "usage", None)
+            if usage is not None:
+                await record_model_usage(
+                    self.agent_config.vl_provider if self.vision else self.agent_config.provider,
+                    self.model_id,
+                    usage,
+                )
             if not chunk.choices:
                 continue
             delta = chunk.choices[0].delta
@@ -626,6 +648,11 @@ class LangGraphToolAgent:
             content, _ = await self._stream_chat_completion(request)
         else:
             response = await self.client.chat.completions.create(**request)
+            await record_model_usage(
+                self.agent_config.vl_provider if self.vision else self.agent_config.provider,
+                self.model_id,
+                getattr(response, "usage", None),
+            )
             content = response.choices[0].message.content or ""
         content = content.strip() or self._fallback_final_content(state)
         trace = ToolTraceEvent(

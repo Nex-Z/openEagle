@@ -352,6 +352,10 @@ function formatMessageDuration(message: ChatMessage, traces: AgentExecutionTrace
   return `用时 ${formatDurationMs(completedAt - startedAt)}`;
 }
 
+function formatTokenCount(value: number) {
+  return new Intl.NumberFormat("zh-CN").format(value);
+}
+
 type RenderedAssistantBlock =
   | AssistantMessageBlock
   | {
@@ -1351,6 +1355,17 @@ const MessageArticle = memo(function MessageArticle({
           <span />
           <span />
           <span />
+        </div>
+      ) : null}
+
+      {message.role === "assistant" && message.tokenUsage?.totalTokens ? (
+        <div
+          className="message-token-usage"
+          title={`${message.tokenUsage.calls} 次模型调用`}
+        >
+          本任务消耗 {formatTokenCount(message.tokenUsage.totalTokens)} tokens · 输入{" "}
+          {formatTokenCount(message.tokenUsage.inputTokens)} · 输出{" "}
+          {formatTokenCount(message.tokenUsage.outputTokens)}
         </div>
       ) : null}
     </article>

@@ -12,6 +12,7 @@ from .context_cleanup import compact_messages_for_prompt_with_ai
 from .langgraph_agent import run_text_model
 from .memory import store
 from .memory.models import ConversationTurnPayload
+from .token_usage import record_model_usage
 
 ConfigGetter = Callable[[], AppConfig]
 
@@ -228,6 +229,11 @@ class ConversationContextService:
                     max_tokens=2048,
                     system="你只负责压缩会话上下文，输出摘要正文。",
                     messages=[{"role": "user", "content": prompt}],
+                )
+                await record_model_usage(
+                    "anthropic",
+                    agent.model_id or "claude-sonnet-4-20250514",
+                    getattr(response, "usage", None),
                 )
                 return "".join(
                     block.text for block in response.content if block.type == "text"

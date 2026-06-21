@@ -27,6 +27,8 @@ import type {
   SoloStatusPayload,
   SoloStepPayload,
   StatusPayload,
+  TokenUsageDashboard,
+  TokenUsageSummary,
   ToolConfirmationPayload,
   WechatBindStatusPayload,
 } from "../types/protocol";
@@ -47,6 +49,14 @@ const emptyMemoryState: MemoryState = {
   agentSoul: { core: "", sideNotes: "", updatedAt: "" },
   audit: [],
   events: [],
+};
+
+const emptyTokenUsageDashboard: TokenUsageDashboard = {
+  total: { inputTokens: 0, outputTokens: 0, totalTokens: 0, calls: 0 },
+  today: { inputTokens: 0, outputTokens: 0, totalTokens: 0, calls: 0 },
+  days: [],
+  models: [],
+  recentRequests: [],
 };
 
 function isElectronRuntime() {
@@ -363,6 +373,7 @@ function upsertAssistantTrace(
       attachments: message?.attachments,
       traces: nextTraces,
       blocks,
+      tokenUsage: message?.tokenUsage,
     };
   });
 }
@@ -399,6 +410,7 @@ function applyAssistantDelta(
       status: "pending",
       traces: message?.traces ?? [],
       blocks,
+      tokenUsage: message?.tokenUsage,
     };
   });
 }
@@ -462,6 +474,8 @@ export function useBackendConnection(
     () => new Set(),
   );
   const [memoryState, setMemoryState] = useState<MemoryState>(emptyMemoryState);
+  const [tokenUsageDashboard, setTokenUsageDashboard] =
+    useState<TokenUsageDashboard>(emptyTokenUsageDashboard);
   const socketRef = useRef<WebSocket | null>(null);
   const reconnectTimerRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
@@ -475,6 +489,7 @@ export function useBackendConnection(
   const parentMessageSyncTimerRef = useRef<number | null>(null);
   const pendingMessageDeltasRef = useRef<Map<string, PendingMessageDelta>>(new Map());
   const pendingScheduledRunRequestsRef = useRef<Map<string, string>>(new Map());
+  const tokenUsageByRequestRef = useRef<Map<string, TokenUsageSummary>>(new Map());
   const deltaFlushTimerRef = useRef<number | null>(null);
   const activeSoloRequestIdRef = useRef<string | null>(null);
   const notifiedSoloRequestIdsRef = useRef<Set<string>>(new Set());
@@ -601,6 +616,22 @@ export function useBackendConnection(
       conversationId,
       payload: {},
       timestamp: now,
+    };
+    socket.send(JSON.stringify(envelope));
+    return true;
+  }, [conversationId]);
+
+  const requestTokenUsage = useCallback(() => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return false;
+    }
+    const envelope: Envelope<Record<string, never>> = {
+      type: "client:token_usage_get",
+      requestId: createId("token-usage"),
+      conversationId,
+      payload: {},
+      timestamp: new Date().toISOString(),
     };
     socket.send(JSON.stringify(envelope));
     return true;
@@ -918,6 +949,8 @@ export function useBackendConnection(
           taskName?: string;
           result?: string;
           error?: string;
+          requestUsage?: TokenUsageSummary & { requestId: string };
+          dashboard?: TokenUsageDashboard;
         } & ErrorPayload &
           StatusPayload
       >;
@@ -962,6 +995,29 @@ export function useBackendConnection(
               payload.qrcodeUrl ??
               (payload.state === "waiting" ? current?.qrcodeUrl : undefined),
           }));
+        }
+        return;
+      }
+
+      if (envelope.type === "server:token_usage_state") {
+        setTokenUsageDashboard(envelope.payload as unknown as TokenUsageDashboard);
+        return;
+      }
+
+      if (envelope.type === "server:token_usage") {
+        const usage = envelope.payload.requestUsage;
+        if (usage) {
+          tokenUsageByRequestRef.current.set(envelope.requestId, usage);
+          patchMessages((current) =>
+            current.map((message) =>
+              message.role === "assistant" && message.requestId === envelope.requestId
+                ? { ...message, tokenUsage: usage }
+                : message,
+            ),
+          );
+        }
+        if (envelope.payload.dashboard) {
+          setTokenUsageDashboard(envelope.payload.dashboard);
         }
         return;
       }
@@ -1037,6 +1093,9 @@ export function useBackendConnection(
                 attachments: message?.attachments,
                 traces: message?.traces ?? [],
                 blocks,
+                tokenUsage:
+                  message?.tokenUsage ??
+                  tokenUsageByRequestRef.current.get(envelope.requestId),
               };
             }
 
@@ -1059,6 +1118,9 @@ export function useBackendConnection(
               attachments: message?.attachments,
               traces: message?.traces ?? [],
               blocks,
+              tokenUsage:
+                message?.tokenUsage ??
+                tokenUsageByRequestRef.current.get(envelope.requestId),
             };
           }),
         );
@@ -1133,6 +1195,9 @@ export function useBackendConnection(
               attachments: envelope.payload.attachments ?? message?.attachments,
               traces: message?.traces ?? [],
               blocks,
+              tokenUsage:
+                message?.tokenUsage ??
+                tokenUsageByRequestRef.current.get(envelope.requestId),
             };
           }),
         );
@@ -1169,6 +1234,9 @@ export function useBackendConnection(
                 status: "pending",
                 traces: message?.traces ?? [],
                 blocks,
+                tokenUsage:
+                  message?.tokenUsage ??
+                  tokenUsageByRequestRef.current.get(envelope.requestId),
               };
             }),
           );
@@ -2017,6 +2085,8 @@ export function useBackendConnection(
     memoryState,
     requestMemoryState,
     saveMemoryState,
+    tokenUsageDashboard,
+    requestTokenUsage,
     requestScheduledTasks,
     createScheduledTask,
     updateScheduledTask,

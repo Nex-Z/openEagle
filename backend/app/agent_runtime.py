@@ -19,6 +19,7 @@ from .providers.base import ReplyToolConfirmation, ReplyTrace
 from .solo_worker_adapter import SoloWorkerAdapter
 from .subagent_manager import SubAgentManager
 from .subagent_models import AgentRouteDecision, WorkerReport
+from .token_usage import record_model_usage
 
 
 SendEvent = Callable[[str, str, str, dict[str, Any]], Awaitable[None]]
@@ -892,6 +893,11 @@ class AgentRuntime:
                 max_tokens=4096,
                 system="\n".join(build_direct_answer_instructions()),
                 messages=[{"role": "user", "content": prompt}],
+            )
+            await record_model_usage(
+                "anthropic",
+                agent_config.model_id or "claude-sonnet-4-20250514",
+                getattr(response, "usage", None),
             )
             text_parts = [block.text for block in response.content if block.type == "text"]
             answer = "".join(text_parts).strip()

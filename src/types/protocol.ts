@@ -33,6 +33,39 @@ export interface ChatMessage {
   traces?: AgentExecutionTrace[];
   trace?: AgentExecutionTrace;
   blocks?: AssistantMessageBlock[];
+  tokenUsage?: TokenUsageSummary;
+}
+
+export interface TokenUsageSummary {
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  calls: number;
+}
+
+export interface TokenUsageDay extends TokenUsageSummary {
+  date: string;
+}
+
+export interface TokenUsageModel extends TokenUsageSummary {
+  provider: string;
+  model: string;
+}
+
+export interface TokenUsageRequest extends TokenUsageSummary {
+  requestId: string;
+  conversationId: string;
+  source: string;
+  models: string[];
+  updatedAt: string;
+}
+
+export interface TokenUsageDashboard {
+  total: TokenUsageSummary;
+  today: TokenUsageSummary;
+  days: TokenUsageDay[];
+  models: TokenUsageModel[];
+  recentRequests: TokenUsageRequest[];
 }
 
 export type AgentExecutionKind = "tool" | "mcp" | "skill" | "agent";

@@ -8,6 +8,7 @@ from .config import AppConfig
 from .langgraph_agent import run_text_model
 from .prompts import build_main_router_instructions, build_main_router_prompt
 from .subagent_models import AgentRouteDecision, AgentTaskRecord
+from .token_usage import record_model_usage
 
 
 GUI_KEYWORDS = (
@@ -135,6 +136,11 @@ class AgentRouter:
                 max_tokens=1024,
                 system="\n".join(build_main_router_instructions()),
                 messages=[{"role": "user", "content": prompt}],
+            )
+            await record_model_usage(
+                "anthropic",
+                agent_config.model_id or "claude-sonnet-4-20250514",
+                getattr(response, "usage", None),
             )
             text_parts = [block.text for block in response.content if block.type == "text"]
             return "".join(text_parts)

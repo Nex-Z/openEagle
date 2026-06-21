@@ -67,6 +67,11 @@ from .solo_run_logger import SoloRunLogger
 from .solo_service import SoloService, SoloSessionState, summarize_solo_step_result
 from .solo_toolkit import SoloToolkit
 from .solo_visual import build_solo_step_visual, should_delay_for_visual
+from .token_usage import (
+    init_token_usage_db,
+    token_usage_dashboard,
+    token_usage_scope,
+)
 
 app = FastAPI(title="openEagle Agent Backend")
 config = load_config()
@@ -246,11 +251,14 @@ async def announce_ready() -> None:
     global scheduler_service
     db_path = workspace_root / ".open-eagle" / "scheduler.db"
     memory_db_path = workspace_root / ".open-eagle" / "memory.db"
+    token_usage_db_path = workspace_root / ".open-eagle" / "token_usage.db"
     blog(f"startup workspace={workspace_root}")
     init_db(db_path)
     blog(f"scheduler db ready path={db_path}")
     init_memory_db(memory_db_path)
     blog(f"memory db ready path={memory_db_path}")
+    init_token_usage_db(token_usage_db_path)
+    blog(f"token usage db ready path={token_usage_db_path}")
     remote_outbound = RemoteOutboundService(runtime_state.get_config)
     scheduler_service = SchedulerService(
         config_getter=runtime_state.get_config,
@@ -1389,14 +1397,35 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         preferred_mode: str | None = None,
         history: list[dict[str, Any]] | None = None,
     ) -> str:
-        return await agent_runtime.handle_user_message(
-            conversation_id,
-            request_id,
-            content,
-            attachments=attachments,
-            preferred_mode=preferred_mode,
-            history=history,
+        async def emit_usage(payload: dict[str, Any]) -> None:
+            await safe_send(
+                "server:token_usage",
+                request_id,
+                conversation_id,
+                payload,
+            )
+
+        source = (
+            "solo"
+            if preferred_mode == "solo"
+            else "remote"
+            if conversation_id.startswith("im_")
+            else "chat"
         )
+        async with token_usage_scope(
+            request_id=request_id,
+            conversation_id=conversation_id,
+            source=source,
+            on_update=emit_usage,
+        ):
+            return await agent_runtime.handle_user_message(
+                conversation_id,
+                request_id,
+                content,
+                attachments=attachments,
+                preferred_mode=preferred_mode,
+                history=history,
+            )
 
     async def handle_chat_from_im(
         binding: IMConversationBinding,
@@ -1838,6 +1867,15 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     "server:memory_state",
                     envelope.request_id,
                     envelope.conversation_id,
+                )
+                continue
+
+            if envelope.type == "client:token_usage_get":
+                await safe_send(
+                    "server:token_usage_state",
+                    envelope.request_id,
+                    envelope.conversation_id,
+                    token_usage_dashboard(),
                 )
                 continue
 

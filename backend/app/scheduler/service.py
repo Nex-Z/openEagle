@@ -12,6 +12,7 @@ from ..config import AppConfig
 from ..models import utc_now
 from ..providers.base import ReplyChunk
 from ..subagent_models import AgentRouteDecision, WorkerReport
+from ..token_usage import token_usage_scope
 from .models import ScheduledTask, ScheduledTaskExecution
 from .store import (
     complete_execution,
@@ -196,27 +197,32 @@ class SchedulerService:
             )
 
             result_parts: list[str] = []
-            async for event in self._subagents.run_worker(
-                task=agent_task,
-                config=config,
-                confirmation_store=_AutoConfirmStore(),
+            async with token_usage_scope(
                 request_id=execution.id,
-                memory_context=(
-                    self._memory_context_getter(task.prompt)
-                    if self._memory_context_getter
-                    else None
-                ),
+                conversation_id=execution.conversation_id or task_id,
+                source="scheduled",
             ):
-                if isinstance(event, ReplyChunk):
-                    result_parts.append(event.content)
-                elif isinstance(event, WorkerReport):
-                    result = event.result or event.summary or ""
-                    if not result and result_parts:
-                        result = "".join(result_parts)
-                    if not result:
-                        result = "任务执行完成，但未返回结果。"
-                    await self._complete_and_deliver(task, execution, result)
-                    return execution
+                async for event in self._subagents.run_worker(
+                    task=agent_task,
+                    config=config,
+                    confirmation_store=_AutoConfirmStore(),
+                    request_id=execution.id,
+                    memory_context=(
+                        self._memory_context_getter(task.prompt)
+                        if self._memory_context_getter
+                        else None
+                    ),
+                ):
+                    if isinstance(event, ReplyChunk):
+                        result_parts.append(event.content)
+                    elif isinstance(event, WorkerReport):
+                        result = event.result or event.summary or ""
+                        if not result and result_parts:
+                            result = "".join(result_parts)
+                        if not result:
+                            result = "任务执行完成，但未返回结果。"
+                        await self._complete_and_deliver(task, execution, result)
+                        return execution
 
             result = "".join(result_parts) if result_parts else "任务执行完成，但未返回结果。"
             await self._complete_and_deliver(task, execution, result)

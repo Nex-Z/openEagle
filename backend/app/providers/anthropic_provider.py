@@ -20,6 +20,7 @@ from ..memory import MemoryService
 from ..models import AttachmentRef
 from ..paths import resolve_workspace_root
 from ..prompts import build_chat_instructions
+from ..token_usage import record_model_usage
 from .base import ProviderStreamEvent, ReplyChunk, ReplyToolConfirmation, ReplyTrace
 
 
@@ -96,6 +97,11 @@ class AnthropicAgentProvider:
             max_tokens=2048,
             system="你是上下文压缩器，只输出摘要正文，不输出 Markdown 栅栏。",
             messages=[{"role": "user", "content": prompt}],
+        )
+        await record_model_usage(
+            "anthropic",
+            self._agent_config.model_id or "claude-sonnet-4-20250514",
+            getattr(response, "usage", None),
         )
         text_parts = [block.text for block in response.content if block.type == "text"]
         return "".join(text_parts)
@@ -359,6 +365,11 @@ class AnthropicAgentProvider:
                 tools=anthropic_tools or anthropic.NOT_GIVEN,
                 messages=cleanup.messages,
             )
+            await record_model_usage(
+                "anthropic",
+                model_id,
+                getattr(response, "usage", None),
+            )
 
             text_parts: list[str] = []
             tool_use_blocks: list[dict[str, Any]] = []
@@ -506,6 +517,14 @@ class AnthropicAgentProvider:
 
                     elif event.type == "message_stop":
                         pass  # handled after stream exits
+                get_final_message = getattr(stream, "get_final_message", None)
+                if callable(get_final_message):
+                    final_message = await get_final_message()
+                    await record_model_usage(
+                        "anthropic",
+                        model_id,
+                        getattr(final_message, "usage", None),
+                    )
 
             # Stream finished for this round
             if not tool_use_blocks:

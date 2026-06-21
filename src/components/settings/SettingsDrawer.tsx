@@ -13,10 +13,12 @@ import type {
   ScheduledTaskExecution,
   SkillConfig,
   SoloDisplayOption,
+  TokenUsageDashboard,
   ToolConfig,
   WechatBindStatusPayload,
 } from "../../types/protocol";
 import { SecretInput } from "./SecretInput";
+import { TokenUsagePanel } from "./TokenUsagePanel";
 
 export type SettingsSection =
   | "general"
@@ -28,6 +30,7 @@ export type SettingsSection =
   | "tools"
   | "mcp"
   | "skills"
+  | "usage"
   | "memory"
   | "scheduled_tasks";
 
@@ -42,6 +45,7 @@ interface SettingsDrawerProps {
   scheduledTaskHistory: Record<string, ScheduledTaskExecution[]>;
   runningScheduledTaskIds: ReadonlySet<string>;
   memoryState: MemoryState;
+  tokenUsageDashboard: TokenUsageDashboard;
   onRefreshSoloDisplays: () => boolean;
   onRefreshSettings: () => boolean;
   onStartWechatBind: (force?: boolean) => boolean;
@@ -49,6 +53,7 @@ interface SettingsDrawerProps {
   onUnbindWechat: () => boolean;
   onRequestScheduledTasks: () => boolean;
   onRequestMemoryState: () => boolean;
+  onRequestTokenUsage: () => boolean;
   onSaveMemoryState: (memory: MemoryState) => boolean;
   onCreateScheduledTask: (task: Omit<ScheduledTask, "id" | "createdAt" | "updatedAt">) => boolean;
   onUpdateScheduledTask: (task: ScheduledTask) => boolean;
@@ -74,6 +79,7 @@ const sectionMeta: Array<{
   { id: "tools", title: "Tools", summary: "本地工具入口。" },
   { id: "mcp", title: "MCP", summary: "MCP Server 配置。" },
   { id: "skills", title: "Skills", summary: "提示技能配置。" },
+  { id: "usage", title: "Token 用量", summary: "模型调用与任务消耗。" },
   { id: "memory", title: "Memory", summary: "用户画像、笔记与 Agent 个性。" },
   { id: "scheduled_tasks", title: "定时任务", summary: "自动执行的任务管理与历史。" },
 ];
@@ -457,6 +463,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
     scheduledTaskHistory,
     runningScheduledTaskIds,
     memoryState,
+    tokenUsageDashboard,
     onRefreshSoloDisplays,
     onRefreshSettings,
     onStartWechatBind,
@@ -464,6 +471,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
     onUnbindWechat,
     onRequestScheduledTasks,
     onRequestMemoryState,
+    onRequestTokenUsage,
     onSaveMemoryState,
     onCreateScheduledTask,
     onUpdateScheduledTask,
@@ -510,11 +518,15 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
     if (open && activeSection === "memory") {
       onRequestMemoryState();
     }
+    if (open && activeSection === "usage") {
+      onRequestTokenUsage();
+    }
   }, [
     activeSection,
     onRefreshSoloDisplays,
     onRequestMemoryState,
     onRequestScheduledTasks,
+    onRequestTokenUsage,
     open,
   ]);
 
@@ -2212,6 +2224,10 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
                     ))}
                 </div>
               </div>
+            ) : null}
+
+            {activeSection === "usage" ? (
+              <TokenUsagePanel usage={tokenUsageDashboard} onRefresh={onRequestTokenUsage} />
             ) : null}
 
             {activeSection === "memory" ? (
