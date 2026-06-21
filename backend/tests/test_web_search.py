@@ -112,6 +112,58 @@ class TavilyWebSearchTest(unittest.TestCase):
 
         self.assertEqual(post.call_args.kwargs["json"]["max_results"], 20)
 
+    def test_batch_search_runs_unique_queries_and_combines_results(self) -> None:
+        def fake_post(*args, **kwargs):
+            _ = args
+            query = kwargs["json"]["query"]
+            return _response(
+                200,
+                {
+                    "results": [
+                        {
+                            "title": f"{query} result",
+                            "url": f"https://example.com/{query}",
+                            "content": f"{query} 摘要",
+                        }
+                    ]
+                },
+            )
+
+        with tempfile.TemporaryDirectory() as tmp:
+            tools = build_default_tools(
+                workspace_root=Path(tmp),
+                web_search_config=WebSearchConfig(api_key="tvly-test"),
+            )
+
+            with patch("app.default_tools.httpx.post", side_effect=fake_post) as post:
+                result = tools.web_search(["查询 A", "查询 B", "查询 A", "  "], max_results=2)
+
+        self.assertEqual(post.call_count, 2)
+        queries = {call.kwargs["json"]["query"] for call in post.call_args_list}
+        self.assertEqual(queries, {"查询 A", "查询 B"})
+        self.assertIn("## 批量查询 1: 查询 A", result)
+        self.assertIn("## 批量查询 2: 查询 B", result)
+        self.assertIn("查询 A 摘要", result)
+        self.assertIn("查询 B 摘要", result)
+
+    def test_web_search_tool_schema_accepts_string_or_array_query(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            tools = build_default_tools(
+                workspace_root=Path(tmp),
+                web_search_config=WebSearchConfig(api_key="tvly-test"),
+            )
+
+        web_search = next(tool for tool in tools.agent_tools if tool.name == "web_search")
+        query_schema = web_search.args_schema.model_json_schema()["properties"]["query"]
+
+        self.assertIn("anyOf", query_schema)
+        query_types = {
+            item.get("type")
+            for item in query_schema["anyOf"]
+            if isinstance(item, dict)
+        }
+        self.assertEqual(query_types, {"string", "array"})
+
     def test_invalid_api_key_has_safe_error_message(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             tools = build_default_tools(

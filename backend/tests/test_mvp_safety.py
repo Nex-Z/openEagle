@@ -1178,6 +1178,9 @@ class SubAgentManagerTest(unittest.TestCase):
 
         self.assertIn("当前日期时间", prompt)
         self.assertIn("不要反问用户今天是周几", prompt)
+        self.assertIn("足够就立即停止调用工具", prompt)
+        self.assertIn("工具成功但结果有限不属于执行失败", prompt)
+        self.assertIn("批量 web_search", prompt)
 
     def test_worker_prompt_contains_persistent_conversation_and_previous_report(self) -> None:
         manager = SubAgentManager()

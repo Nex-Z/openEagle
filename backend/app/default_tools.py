@@ -7,6 +7,7 @@ import hashlib
 import os
 import shutil
 import time
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
@@ -28,6 +29,7 @@ DEFAULT_MAX_SEARCH_RESULTS = 50
 DEFAULT_MAX_SEARCH_FILE_BYTES = 2_000_000
 DEFAULT_SHA256_SIZE_THRESHOLD = 1_000_000
 DEFAULT_MAX_LIST_RESULTS = 200
+MAX_WEB_SEARCH_BATCH_QUERIES = 5
 DEFAULT_IGNORED_NAMES = {
     ".git",
     "node_modules",
@@ -464,7 +466,10 @@ class OpenEagleDefaultTools:
             and self.web_search_config.provider != "disabled"
         ):
             tools.append(self.web_search)
-            instructions_parts.append("你还可以使用 web_search 通过 Tavily 在互联网上搜索信息。")
+            instructions_parts.append(
+                "你还可以使用 web_search 通过 Tavily 在互联网上搜索信息；"
+                "query 可传单个字符串，或传入最多 5 个互补查询组成的字符串数组并行搜索。"
+            )
 
         self.name = "open_eagle_default_tools"
         self.instructions = "".join(instructions_parts)
@@ -520,15 +525,15 @@ class OpenEagleDefaultTools:
         weekday = weekday_names[now.weekday()]
         return now.strftime(f"%Y-%m-%d %H:%M:%S ({weekday})")
 
-    def web_search(self, query: str, max_results: int | None = None) -> str:
+    def web_search(self, query: str | list[str], max_results: int | None = None) -> str:
         """使用 Tavily 搜索互联网信息。
 
         Args:
-            query: 搜索关键词。
+            query: 单个搜索关键词，或最多 5 个互补搜索关键词组成的数组。
             max_results: 返回结果数量；不传时使用设置中的默认值。
 
         Returns:
-            str: 搜索结果列表，包含标题、摘要和链接。
+            str: 单个或批量搜索结果，包含标题、摘要和链接。
         """
         config = self.web_search_config
         if config.provider == "disabled":
@@ -541,9 +546,18 @@ class OpenEagleDefaultTools:
                 "请在「设置 → 联网搜索」中填写，或设置 TAVILY_API_KEY 环境变量。"
             )
 
-        clean_query = query.strip()
-        if not clean_query:
+        raw_queries = query if isinstance(query, list) else [query]
+        clean_queries = list(
+            dict.fromkeys(
+                item.strip()
+                for item in raw_queries
+                if isinstance(item, str) and item.strip()
+            )
+        )
+        if not clean_queries:
             return "错误：搜索关键词不能为空。"
+        batch_truncated = len(clean_queries) > MAX_WEB_SEARCH_BATCH_QUERIES
+        clean_queries = clean_queries[:MAX_WEB_SEARCH_BATCH_QUERIES]
 
         result_limit = config.max_results if max_results is None else max_results
         try:
@@ -551,6 +565,30 @@ class OpenEagleDefaultTools:
         except (TypeError, ValueError):
             return "错误：max_results 必须是 1 到 20 之间的整数。"
 
+        if len(clean_queries) == 1:
+            return self._web_search_one(clean_queries[0], api_key, result_limit)
+
+        with ThreadPoolExecutor(max_workers=len(clean_queries)) as executor:
+            results = list(
+                executor.map(
+                    lambda item: self._web_search_one(item, api_key, result_limit),
+                    clean_queries,
+                )
+            )
+        prefix = (
+            f"批量搜索最多支持 {MAX_WEB_SEARCH_BATCH_QUERIES} 个查询，"
+            "已忽略超出部分。\n\n"
+            if batch_truncated
+            else ""
+        )
+        sections = [
+            f"## 批量查询 {index}: {item}\n{result}"
+            for index, (item, result) in enumerate(zip(clean_queries, results), start=1)
+        ]
+        return prefix + "\n\n".join(sections)
+
+    def _web_search_one(self, query: str, api_key: str, result_limit: int) -> str:
+        config = self.web_search_config
         try:
             response = httpx.post(
                 "https://api.tavily.com/search",
@@ -559,7 +597,7 @@ class OpenEagleDefaultTools:
                     "Content-Type": "application/json",
                 },
                 json={
-                    "query": clean_query,
+                    "query": query,
                     "topic": "general",
                     "search_depth": config.search_depth,
                     "max_results": result_limit,
@@ -581,9 +619,9 @@ class OpenEagleDefaultTools:
         results = payload.get("results") if isinstance(payload, dict) else None
 
         if not isinstance(results, list) or not results:
-            return f"未找到与「{clean_query}」相关的结果。"
+            return f"未找到与「{query}」相关的结果。"
 
-        lines = [f"Tavily 搜索「{clean_query}」的结果：\n"]
+        lines = [f"Tavily 搜索「{query}」的结果：\n"]
         for i, item in enumerate(results, 1):
             if not isinstance(item, dict):
                 continue
@@ -594,7 +632,7 @@ class OpenEagleDefaultTools:
             date_line = f"\n   发布时间：{published_date}" if published_date else ""
             lines.append(f"{i}. **{title}**\n   {body}{date_line}\n   {href}\n")
         if len(lines) == 1:
-            return f"未找到与「{clean_query}」相关的有效结果。"
+            return f"未找到与「{query}」相关的有效结果。"
         return "\n".join(lines)
 
     def get_file_info(self, path: str) -> str:
