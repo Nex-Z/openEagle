@@ -109,7 +109,7 @@ Frontend      →  通过 WebSocket 连接 ws://127.0.0.1:<端口>/ws
 | 视觉模型   | VL 模型，通过 OpenAI 兼容接口接入                      |
 | 自动化     | mss（截图）, pyautogui（输入）                         |
 | Agent 框架 | LangGraph                                              |
-| 搜索       | baidusearch（免费，无需 API Key）                      |
+| 搜索       | Tavily Search API（用户自带 API Key）                  |
 | 定时调度   | APScheduler + SQLite                                  |
 | 远程 IM    | 飞书长连接、Telegram Bot 长轮询、微信 ClawBot 扫码绑定 |
 
@@ -127,7 +127,7 @@ MainAgent 的内部决策步骤采用原则驱动，而不是关键词驱动：�
 
 openEagle 现在内置 Hermes 风格的单用户长期记忆，数据保存在 `.open-eagle/memory.db`。记忆分为用户画像、用户笔记、Soul 和原始记忆事件：原始事件尽量保留回合与压缩快照，prompt 注入走 V2 检索层，只放有界用户画像摘要、压缩后的 Soul 摘要、Agent 旁注，以及与当前请求相关的活跃用户笔记。完整记忆仍可通过系统默认工具（`get_memory_state`、`save_memory_note`、`update_memory_note`、`delete_memory_note`、`save_user_profile`、`save_soul_core`、`save_agent_side_notes`）按需读取和维护，所以“记住/记录一下”类请求会写入 memory 数据库，而不是在项目根目录创建文件。设置页的 Memory 区域只展示活跃用户笔记，删除笔记会归档并从列表隐藏，同时保留审计记录。
 
-上下文整理走同一套配置入口。达到 token 阈值后，后端会保留 system 和最近 N 条消息，只处理中间消息；工具消息先占位或移除，避免把大段工具输出交给摘要模型。LangGraph/OpenAI 兼容 provider 与 Anthropic provider 都会在必要时用文本模型生成中段摘要，失败时退回规则型截断。远程 IM 会话还支持按静默分钟数提示开启新的上下文窗口。
+会话轮次会按 conversation ID 持久化到 `.open-eagle/memory.db`，因此桌面客户端或远程 IM 在断联、重连和重启后都能继续原上下文。默认完整保留最近 30 轮，可通过 `context.conversationTurnLimit` 调整；更早轮次会合并为归档摘要。达到 token 阈值后，后端会保留 system 和最近 N 条消息，只处理中间消息；工具消息先占位或移除，避免把大段工具输出交给摘要模型。远程 IM 会话会在达到静默时长后后台整理旧上下文，不再把下一轮强制视为新窗口。
 
 内置 worker 类型：
 
@@ -162,7 +162,7 @@ openEagle 现在内置 Hermes 风格的单用户长期记忆，数据保存在 `
 - 微信使用 `wechat-clawbot`。在微信卡片中点击“扫码绑定”，用微信扫码后会自动保存 `accountId`，再启用微信入口即可开始长轮询。点击“解绑”会停止轮询，并清理 openEagle 专用的本地 ClawBot 账号凭据。
 - 白名单为空时默认拦截所有远程消息。
 - 远程普通文本会先交给 main agent。main agent 可以自然回复、调用工具，或在任务需要 GUI 操作时调度桌面执行。
-- 远程会话静默超过 `context.imIdleCleanupMinutes` 后，下一轮会提示 main agent 把它视为新的上下文窗口。
+- 远程会话静默达到 `context.imIdleCleanupMinutes` 后，会在后台摘要较早上下文，同时保留最近完整轮次。
 - 只有明确希望优先走桌面执行时，才使用 `/solo <任务>`。
 
 远程命令：
@@ -201,6 +201,9 @@ openEagle 支持灵活的模型路由——main agent 文本对话和 Vision-Lan
 | `agent.vlProvider`                                    | 桌面执行视觉模型提供商（`openai`、`openai-like`） |
 | `agent.vlModelId`                                     | 桌面执行用的视觉语言模型                          |
 | `agent.vlBaseUrl`                                     | 视觉模型的 OpenAI 兼容 API 地址                   |
+| `webSearch.provider`                                  | 内置联网搜索提供商（`tavily` 或 `disabled`）      |
+| `webSearch.apiKey`                                    | Tavily API Key，也可使用 `TAVILY_API_KEY` 环境变量 |
+| `webSearch.searchDepth` / `webSearch.maxResults`      | 搜索深度与默认结果数量                            |
 | `feishu.enabled`                                      | 启用飞书远程入口                                  |
 | `feishu.appId` / `feishu.appSecret`                   | 飞书长连接应用凭据                                |
 | `feishu.allowedOpenIds` / `feishu.allowedChatIds`     | 飞书用户/会话白名单                               |
@@ -212,6 +215,7 @@ openEagle 支持灵活的模型路由——main agent 文本对话和 Vision-Lan
 | `wechat.baseUrl` / `wechat.botType`                   | 可选 ClawBot API 地址与 Bot Type                  |
 | `wechat.allowedUserIds` / `wechat.allowedChatIds`     | 微信用户/会话白名单                               |
 | `context.maxInputTokens`                              | 触发上下文整理的估算输入 token 阈值               |
+| `context.conversationTurnLimit`                       | 每个会话持久保留的完整轮数（默认 30）             |
 | `context.preserveRecentMessages`                      | 上下文整理时完整保留的最近消息数                  |
 | `context.toolMessageMode`                             | 中段工具消息处理方式：占位或移除                  |
 | `context.aiSummaryEnabled`                            | 是否使用文本模型摘要中段上下文                    |
@@ -220,7 +224,7 @@ openEagle 支持灵活的模型路由——main agent 文本对话和 Vision-Lan
 | `mcp`                                                 | MCP 服务器连接，保存于 `.open-eagle/mcp.json`（[详见下方](#mcp--连接外部服务)） |
 | `skills`                                              | 自定义 Skill 行为指令，保存于 `.open-eagle/skills/`（[详见下方](#skill--注入私域经验)） |
 
-模型、IM、上下文和界面偏好仍保存在 `.open-eagle/settings.json`。MCP 与 Skill 定义改为文件态存储，方便用户审阅、复制到其他机器，或单独纳入版本管理。旧版 `settings.json` 中已有的 `mcp` / `skills` 数组会在启动时自动迁移为文件。
+模型、联网搜索凭据、IM、上下文和界面偏好仍保存在本机 `.open-eagle/settings.json`。MCP 与 Skill 定义改为文件态存储，方便用户审阅、复制到其他机器，或单独纳入版本管理。Tavily API Key 不会写入 `.open-eagle/mcp.json`；旧版 `settings.json` 中已有的 `mcp` / `skills` 数组会在启动时自动迁移为文件。
 
 ## 工具、MCP 与 Skill
 

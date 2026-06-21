@@ -11,12 +11,13 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
+import httpx
 from langchain_core.tools import BaseTool, StructuredTool
 
 from .attachments import AttachmentError, AttachmentStore
 from .command_runner import DEFAULT_COMMAND_TAIL, DEFAULT_COMMAND_TIMEOUT_MS
 from .command_runner import execute_workspace_command
-from .config import ToolConfig
+from .config import ToolConfig, WebSearchConfig
 from .confirmations import PendingToolConfirmation, ToolConfirmationStore
 from .paths import resolve_workspace_root
 from .safety import BlockedActionError, assess_tool_action, resolve_workspace_path
@@ -397,6 +398,7 @@ class OpenEagleDefaultTools:
         conversation_id: str | None = None,
         permission_mode: str = "default",
         builtin_tools: list[dict[str, object]] | None = None,
+        web_search_config: WebSearchConfig | None = None,
         attachment_store: AttachmentStore | None = None,
         memory_service: Any | None = None,
     ):
@@ -407,6 +409,7 @@ class OpenEagleDefaultTools:
         self.permission_mode = permission_mode
         self.attachment_store = attachment_store
         self.memory_service = memory_service
+        self.web_search_config = web_search_config or WebSearchConfig()
         self._read_cache = _ReadCache()
         self._agent_tools: list[BaseTool] = []
 
@@ -456,9 +459,12 @@ class OpenEagleDefaultTools:
                 "在项目根目录创建记忆文件。"
             )
 
-        if enabled_builtins.get("web_search", True):
+        if (
+            enabled_builtins.get("web_search", True)
+            and self.web_search_config.provider != "disabled"
+        ):
             tools.append(self.web_search)
-            instructions_parts.append("你还可以使用 web_search 在互联网上搜索信息。")
+            instructions_parts.append("你还可以使用 web_search 通过 Tavily 在互联网上搜索信息。")
 
         self.name = "open_eagle_default_tools"
         self.instructions = "".join(instructions_parts)
@@ -514,35 +520,81 @@ class OpenEagleDefaultTools:
         weekday = weekday_names[now.weekday()]
         return now.strftime(f"%Y-%m-%d %H:%M:%S ({weekday})")
 
-    def web_search(self, query: str, max_results: int = 5) -> str:
-        """使用百度搜索互联网信息。
+    def web_search(self, query: str, max_results: int | None = None) -> str:
+        """使用 Tavily 搜索互联网信息。
 
         Args:
             query: 搜索关键词。
-            max_results: 返回结果数量，默认 5 条。
+            max_results: 返回结果数量；不传时使用设置中的默认值。
 
         Returns:
             str: 搜索结果列表，包含标题、摘要和链接。
         """
+        config = self.web_search_config
+        if config.provider == "disabled":
+            return "错误：内置联网搜索已关闭，请在「设置 → 联网搜索」中启用。"
+
+        api_key = (config.api_key or os.getenv("TAVILY_API_KEY") or "").strip()
+        if not api_key:
+            return (
+                "错误：尚未配置 Tavily API Key。"
+                "请在「设置 → 联网搜索」中填写，或设置 TAVILY_API_KEY 环境变量。"
+            )
+
+        clean_query = query.strip()
+        if not clean_query:
+            return "错误：搜索关键词不能为空。"
+
+        result_limit = config.max_results if max_results is None else max_results
         try:
-            from baidusearch.baidusearch import search
-        except ImportError:
-            return "错误：baidusearch 未安装，请运行 uv sync 安装依赖。"
+            result_limit = max(1, min(int(result_limit), 20))
+        except (TypeError, ValueError):
+            return "错误：max_results 必须是 1 到 20 之间的整数。"
 
         try:
-            results = search(query, num_results=max(max_results, 1))
-        except Exception as exc:
+            response = httpx.post(
+                "https://api.tavily.com/search",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "query": clean_query,
+                    "topic": "general",
+                    "search_depth": config.search_depth,
+                    "max_results": result_limit,
+                    "include_answer": False,
+                    "include_raw_content": False,
+                    "include_images": False,
+                },
+                timeout=20.0,
+            )
+            response.raise_for_status()
+            payload = response.json()
+        except httpx.HTTPStatusError as exc:
+            if exc.response.status_code in {401, 403}:
+                return "搜索出错：Tavily API Key 无效或无权访问。"
+            return f"搜索出错：Tavily 返回 HTTP {exc.response.status_code}。"
+        except (httpx.HTTPError, ValueError) as exc:
             return f"搜索出错：{exc}"
 
-        if not results:
-            return f"未找到与「{query}」相关的结果。"
+        results = payload.get("results") if isinstance(payload, dict) else None
 
-        lines = [f"搜索「{query}」的结果：\n"]
+        if not isinstance(results, list) or not results:
+            return f"未找到与「{clean_query}」相关的结果。"
+
+        lines = [f"Tavily 搜索「{clean_query}」的结果：\n"]
         for i, item in enumerate(results, 1):
-            title = item.get("title", "")
-            body = item.get("abstract", item.get("body", ""))
-            href = item.get("url", item.get("href", ""))
-            lines.append(f"{i}. **{title}**\n   {body}\n   {href}\n")
+            if not isinstance(item, dict):
+                continue
+            title = str(item.get("title") or "未命名结果")
+            body = str(item.get("content") or "")
+            href = str(item.get("url") or "")
+            published_date = str(item.get("published_date") or "").strip()
+            date_line = f"\n   发布时间：{published_date}" if published_date else ""
+            lines.append(f"{i}. **{title}**\n   {body}{date_line}\n   {href}\n")
+        if len(lines) == 1:
+            return f"未找到与「{clean_query}」相关的有效结果。"
         return "\n".join(lines)
 
     def get_file_info(self, path: str) -> str:
@@ -1240,6 +1292,7 @@ def build_default_tools(
     conversation_id: str | None = None,
     permission_mode: str = "default",
     builtin_tools: list[dict[str, object]] | None = None,
+    web_search_config: WebSearchConfig | None = None,
     attachment_store: AttachmentStore | None = None,
     memory_service: Any | None = None,
 ) -> OpenEagleDefaultTools:
@@ -1251,6 +1304,7 @@ def build_default_tools(
         conversation_id=conversation_id,
         permission_mode=permission_mode,
         builtin_tools=builtin_tools,
+        web_search_config=web_search_config,
         attachment_store=attachment_store,
         memory_service=memory_service,
     )

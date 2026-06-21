@@ -152,7 +152,7 @@ class SoloDefaultCapabilities:
         """按文本内容搜索工作区文件。"""
         return self._default_tools.search_text(keyword, path=path, max_results=max_results)
 
-    def web_search(self, query: str, max_results: int = 5) -> str:
+    def web_search(self, query: str, max_results: int | None = None) -> str:
         """联网搜索资料。"""
         return self._default_tools.web_search(query, max_results=max_results)
 
@@ -224,6 +224,7 @@ class SoloCapabilityRuntime:
             conversation_id=conversation_id,
             permission_mode=self.permission_mode,
             builtin_tools=[bt.model_dump() for bt in self.config.builtin_tools],
+            web_search_config=self.config.web_search,
             memory_service=self.memory_service,
         )
         enabled_builtins = {
@@ -232,7 +233,10 @@ class SoloCapabilityRuntime:
         }
         self.default_capabilities = SoloDefaultCapabilities(
             self.default_tools,
-            web_search_enabled=enabled_builtins.get("web_search", True),
+            web_search_enabled=(
+                enabled_builtins.get("web_search", True)
+                and self.config.web_search.provider != "disabled"
+            ),
         )
         self._configured_by_id = {
             tool.id: tool

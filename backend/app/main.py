@@ -18,6 +18,7 @@ from .attachments import AttachmentStore
 from .capability_files import load_file_backed_settings, save_file_backed_settings
 from .config import AppConfig, load_config
 from .confirmations import ToolConfirmationStore
+from .conversation_context import ConversationContextService
 from .default_tools import build_default_tools, execute_confirmed_tool
 from .im.bridge import (
     IMBridge,
@@ -105,6 +106,7 @@ def save_persisted_settings(settings: dict[str, Any]) -> None:
 
 
 memory_service = MemoryService(config_getter=runtime_state.get_config)
+conversation_context_service = ConversationContextService(runtime_state.get_config)
 confirmed_tool_results: dict[str, str] = {}
 scheduler_service: SchedulerService | None = None
 background_tasks: set[asyncio.Task[Any]] = set()
@@ -301,6 +303,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
     solo_default_tools = build_default_tools(
         workspace_root=workspace_root,
         builtin_tools=[bt.model_dump() for bt in config.builtin_tools],
+        web_search_config=config.web_search,
         memory_service=memory_service,
     )
     solo_executor = SoloExecutor(default_tools=solo_default_tools)
@@ -1359,6 +1362,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         solo_executor._default_tools = build_default_tools(
             workspace_root=workspace_root,
             builtin_tools=[bt.model_dump() for bt in next_config.builtin_tools],
+            web_search_config=next_config.web_search,
             memory_service=memory_service,
         )
         if im_bridge is not None:
@@ -1370,6 +1374,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         content: str,
         attachments: list[AttachmentRef] | None = None,
         preferred_mode: str | None = None,
+        history: list[dict[str, Any]] | None = None,
     ) -> str:
         return await agent_runtime.handle_user_message(
             conversation_id,
@@ -1377,6 +1382,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             content,
             attachments=attachments,
             preferred_mode=preferred_mode,
+            history=history,
         )
 
     async def handle_chat_from_im(
@@ -1648,6 +1654,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         start_solo=start_solo_for_conversation,
         solo_control=apply_solo_control,
         memory_service=memory_service,
+        conversation_context_service=conversation_context_service,
     )
 
     async def handle_tool_decision_from_im(
@@ -1761,6 +1768,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         tool_decision=handle_tool_decision_from_im,
         attachment_store=attachment_store,
         reply_attachments=attachment_store.pop_reply_attachments,
+        compact_context=conversation_context_service.compact_for_idle,
     )
     bind_config_getter(im_bridge, runtime_state.get_config)
     set_scheduled_task_origin_resolver(im_bridge.delivery_target)
@@ -2431,6 +2439,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 envelope.request_id,
                 payload.content,
                 attachments=payload.attachments,
+                history=[
+                    item.model_dump(by_alias=True)
+                    for item in payload.history
+                ],
             )
     except WebSocketDisconnect:
         blog(f"ws disconnected client={websocket.client}")

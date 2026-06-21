@@ -21,6 +21,7 @@ import { SecretInput } from "./SecretInput";
 export type SettingsSection =
   | "general"
   | "models"
+  | "search"
   | "im"
   | "quick_assistant"
   | "solo"
@@ -66,6 +67,7 @@ const sectionMeta: Array<{
 }> = [
   { id: "general", title: "General", summary: "外观与基础体验。" },
   { id: "models", title: "Models", summary: "文本模型和视觉模型接入。" },
+  { id: "search", title: "联网搜索", summary: "Tavily 搜索服务与额度选项。" },
   { id: "im", title: "IM", summary: "飞书、Telegram 与微信远程接入。" },
   { id: "quick_assistant", title: "悬浮助理", summary: "快捷唤起、选区读取与截图上下文。" },
   { id: "solo", title: "桌面执行", summary: "显示器预览与截图目标。" },
@@ -651,6 +653,38 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
     });
   };
 
+  const updateWebSearchSettings = (patch: Partial<AppSettings["webSearch"]>) => {
+    onChange({
+      ...settings,
+      webSearch: {
+        ...settings.webSearch,
+        ...patch,
+      },
+    });
+  };
+
+  const updateWebSearchProvider = (provider: AppSettings["webSearch"]["provider"]) => {
+    onChange({
+      ...settings,
+      webSearch: {
+        ...settings.webSearch,
+        provider,
+      },
+      builtinTools: settings.builtinTools.map((item) =>
+        item.id === "web_search"
+          ? { ...item, enabled: provider !== "disabled" }
+          : item,
+      ),
+    });
+  };
+
+  const webSearchToolEnabled =
+    settings.builtinTools.find((item) => item.id === "web_search")?.enabled ?? true;
+  const webSearchProvider =
+    webSearchToolEnabled && settings.webSearch.provider !== "disabled"
+      ? "tavily"
+      : "disabled";
+
   const activeMeta = sectionMeta.find((section) => section.id === activeSection) ?? sectionMeta[0];
   const feishuStatus = imStatuses.feishu;
   const telegramStatus = imStatuses.telegram;
@@ -759,7 +793,28 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
                     />
                   </label>
                   <label className="form-field">
-                    <span>保留最近消息数</span>
+                    <span>持久保留会话轮数</span>
+                    <input
+                      max={200}
+                      min={1}
+                      onChange={(event) =>
+                        updateContextSettings({
+                          conversationTurnLimit: Math.min(
+                            200,
+                            readBoundedInteger(
+                              event.target.value,
+                              settings.context.conversationTurnLimit,
+                              1,
+                            ),
+                          ),
+                        })
+                      }
+                      type="number"
+                      value={settings.context.conversationTurnLimit}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>压缩时保留最近消息数</span>
                     <input
                       min={0}
                       onChange={(event) =>
@@ -1474,6 +1529,92 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
               </div>
             ) : null}
 
+            {activeSection === "search" ? (
+              <div className="settings-stack">
+                <section className="settings-panel">
+                  <div className="settings-panel-head">
+                    <div>
+                      <span className="card-kicker">Tavily Search API</span>
+                      <strong>联网搜索</strong>
+                    </div>
+                  </div>
+
+                  <label className="form-field">
+                    <span>Provider</span>
+                    <select
+                      onChange={(event) =>
+                        updateWebSearchProvider(
+                          event.target.value as AppSettings["webSearch"]["provider"],
+                        )
+                      }
+                      value={webSearchProvider}
+                    >
+                      <option value="tavily">Tavily</option>
+                      <option value="disabled">关闭</option>
+                    </select>
+                  </label>
+
+                  {webSearchProvider === "tavily" ? (
+                    <>
+                      <label className="form-field">
+                        <span>API Key</span>
+                        <SecretInput
+                          onChange={(apiKey) => updateWebSearchSettings({ apiKey })}
+                          placeholder="tvly-..."
+                          value={settings.webSearch.apiKey}
+                        />
+                      </label>
+
+                      <div className="settings-stack two-column">
+                        <label className="form-field">
+                          <span>搜索深度</span>
+                          <select
+                            onChange={(event) =>
+                              updateWebSearchSettings({
+                                searchDepth: event.target.value as AppSettings["webSearch"]["searchDepth"],
+                              })
+                            }
+                            value={settings.webSearch.searchDepth}
+                          >
+                            <option value="basic">Basic · 更快、更省额度</option>
+                            <option value="advanced">Advanced · 更深入</option>
+                          </select>
+                        </label>
+
+                        <label className="form-field">
+                          <span>默认结果数</span>
+                          <input
+                            max={20}
+                            min={1}
+                            onChange={(event) =>
+                              updateWebSearchSettings({
+                                maxResults: Math.max(
+                                  1,
+                                  Math.min(Number(event.target.value) || 5, 20),
+                                ),
+                              })
+                            }
+                            type="number"
+                            value={settings.webSearch.maxResults}
+                          />
+                        </label>
+                      </div>
+
+                      <div className="form-hint">
+                        <span>API Key 仅保存在本机应用设置中，不会写入 MCP 配置文件。</span>
+                        <span>也可以通过 TAVILY_API_KEY 环境变量提供密钥。</span>
+                      </div>
+                    </>
+                  ) : (
+                    <div className="form-hint">
+                      <span>关闭后，Agent 不会加载内置 web_search 工具。</span>
+                      <span>你仍可在 MCP 页面自行接入 Tavily 或其他搜索服务。</span>
+                    </div>
+                  )}
+                </section>
+              </div>
+            ) : null}
+
             {activeSection === "solo" ? (
               <div className="settings-stack two-column">
                 <section className="settings-panel">
@@ -1714,41 +1855,49 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
                     })}
                 </div>
 
-                <div className="settings-section-head">
-                  <div>
-                    <span className="card-kicker">Built-in</span>
-                    <strong>内置工具</strong>
-                  </div>
-                </div>
-                <div className="config-list">
-                    {settings.builtinTools.map((bt) => (
-                      <article key={bt.id} className="config-row">
-                        <div className="config-row-head">
-                          <div className="config-row-copy">
-                            <strong>{bt.name}</strong>
-                            <span>{bt.description}</span>
-                          </div>
-                          <div className="config-row-actions">
-                            <label className="toggle-inline">
-                              <input
-                                type="checkbox"
-                                checked={bt.enabled}
-                                onChange={(e) =>
-                                  onChange({
-                                    ...settings,
-                                    builtinTools: settings.builtinTools.map((item) =>
-                                      item.id === bt.id ? { ...item, enabled: e.target.checked } : item,
-                                    ),
-                                  })
-                                }
-                              />
-                              <span className="toggle-track" />
-                            </label>
-                          </div>
-                        </div>
-                      </article>
-                    ))}
-                </div>
+                {settings.builtinTools.some((item) => item.id !== "web_search") ? (
+                  <>
+                    <div className="settings-section-head">
+                      <div>
+                        <span className="card-kicker">Built-in</span>
+                        <strong>其他内置工具</strong>
+                      </div>
+                    </div>
+                    <div className="config-list">
+                      {settings.builtinTools
+                        .filter((item) => item.id !== "web_search")
+                        .map((bt) => (
+                          <article key={bt.id} className="config-row">
+                            <div className="config-row-head">
+                              <div className="config-row-copy">
+                                <strong>{bt.name}</strong>
+                                <span>{bt.description}</span>
+                              </div>
+                              <div className="config-row-actions">
+                                <label className="toggle-inline">
+                                  <input
+                                    type="checkbox"
+                                    checked={bt.enabled}
+                                    onChange={(e) =>
+                                      onChange({
+                                        ...settings,
+                                        builtinTools: settings.builtinTools.map((item) =>
+                                          item.id === bt.id
+                                            ? { ...item, enabled: e.target.checked }
+                                            : item,
+                                        ),
+                                      })
+                                    }
+                                  />
+                                  <span className="toggle-track" />
+                                </label>
+                              </div>
+                            </div>
+                          </article>
+                        ))}
+                    </div>
+                  </>
+                ) : null}
               </div>
             ) : null}
 

@@ -157,6 +157,7 @@ export type ToolMessageMode = "placeholder" | "remove";
 export interface ContextSettings {
   enabled: boolean;
   maxInputTokens: number;
+  conversationTurnLimit: number;
   preserveRecentMessages: number;
   imIdleCleanupMinutes: number;
   toolMessageMode: ToolMessageMode;
@@ -212,6 +213,13 @@ export interface BuiltinToolConfig {
   enabled: boolean;
 }
 
+export interface WebSearchSettings {
+  provider: "tavily" | "disabled";
+  apiKey: string;
+  searchDepth: "basic" | "advanced";
+  maxResults: number;
+}
+
 export interface AppSettings {
   feishu: FeishuSettings;
   telegram: TelegramSettings;
@@ -225,6 +233,7 @@ export interface AppSettings {
   quickAssistant: QuickAssistantSettings;
   tools: ToolConfig[];
   builtinTools: BuiltinToolConfig[];
+  webSearch: WebSearchSettings;
   mcp: McpServerConfig[];
   skills: SkillConfig[];
 }

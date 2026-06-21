@@ -48,6 +48,20 @@ class BuiltinToolConfig(BaseModel):
     }
 
 
+class WebSearchConfig(BaseModel):
+    provider: Literal["tavily", "disabled"] = "tavily"
+    api_key: str | None = Field(default=None, alias="apiKey")
+    search_depth: Literal["basic", "advanced"] = Field(
+        default="basic",
+        alias="searchDepth",
+    )
+    max_results: int = Field(default=5, ge=1, le=20, alias="maxResults")
+
+    model_config = {
+        "populate_by_name": True,
+    }
+
+
 class SoloConfig(BaseModel):
     preferred_display_index: int = Field(default=1, alias="preferredDisplayIndex")
 
@@ -73,6 +87,12 @@ class PermissionConfig(BaseModel):
 class ContextConfig(BaseModel):
     enabled: bool = True
     max_input_tokens: int = Field(default=24_000, alias="maxInputTokens")
+    conversation_turn_limit: int = Field(
+        default=30,
+        ge=1,
+        le=200,
+        alias="conversationTurnLimit",
+    )
     preserve_recent_messages: int = Field(default=8, alias="preserveRecentMessages")
     im_idle_cleanup_minutes: int = Field(default=60, alias="imIdleCleanupMinutes")
     tool_message_mode: Literal["placeholder", "remove"] = Field(
@@ -182,6 +202,7 @@ class AppConfig(BaseModel):
     )
     tools: list[ToolConfig] = Field(default_factory=list)
     builtin_tools: list[BuiltinToolConfig] = Field(default_factory=list, alias="builtinTools")
+    web_search: WebSearchConfig = Field(default_factory=WebSearchConfig, alias="webSearch")
     mcp: list[McpConfig] = Field(default_factory=list)
     skills: list[SkillConfig] = Field(default_factory=list)
 

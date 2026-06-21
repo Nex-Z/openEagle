@@ -9,6 +9,8 @@ from uuid import uuid4
 from ..models import utc_now
 from .models import (
     AgentSoulPayload,
+    ConversationContextStatePayload,
+    ConversationTurnPayload,
     DEFAULT_AGENT_SOUL_CORE,
     LEGACY_DEFAULT_AGENT_SOUL_CORE_PREFIXES,
     MemoryAuditPayload,
@@ -79,9 +81,31 @@ def init_db(db_path: Path) -> None:
                 created_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS conversation_turns (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                conversation_id TEXT NOT NULL,
+                request_id TEXT NOT NULL DEFAULT '',
+                user_content TEXT NOT NULL DEFAULT '',
+                assistant_content TEXT NOT NULL DEFAULT '',
+                route TEXT NOT NULL DEFAULT '',
+                metadata_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                UNIQUE(conversation_id, request_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS conversation_context_state (
+                conversation_id TEXT PRIMARY KEY,
+                archive_summary TEXT NOT NULL DEFAULT '',
+                idle_summary TEXT NOT NULL DEFAULT '',
+                idle_through_turn_id INTEGER NOT NULL DEFAULT 0,
+                updated_at TEXT NOT NULL
+            );
+
             CREATE INDEX IF NOT EXISTS idx_memory_notes_status ON memory_notes(status);
             CREATE INDEX IF NOT EXISTS idx_memory_events_created_at ON memory_events(created_at);
             CREATE INDEX IF NOT EXISTS idx_memory_audit_created_at ON memory_audit(created_at);
+            CREATE INDEX IF NOT EXISTS idx_conversation_turns_lookup
+                ON conversation_turns(conversation_id, id);
             """
         )
         now = utc_now()
@@ -216,6 +240,34 @@ def _row_to_event(row: sqlite3.Row) -> MemoryEventPayload:
     )
 
 
+def _row_to_conversation_turn(row: sqlite3.Row) -> ConversationTurnPayload:
+    return ConversationTurnPayload(
+        id=int(row["id"]),
+        conversationId=row["conversation_id"],
+        requestId=row["request_id"],
+        userContent=row["user_content"],
+        assistantContent=row["assistant_content"],
+        route=row["route"],
+        metadata=_json_loads(row["metadata_json"], {}),
+        createdAt=row["created_at"],
+    )
+
+
+def _row_to_conversation_context(
+    row: sqlite3.Row | None,
+    conversation_id: str,
+) -> ConversationContextStatePayload:
+    if row is None:
+        return ConversationContextStatePayload(conversationId=conversation_id)
+    return ConversationContextStatePayload(
+        conversationId=row["conversation_id"],
+        archiveSummary=row["archive_summary"],
+        idleSummary=row["idle_summary"],
+        idleThroughTurnId=int(row["idle_through_turn_id"]),
+        updatedAt=row["updated_at"],
+    )
+
+
 def append_audit(
     action: str,
     target_kind: str,
@@ -300,6 +352,191 @@ def get_event(event_id: str) -> MemoryEventPayload | None:
         return _row_to_event(row) if row else None
     finally:
         conn.close()
+
+
+def list_conversation_events(
+    conversation_id: str,
+    *,
+    source: str | None = None,
+    limit: int = 100,
+) -> list[MemoryEventPayload]:
+    conn = _conn()
+    try:
+        if source:
+            rows = conn.execute(
+                """
+                SELECT * FROM memory_events
+                WHERE conversation_id = ? AND source = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (conversation_id, source, max(1, int(limit))),
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                """
+                SELECT * FROM memory_events
+                WHERE conversation_id = ?
+                ORDER BY created_at DESC
+                LIMIT ?
+                """,
+                (conversation_id, max(1, int(limit))),
+            ).fetchall()
+        return [_row_to_event(row) for row in reversed(rows)]
+    finally:
+        conn.close()
+
+
+def upsert_conversation_turn(
+    *,
+    conversation_id: str,
+    request_id: str,
+    user_content: str,
+    assistant_content: str,
+    route: str = "",
+    metadata: dict[str, Any] | None = None,
+    created_at: str | None = None,
+) -> ConversationTurnPayload:
+    now = created_at or utc_now()
+    conn = _conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO conversation_turns (
+                conversation_id, request_id, user_content, assistant_content,
+                route, metadata_json, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(conversation_id, request_id) DO UPDATE SET
+                user_content = excluded.user_content,
+                assistant_content = excluded.assistant_content,
+                route = excluded.route,
+                metadata_json = excluded.metadata_json
+            """,
+            (
+                conversation_id,
+                request_id,
+                user_content,
+                assistant_content,
+                route,
+                _json_dumps(metadata or {}),
+                now,
+            ),
+        )
+        row = conn.execute(
+            """
+            SELECT * FROM conversation_turns
+            WHERE conversation_id = ? AND request_id = ?
+            """,
+            (conversation_id, request_id),
+        ).fetchone()
+        conn.commit()
+        assert row is not None
+        return _row_to_conversation_turn(row)
+    finally:
+        conn.close()
+
+
+def list_conversation_turns(conversation_id: str) -> list[ConversationTurnPayload]:
+    conn = _conn()
+    try:
+        rows = conn.execute(
+            """
+            SELECT * FROM conversation_turns
+            WHERE conversation_id = ?
+            ORDER BY id ASC
+            """,
+            (conversation_id,),
+        ).fetchall()
+        return [_row_to_conversation_turn(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def delete_conversation_turns(conversation_id: str, turn_ids: list[int]) -> int:
+    ids = [int(item) for item in turn_ids if int(item) > 0]
+    if not ids:
+        return 0
+    placeholders = ",".join("?" for _ in ids)
+    conn = _conn()
+    try:
+        cursor = conn.execute(
+            f"""
+            DELETE FROM conversation_turns
+            WHERE conversation_id = ? AND id IN ({placeholders})
+            """,
+            (conversation_id, *ids),
+        )
+        conn.commit()
+        return int(cursor.rowcount)
+    finally:
+        conn.close()
+
+
+def get_conversation_context_state(
+    conversation_id: str,
+) -> ConversationContextStatePayload:
+    conn = _conn()
+    try:
+        row = conn.execute(
+            """
+            SELECT * FROM conversation_context_state
+            WHERE conversation_id = ?
+            """,
+            (conversation_id,),
+        ).fetchone()
+        return _row_to_conversation_context(row, conversation_id)
+    finally:
+        conn.close()
+
+
+def update_conversation_context_state(
+    conversation_id: str,
+    *,
+    archive_summary: str | None = None,
+    idle_summary: str | None = None,
+    idle_through_turn_id: int | None = None,
+) -> ConversationContextStatePayload:
+    current = get_conversation_context_state(conversation_id)
+    next_archive = current.archive_summary if archive_summary is None else archive_summary
+    next_idle = current.idle_summary if idle_summary is None else idle_summary
+    next_idle_through = (
+        current.idle_through_turn_id
+        if idle_through_turn_id is None
+        else max(0, int(idle_through_turn_id))
+    )
+    now = utc_now()
+    conn = _conn()
+    try:
+        conn.execute(
+            """
+            INSERT INTO conversation_context_state (
+                conversation_id, archive_summary, idle_summary,
+                idle_through_turn_id, updated_at
+            ) VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(conversation_id) DO UPDATE SET
+                archive_summary = excluded.archive_summary,
+                idle_summary = excluded.idle_summary,
+                idle_through_turn_id = excluded.idle_through_turn_id,
+                updated_at = excluded.updated_at
+            """,
+            (
+                conversation_id,
+                next_archive,
+                next_idle,
+                next_idle_through,
+                now,
+            ),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+    return ConversationContextStatePayload(
+        conversationId=conversation_id,
+        archiveSummary=next_archive,
+        idleSummary=next_idle,
+        idleThroughTurnId=next_idle_through,
+        updatedAt=now,
+    )
 
 
 def update_profile(content: str, *, source: str = "system", manual: bool = False) -> None:

@@ -9,6 +9,7 @@ from .agent_router import AgentRouter
 from .attachments import AttachmentError, AttachmentStore, append_attachment_context
 from .config import AgentConfig, AppConfig
 from .confirmations import ToolConfirmationStore
+from .conversation_context import ConversationContextService
 from .langgraph_agent import run_text_model
 from .models import AttachmentRef, StatusPayload, utc_now
 from .memory import MemoryService
@@ -53,6 +54,7 @@ class AgentRuntime:
         start_solo: StartSolo,
         solo_control: SoloControl,
         memory_service: MemoryService | None = None,
+        conversation_context_service: ConversationContextService | None = None,
     ) -> None:
         self._config_getter = config_getter
         self._confirmation_store = confirmation_store
@@ -62,6 +64,7 @@ class AgentRuntime:
         self._solo_adapter = SoloWorkerAdapter(start_solo, solo_control)
         self._subagents = SubAgentManager()
         self._memory_service = memory_service
+        self._conversation_context_service = conversation_context_service
         self._recent_conversation: dict[str, list[tuple[str, str]]] = {}
 
     async def handle_user_message(
@@ -71,7 +74,13 @@ class AgentRuntime:
         content: str,
         attachments: list[AttachmentRef] | None = None,
         preferred_mode: str | None = None,
+        history: list[dict[str, Any]] | None = None,
     ) -> str:
+        if self._conversation_context_service is not None:
+            await self._conversation_context_service.seed_from_history(
+                conversation_id,
+                history,
+            )
         try:
             prepared_attachments = self._attachment_store.prepare_user_attachments(
                 conversation_id,
@@ -85,7 +94,13 @@ class AgentRuntime:
                 conversation_id,
                 {"content": reply},
             )
-            self._append_conversation_turn(conversation_id, content, reply)
+            await self._record_conversation_turn(
+                conversation_id=conversation_id,
+                request_id=request_id,
+                user_content=content,
+                assistant_content=reply,
+                route="attachment_error",
+            )
             return reply
 
         if prepared_attachments:
@@ -110,7 +125,7 @@ class AgentRuntime:
                 note_text=memory_note,
             )
 
-        recent_context = self._recent_conversation_context(conversation_id)
+        recent_context = await self._conversation_context(conversation_id)
         memory_query = self._content_with_recent_context(enhanced_content, recent_context)
 
         await self._send_status(request_id, conversation_id, "thinking", "MainAgent 正在理解上下文")
@@ -171,6 +186,7 @@ class AgentRuntime:
                     config=config,
                     attachments=prepared_attachments,
                     memory_context=memory_context,
+                    conversation_context=recent_context,
                 )
         finally:
             await self._send_status(request_id, conversation_id, "idle", "回复完成")
@@ -197,7 +213,14 @@ class AgentRuntime:
             metadata=self._route_params(decision),
             distill=False,
         )
-        self._append_conversation_turn(conversation_id, content, reply)
+        await self._record_conversation_turn(
+            conversation_id=conversation_id,
+            request_id=request_id,
+            user_content=content,
+            assistant_content=reply,
+            route=decision.route,
+            metadata=self._route_params(decision),
+        )
         return reply
 
     async def control_solo(
@@ -280,6 +303,7 @@ class AgentRuntime:
         config: AppConfig,
         attachments: list[AttachmentRef],
         memory_context: str | None = None,
+        conversation_context: str | None = None,
     ) -> str:
         task = self._subagents.create_or_reuse(conversation_id, decision)
         started_at = utc_now()
@@ -306,6 +330,7 @@ class AgentRuntime:
             attachment_store=self._attachment_store,
             attachments=attachments,
             memory_context=memory_context,
+            conversation_context=conversation_context,
             memory_service=self._memory_service,
             context_snapshot=(
                 self._record_context_snapshot if self._memory_service is not None else None
@@ -456,6 +481,40 @@ class AgentRuntime:
             )
         except Exception:
             return
+
+    async def _conversation_context(self, conversation_id: str) -> str:
+        if self._conversation_context_service is not None:
+            window = await self._conversation_context_service.context_for_prompt(
+                conversation_id
+            )
+            return window.text
+        return self._recent_conversation_context(conversation_id)
+
+    async def _record_conversation_turn(
+        self,
+        *,
+        conversation_id: str,
+        request_id: str,
+        user_content: str,
+        assistant_content: str,
+        route: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> None:
+        if self._conversation_context_service is not None:
+            await self._conversation_context_service.record_turn(
+                conversation_id=conversation_id,
+                request_id=request_id,
+                user_content=user_content,
+                assistant_content=assistant_content,
+                route=route,
+                metadata=metadata,
+            )
+            return
+        self._append_conversation_turn(
+            conversation_id,
+            user_content,
+            assistant_content,
+        )
 
     def _append_conversation_turn(
         self,
@@ -609,7 +668,13 @@ class AgentRuntime:
                 conversation_id,
                 {"content": reply},
             )
-            self._append_conversation_turn(conversation_id, user_content, reply)
+            await self._record_conversation_turn(
+                conversation_id=conversation_id,
+                request_id=request_id,
+                user_content=user_content,
+                assistant_content=reply,
+                route="memory_save_error",
+            )
             return reply
 
         await self._send_event(
@@ -644,7 +709,14 @@ class AgentRuntime:
             metadata={"memoryNoteId": note_id},
             distill=False,
         )
-        self._append_conversation_turn(conversation_id, user_content, reply)
+        await self._record_conversation_turn(
+            conversation_id=conversation_id,
+            request_id=request_id,
+            user_content=user_content,
+            assistant_content=reply,
+            route="memory_save",
+            metadata={"memoryNoteId": note_id},
+        )
         return reply
 
     async def _record_memory_turn(

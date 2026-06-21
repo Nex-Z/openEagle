@@ -395,8 +395,9 @@ class IMBridgeAttachmentTest(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(solo_calls, [])
         self.assertEqual([message.text for message in fake.sent], ["AI 生成的自然回复"])
 
-    async def test_idle_im_conversation_marks_next_chat_as_new_context_window(self) -> None:
+    async def test_idle_im_conversation_compacts_before_continuing(self) -> None:
         chat_calls = []
+        compact_calls = []
         fake = FakeIMAdapter()
         bridge = IMBridge(
             send_client=lambda *args: _record_async([], args),
@@ -405,6 +406,11 @@ class IMBridgeAttachmentTest(unittest.IsolatedAsyncioTestCase):
             solo_control=lambda *args: _record_async([], args, result="control"),
             tool_decision=lambda *args: _record_async([], args, result="tool"),
             attachment_store=FakeAttachmentStore(),
+            compact_context=lambda conversation_id: _record_async(
+                compact_calls,
+                (conversation_id,),
+                result=True,
+            ),
         )
         bridge._telegram_adapter = fake
         bind_config_getter(
@@ -427,8 +433,35 @@ class IMBridgeAttachmentTest(unittest.IsolatedAsyncioTestCase):
         await bridge._handle_event(IMEvent(source=source, text="回来继续"))
 
         self.assertEqual(len(chat_calls), 1)
-        self.assertTrue(chat_calls[0][1].startswith("[上下文整理]"))
-        self.assertIn("回来继续", chat_calls[0][1])
+        self.assertEqual(chat_calls[0][1], "回来继续")
+        self.assertEqual(compact_calls, [(binding.conversation_id,)])
+        bridge._cancel_idle_compaction(binding.conversation_id)
+
+    async def test_idle_timer_compacts_in_background(self) -> None:
+        compact_calls = []
+        bridge = IMBridge(
+            send_client=lambda *args: _record_async([], args),
+            handle_chat=lambda *args: _record_async([], args, result="ok"),
+            start_solo=lambda *args: _record_async([], args, result="solo"),
+            solo_control=lambda *args: _record_async([], args, result="control"),
+            tool_decision=lambda *args: _record_async([], args, result="tool"),
+            compact_context=lambda conversation_id: _record_async(
+                compact_calls,
+                (conversation_id,),
+                result=True,
+            ),
+        )
+        bind_config_getter(
+            bridge,
+            lambda: AppConfig(context=ContextConfig(imIdleCleanupMinutes=5)),
+        )
+        activity_at = datetime.now(UTC) - timedelta(minutes=10)
+        bridge._last_activity_at["im_demo"] = activity_at
+
+        with patch("app.im.bridge.asyncio.sleep", return_value=None):
+            await bridge._compact_after_idle("im_demo", activity_at, 5)
+
+        self.assertEqual(compact_calls, [("im_demo",)])
 
 
 async def _record_async(target, args, result=None):

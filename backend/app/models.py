@@ -42,9 +42,22 @@ class AttachmentRef(BaseModel):
     }
 
 
+class ConversationHistoryMessage(BaseModel):
+    id: str = ""
+    request_id: str = Field(default="", alias="requestId")
+    role: Literal["user", "assistant"]
+    content: str
+    created_at: str = Field(default="", alias="createdAt")
+
+    model_config = {
+        "populate_by_name": True,
+    }
+
+
 class MessagePayload(BaseModel):
     content: str
     attachments: list[AttachmentRef] = Field(default_factory=list)
+    history: list[ConversationHistoryMessage] = Field(default_factory=list)
 
 
 class ErrorPayload(BaseModel):

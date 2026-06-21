@@ -109,7 +109,7 @@ Frontend      →  connects via WebSocket to ws://127.0.0.1:<port>/ws
 | Vision | VL model via OpenAI-compatible endpoint |
 | Automation | mss (screenshots), pyautogui (input) |
 | Agent framework | LangGraph |
-| Search | baidusearch (free, no API key) |
+| Search | Tavily Search API (bring your own API key) |
 | Scheduling | APScheduler + SQLite |
 | Remote IM | Feishu long connection, Telegram Bot polling, WeChat ClawBot QR binding |
 
@@ -127,7 +127,7 @@ When users ask for work to happen later or on a cadence, MainAgent creates a per
 
 openEagle now includes Hermes-inspired single-user long-term memory stored in `.open-eagle/memory.db`. Memory has four layers: user profile, user notes, Soul, and raw memory events. Raw events keep broader turn and compaction snapshots, while prompt injection uses a V2 retrieval layer: a bounded profile summary, a compact Soul summary, Agent side notes, and only active user notes relevant to the current request. Full memory remains available through built-in tools (`get_memory_state`, `save_memory_note`, `update_memory_note`, `delete_memory_note`, `save_user_profile`, `save_soul_core`, `save_agent_side_notes`), so "remember this" requests go through the memory database instead of creating project-root files. In Settings -> Memory, deleting a user note archives it and removes it from the active note list while preserving audit history.
 
-Context cleanup uses the same settings channel. Once the estimated input token threshold is reached, the backend preserves system messages and the latest N messages, then processes only the middle of the conversation. Tool messages are removed or replaced with compact placeholders before any AI summary step, so the summarizer does not waste tokens on large tool outputs. LangGraph/OpenAI-compatible and Anthropic providers can replace the middle segment with an AI summary and fall back to rule-based truncation if summarization fails. Remote IM sessions can also start a new context window after a configurable idle period.
+Conversation turns are persisted in `.open-eagle/memory.db` by conversation ID, so desktop and remote IM sessions can continue after reconnects or restarts. The latest 30 full turns are kept by default (`context.conversationTurnLimit` is configurable); older turns are merged into an archive summary. Once the estimated prompt token threshold is reached, the backend preserves system messages and the latest N messages, then processes only the middle of the conversation. Tool messages are removed or replaced with compact placeholders before any AI summary step. Remote IM sessions schedule this compaction during the configured idle period instead of discarding the old context.
 
 Built-in worker kinds:
 
@@ -162,7 +162,7 @@ openEagle can accept tasks from Feishu, Telegram, or WeChat after you enable the
 - WeChat uses `wechat-clawbot`. Click "Scan to bind" in the WeChat card, scan the QR code with WeChat, then enable the entry after the `accountId` is saved. "Unbind" stops polling and removes the local ClawBot account credentials used by openEagle.
 - Empty whitelists reject all remote messages by default.
 - Plain remote text is handled by the main agent first. It can reply naturally, use tools, or dispatch desktop execution when the task needs GUI control.
-- If a remote session has been idle for longer than `context.imIdleCleanupMinutes`, the next message tells the main agent to treat it as a fresh context window.
+- After a remote session has been idle for `context.imIdleCleanupMinutes`, openEagle summarizes older context in the background while retaining recent full turns.
 - Use `/solo <task>` only when you want to explicitly bias the request toward desktop execution.
 
 Remote commands:
@@ -201,6 +201,9 @@ Key settings (accessible from the in-app Settings panel):
 | `agent.vlProvider` | Vision model provider (`openai`, `openai-like`) |
 | `agent.vlModelId` | Vision-Language model for desktop execution |
 | `agent.vlBaseUrl` | OpenAI-compatible API base URL for the vision model |
+| `webSearch.provider` | Built-in search provider (`tavily` or `disabled`) |
+| `webSearch.apiKey` | Tavily API key; `TAVILY_API_KEY` is also supported |
+| `webSearch.searchDepth` / `webSearch.maxResults` | Search depth and default result count |
 | `feishu.enabled` | Enable the Feishu remote entry |
 | `feishu.appId` / `feishu.appSecret` | Feishu app credentials for long-connection events |
 | `feishu.allowedOpenIds` / `feishu.allowedChatIds` | Feishu user/chat whitelist |
@@ -212,6 +215,7 @@ Key settings (accessible from the in-app Settings panel):
 | `wechat.baseUrl` / `wechat.botType` | Optional ClawBot API base URL and bot type |
 | `wechat.allowedUserIds` / `wechat.allowedChatIds` | WeChat user/chat whitelist |
 | `context.maxInputTokens` | Estimated input token threshold for context cleanup |
+| `context.conversationTurnLimit` | Full conversation turns persisted per conversation (default: 30) |
 | `context.preserveRecentMessages` | Number of recent messages preserved exactly during cleanup |
 | `context.toolMessageMode` | Whether middle tool messages are compacted to placeholders or removed |
 | `context.aiSummaryEnabled` | Enables AI summaries for middle conversation context |
@@ -220,7 +224,7 @@ Key settings (accessible from the in-app Settings panel):
 | `mcp` | MCP server connections, stored in `.open-eagle/mcp.json` ([see below](#mcp--connect-external-services)) |
 | `skills` | Custom skill directives, stored under `.open-eagle/skills/` ([see below](#skill--inject-domain-specific-knowledge)) |
 
-Model, IM, context, and UI preferences are saved in `.open-eagle/settings.json`. MCP and Skill definitions are file-backed so they can be reviewed, copied between machines, or versioned separately from runtime preferences. Older `settings.json` files that still contain `mcp` or `skills` arrays are migrated automatically on startup.
+Model settings, web-search credentials, IM, context, and UI preferences are saved in the local `.open-eagle/settings.json`. MCP and Skill definitions are file-backed so they can be reviewed, copied between machines, or versioned separately from runtime preferences. The Tavily API key is never written to `.open-eagle/mcp.json`. Older `settings.json` files that still contain `mcp` or `skills` arrays are migrated automatically on startup.
 
 ## Tools, MCP & Skills
 

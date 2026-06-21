@@ -132,6 +132,29 @@ class MemoryEventPayload(BaseModel):
     model_config = {"populate_by_name": True}
 
 
+class ConversationTurnPayload(BaseModel):
+    id: int = 0
+    conversation_id: str = Field(alias="conversationId")
+    request_id: str = Field(default="", alias="requestId")
+    user_content: str = Field(default="", alias="userContent")
+    assistant_content: str = Field(default="", alias="assistantContent")
+    route: str = ""
+    metadata: dict[str, Any] = Field(default_factory=dict)
+    created_at: str = Field(default_factory=utc_now, alias="createdAt")
+
+    model_config = {"populate_by_name": True}
+
+
+class ConversationContextStatePayload(BaseModel):
+    conversation_id: str = Field(alias="conversationId")
+    archive_summary: str = Field(default="", alias="archiveSummary")
+    idle_summary: str = Field(default="", alias="idleSummary")
+    idle_through_turn_id: int = Field(default=0, alias="idleThroughTurnId")
+    updated_at: str = Field(default_factory=utc_now, alias="updatedAt")
+
+    model_config = {"populate_by_name": True}
+
+
 class MemoryStatePayload(BaseModel):
     profile: MemoryProfilePayload = Field(default_factory=MemoryProfilePayload)
     notes: list[MemoryNotePayload] = Field(default_factory=list)

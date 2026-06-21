@@ -97,6 +97,7 @@ class SubAgentManager:
         attachment_store: AttachmentStore | None = None,
         attachments: list[AttachmentRef] | None = None,
         memory_context: str | None = None,
+        conversation_context: str | None = None,
         memory_service: MemoryService | None = None,
         context_snapshot: ContextSnapshotCallback | None = None,
     ) -> AsyncIterator[ProviderStreamEvent | WorkerReport]:
@@ -110,6 +111,7 @@ class SubAgentManager:
                     request_id=request_id,
                     attachments=attachments,
                     memory_context=memory_context,
+                    conversation_context=conversation_context,
                     memory_service=memory_service,
                     context_snapshot=context_snapshot,
                 ):
@@ -125,6 +127,7 @@ class SubAgentManager:
                 request_id=request_id,
                 attachments=attachments,
                 memory_context=memory_context,
+                conversation_context=conversation_context,
                 memory_service=memory_service,
                 context_snapshot=context_snapshot,
             ):
@@ -140,6 +143,7 @@ class SubAgentManager:
         attachment_store: AttachmentStore | None = None,
         attachments: list[AttachmentRef] | None = None,
         memory_context: str | None = None,
+        conversation_context: str | None = None,
         memory_service: MemoryService | None = None,
         context_snapshot: ContextSnapshotCallback | None = None,
     ) -> AsyncIterator[ProviderStreamEvent | WorkerReport]:
@@ -154,7 +158,11 @@ class SubAgentManager:
             context_snapshot=context_snapshot,
             memory_service=memory_service,
         )
-        prompt = self._build_worker_prompt(task, memory_context=memory_context)
+        prompt = self._build_worker_prompt(
+            task,
+            memory_context=memory_context,
+            conversation_context=conversation_context,
+        )
         try:
             for attempt in range(MAX_WORKER_SELF_REPAIR_ATTEMPTS + 1):
                 chunks: list[str] = []
@@ -182,6 +190,7 @@ class SubAgentManager:
                             previous_output="",
                             attempt=attempt + 1,
                             memory_context=memory_context,
+                            conversation_context=conversation_context,
                         )
                         yield self._repair_trace(task, str(exc), attempt + 1)
                         continue
@@ -199,6 +208,7 @@ class SubAgentManager:
                         previous_output=content,
                         attempt=attempt + 1,
                         memory_context=memory_context,
+                        conversation_context=conversation_context,
                     )
                     yield self._repair_trace(task, final_error, attempt + 1)
                     continue
@@ -247,11 +257,26 @@ class SubAgentManager:
         return merged
 
     @staticmethod
-    def _build_worker_prompt(task: AgentTaskRecord, memory_context: str | None = None) -> str:
+    def _build_worker_prompt(
+        task: AgentTaskRecord,
+        memory_context: str | None = None,
+        conversation_context: str | None = None,
+    ) -> str:
         criteria = "\n".join(f"- {item}" for item in task.success_criteria)
         context = task.context_summary.strip()
         context_block = f"\n必要上下文:\n{context}\n" if context else ""
         memory_block = f"\n长期记忆:\n{memory_context}\n" if memory_context else ""
+        conversation_block = (
+            f"\n最近会话上下文:\n{conversation_context}\n"
+            if conversation_context
+            else ""
+        )
+        previous_report = task.last_report.result.strip() if task.last_report else ""
+        previous_block = (
+            f"\n该 worker 上次交付:\n{previous_report[:2400]}\n"
+            if previous_report
+            else ""
+        )
         return (
             f"你是 openEagle 的 {task.worker_kind} worker。"
             "请只处理 main agent 委派给你的任务，不要自行扩展到无关事项。\n\n"
@@ -260,6 +285,8 @@ class SubAgentManager:
             f"任务: {task.task_brief}\n"
             f"{context_block}"
             f"{memory_block}"
+            f"{conversation_block}"
+            f"{previous_block}"
             f"完成标准:\n{criteria}\n\n"
             "普通问答和不需要当前状态的解释，直接回答，不要调用工具。"
             "需要工具时先少量验证关键事实，避免展开成无关的批量搜索或命令。"
@@ -275,12 +302,18 @@ class SubAgentManager:
         previous_output: str,
         attempt: int,
         memory_context: str | None = None,
+        conversation_context: str | None = None,
     ) -> str:
         error_text = "\n".join(f"- {item}" for item in errors if item.strip())
         previous = previous_output.strip()
         previous_block = f"\n你上一轮的输出:\n{previous[:1600]}\n" if previous else ""
         criteria = "\n".join(f"- {item}" for item in task.success_criteria)
         memory_block = f"\n长期记忆:\n{memory_context}\n" if memory_context else ""
+        conversation_block = (
+            f"\n最近会话上下文:\n{conversation_context}\n"
+            if conversation_context
+            else ""
+        )
         return (
             f"这是第 {attempt} 次自动修复反馈。不要把下面的错误直接交给用户，"
             "把它当成工具/执行 observation，自己修正参数、路径、命令或方案后重新尝试。\n\n"
@@ -288,6 +321,7 @@ class SubAgentManager:
             f"{MEMORY_STORAGE_POLICY}\n\n"
             f"原任务: {task.task_brief}\n"
             f"{memory_block}"
+            f"{conversation_block}"
             f"完成标准:\n{criteria}\n\n"
             f"上一轮错误:\n{error_text or '- worker 输出为空或没有推进任务。'}\n"
             f"{previous_block}\n"

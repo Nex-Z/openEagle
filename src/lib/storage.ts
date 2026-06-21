@@ -46,7 +46,7 @@ const DEFAULT_BUILTIN_TOOLS: BuiltinToolConfig[] = [
   {
     id: "web_search",
     name: "Web Search",
-    description: "使用 DuckDuckGo 在互联网上搜索信息。",
+    description: "使用 Tavily 在互联网上搜索信息。",
     enabled: true,
   },
 ];
@@ -106,6 +106,22 @@ function normalizeBuiltinTools(raw: unknown): BuiltinToolConfig[] {
     result.push(def);
   }
   return result;
+}
+
+function normalizeWebSearch(raw: unknown): AppSettings["webSearch"] {
+  const value =
+    raw && typeof raw === "object"
+      ? (raw as Partial<AppSettings["webSearch"]>)
+      : {};
+  const maxResults = Number(value.maxResults);
+  return {
+    provider: value.provider === "disabled" ? "disabled" : "tavily",
+    apiKey: typeof value.apiKey === "string" ? value.apiKey : "",
+    searchDepth: value.searchDepth === "advanced" ? "advanced" : "basic",
+    maxResults: Number.isFinite(maxResults)
+      ? Math.max(1, Math.min(Math.round(maxResults), 20))
+      : 5,
+  };
 }
 
 function isUnmodifiedLegacyMcp(server: AppSettings["mcp"][number]) {
@@ -175,6 +191,7 @@ export const defaultSettings: AppSettings = {
   context: {
     enabled: true,
     maxInputTokens: 24_000,
+    conversationTurnLimit: 30,
     preserveRecentMessages: 8,
     imIdleCleanupMinutes: 60,
     toolMessageMode: "placeholder",
@@ -194,6 +211,12 @@ export const defaultSettings: AppSettings = {
   },
   tools: [],
   builtinTools: DEFAULT_BUILTIN_TOOLS,
+  webSearch: {
+    provider: "tavily",
+    apiKey: "",
+    searchDepth: "basic",
+    maxResults: 5,
+  },
   mcp: [],
   skills: [],
 };
@@ -318,6 +341,7 @@ export function loadSettings(): AppSettings {
       },
       tools: normalizeTools(parsed.tools),
       builtinTools: normalizeBuiltinTools(parsed.builtinTools),
+      webSearch: normalizeWebSearch(parsed.webSearch),
       mcp: Array.isArray(parsed.mcp)
         ? parsed.mcp.filter((server) => !isUnmodifiedLegacyMcp(server))
         : defaultSettings.mcp,
@@ -346,7 +370,11 @@ export async function loadSettingsFromFile(): Promise<AppSettings | null> {
     const raw = await invoke<Partial<AppSettings> | null>("load_app_settings");
     if (!raw || typeof raw !== "object") return null;
     // Merge with defaults (same logic as loadSettings)
-    return { ...defaultSettings, ...raw } as AppSettings;
+    return {
+      ...defaultSettings,
+      ...raw,
+      webSearch: normalizeWebSearch(raw.webSearch),
+    } as AppSettings;
   } catch {
     return null;
   }

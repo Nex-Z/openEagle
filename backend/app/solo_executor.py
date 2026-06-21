@@ -292,7 +292,8 @@ class SoloExecutor:
         if self._default_tools is not None:
             if action == "web_search":
                 query = str(action_args.get("query", "")).strip()
-                max_results = int(action_args.get("max_results", 5))
+                raw_max_results = action_args.get("max_results")
+                max_results = int(raw_max_results) if raw_max_results is not None else None
                 if not query:
                     raise ValueError("web_search requires non-empty query")
                 result = self._default_tools.web_search(query, max_results)

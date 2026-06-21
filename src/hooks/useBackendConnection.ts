@@ -56,6 +56,26 @@ function createId(prefix: string) {
   return `${prefix}-${crypto.randomUUID()}`;
 }
 
+function buildConversationHistory(messages: ChatMessage[], turnLimit: number) {
+  const limit = Math.max(1, Math.min(200, Math.round(turnLimit)));
+  return messages
+    .filter(
+      (message) =>
+        (message.role === "user" || message.role === "assistant") &&
+        message.status !== "pending" &&
+        message.status !== "error" &&
+        message.content.trim(),
+    )
+    .slice(-(limit * 2))
+    .map((message) => ({
+      id: message.id,
+      requestId: message.requestId ?? "",
+      role: message.role as "user" | "assistant",
+      content: message.content,
+      createdAt: message.createdAt,
+    }));
+}
+
 function isTerminalSoloState(state: SoloRunState) {
   return terminalSoloStates.has(state);
 }
@@ -1787,11 +1807,19 @@ export function useBackendConnection(
       },
     ]);
 
-    const envelope: Envelope<{ content: string; attachments?: AttachmentRef[] }> = {
+    const history = buildConversationHistory(
+      messages,
+      settings.context.conversationTurnLimit,
+    );
+    const envelope: Envelope<{
+      content: string;
+      attachments?: AttachmentRef[];
+      history?: ReturnType<typeof buildConversationHistory>;
+    }> = {
       type: "client:send_message",
       requestId,
       conversationId,
-      payload: { content, attachments },
+      payload: { content, attachments, history },
       timestamp: now,
     };
 
@@ -1799,7 +1827,7 @@ export function useBackendConnection(
     setStatusLine("AI 正在思考");
     setStatusDetail("请求已发送，等待模型开始生成。");
     return { ok: true, requestId };
-  }, [conversationId]);
+  }, [conversationId, messages, settings.context.conversationTurnLimit]);
 
   const pauseSolo = useCallback(() => sendSoloControl({ action: "pause" }), [sendSoloControl]);
   const resumeSolo = useCallback(() => sendSoloControl({ action: "resume" }), [sendSoloControl]);

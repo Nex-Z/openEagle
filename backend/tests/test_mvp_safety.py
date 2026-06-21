@@ -49,6 +49,7 @@ from app.solo_service import (
 )
 from app.solo_toolkit import SoloToolkit
 from app.subagent_manager import SubAgentManager
+from app.subagent_models import WorkerReport
 
 
 class SafetyAssessmentTest(unittest.TestCase):
@@ -1177,6 +1178,28 @@ class SubAgentManagerTest(unittest.TestCase):
 
         self.assertIn("当前日期时间", prompt)
         self.assertIn("不要反问用户今天是周几", prompt)
+
+    def test_worker_prompt_contains_persistent_conversation_and_previous_report(self) -> None:
+        manager = SubAgentManager()
+        task = manager.create_or_reuse("conv", AgentRouter.heuristic("继续修上下文"))
+        task.last_report = WorkerReport(
+            worker_id=task.worker_id,
+            worker_kind=task.worker_kind,
+            state="completed",
+            title=task.title,
+            summary="已定位问题",
+            result="上次已经完成 SQLite 表设计。",
+        )
+
+        prompt = SubAgentManager._build_worker_prompt(
+            task,
+            conversation_context="用户: 客户端重启后也要能继续。",
+        )
+
+        self.assertIn("最近会话上下文", prompt)
+        self.assertIn("客户端重启后也要能继续", prompt)
+        self.assertIn("该 worker 上次交付", prompt)
+        self.assertIn("SQLite 表设计", prompt)
 
     def test_worker_detects_tool_errors_for_agent_feedback(self) -> None:
         trace = ReplyTrace(

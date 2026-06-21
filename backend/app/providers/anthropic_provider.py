@@ -222,6 +222,7 @@ class AnthropicAgentProvider:
             conversation_id=self._conversation_id or conversation_id,
             permission_mode=self._config.permissions.mode,
             builtin_tools=[bt.model_dump() for bt in self._config.builtin_tools],
+            web_search_config=self._config.web_search,
             attachment_store=self._attachment_store,
             memory_service=self._memory_service,
         )
