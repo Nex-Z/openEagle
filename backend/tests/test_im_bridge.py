@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import unittest
 from datetime import UTC, datetime, timedelta
@@ -811,9 +812,18 @@ class WechatOutboundContextTest(unittest.IsolatedAsyncioTestCase):
             account_id = "wx-account"
             base_url = "https://example.test"
 
-        async def fake_send(to, text, opts):
-            sent.append((to, text, opts.context_token))
-            return {"messageId": "message-1"}
+        async def fake_send(**kwargs):
+            body = json.loads(kwargs["body"])
+            sent.append(
+                (
+                    body["msg"]["to_user_id"],
+                    body["msg"]["item_list"][0]["text_item"]["text"],
+                    body["msg"].get("context_token"),
+                    kwargs["base_url"],
+                    kwargs["token"],
+                )
+            )
+            return '{"ret":0}'
 
         adapter = WechatAdapter(
             WechatConfig(enabled=True, accountId="wx-account"),
@@ -837,12 +847,96 @@ class WechatOutboundContextTest(unittest.IsolatedAsyncioTestCase):
                 "wechat_clawbot.messaging.inbound.get_context_token",
                 lambda account_id, user_id: "ctx-restored",
             ),
-            patch("wechat_clawbot.messaging.send.send_message_weixin", fake_send),
+            patch("wechat_clawbot.api.client._api_post_fetch", fake_send),
         ):
             await adapter._send_plain_text(source, "测试消息")
 
         self.assertEqual(restored, ["wx-account"])
-        self.assertEqual(sent, [("wx-user", "测试消息", "ctx-restored")])
+        self.assertEqual(
+            sent,
+            [
+                (
+                    "wx-user",
+                    "测试消息",
+                    "ctx-restored",
+                    "https://example.test",
+                    "token",
+                )
+            ],
+        )
+
+    async def test_send_raises_for_business_error_response(self) -> None:
+        statuses = []
+
+        class FakeAccount:
+            configured = True
+            token = "token"
+            account_id = "wx-account"
+            base_url = "https://example.test"
+
+        async def fake_send(**_kwargs):
+            return '{"ret":0,"errcode":45015,"errmsg":"context expired"}'
+
+        adapter = WechatAdapter(
+            WechatConfig(enabled=True, accountId="wx-account"),
+            on_event=lambda *_args: _record_async([], ()),
+            on_status=lambda status: _record_async(statuses, status),
+        )
+        adapter._account = FakeAccount()
+        source = IMMessageSource(
+            channel="wechat",
+            chat_id="wx-user",
+            chat_type="private",
+            user_id="wx-user",
+        )
+
+        with (
+            patch("wechat_clawbot.messaging.inbound.restore_context_tokens", lambda *_args: None),
+            patch("wechat_clawbot.messaging.inbound.get_context_token", lambda *_args: "ctx"),
+            patch("wechat_clawbot.api.client._api_post_fetch", fake_send),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "context expired"):
+                await adapter._send_plain_text(source, "测试消息")
+
+        self.assertEqual(statuses[-1].provider, "wechat")
+        self.assertEqual(statuses[-1].state, "error")
+        self.assertIn("context expired", statuses[-1].detail)
+
+    async def test_send_ret_minus_two_has_actionable_detail(self) -> None:
+        statuses = []
+
+        class FakeAccount:
+            configured = True
+            token = "token"
+            account_id = "wx-account"
+            base_url = "https://example.test"
+
+        async def fake_send(**_kwargs):
+            return '{"ret":-2}'
+
+        adapter = WechatAdapter(
+            WechatConfig(enabled=True, accountId="wx-account"),
+            on_event=lambda *_args: _record_async([], ()),
+            on_status=lambda status: _record_async(statuses, status),
+        )
+        adapter._account = FakeAccount()
+        source = IMMessageSource(
+            channel="wechat",
+            chat_id="wx-user",
+            chat_type="private",
+            user_id="wx-user",
+        )
+
+        with (
+            patch("wechat_clawbot.messaging.inbound.restore_context_tokens", lambda *_args: None),
+            patch("wechat_clawbot.messaging.inbound.get_context_token", lambda *_args: "ctx"),
+            patch("wechat_clawbot.api.client._api_post_fetch", fake_send),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "刷新会话"):
+                await adapter._send_plain_text(source, "测试消息")
+
+        self.assertIn("ret=-2", statuses[-1].detail)
+        self.assertIn("重新扫码绑定", statuses[-1].detail)
 
 
 class WechatBindTest(unittest.IsolatedAsyncioTestCase):

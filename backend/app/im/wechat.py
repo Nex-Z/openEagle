@@ -3,10 +3,12 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import json
 import os
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
 from ..config import WechatConfig
 from .models import IMEvent, IMMessageSource, IMOutboundMessage, IMStatus
@@ -19,6 +21,62 @@ DEFAULT_WECHAT_BASE_URL = "https://ilinkai.weixin.qq.com"
 DEFAULT_WECHAT_BOT_TYPE = "3"
 WECHAT_LONG_POLL_TIMEOUT_MS = 35_000
 WECHAT_RETRY_DELAY_SECONDS = 3
+
+
+def _wechat_response_error(raw_text: str) -> str | None:
+    raw_text = raw_text.strip()
+    if not raw_text:
+        return None
+    try:
+        payload = json.loads(raw_text)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+
+    def failed(value: Any) -> bool:
+        if value is None:
+            return False
+        if isinstance(value, bool):
+            return not value
+        if isinstance(value, (int, float)):
+            return value != 0
+        if isinstance(value, str):
+            normalized = value.strip().lower()
+            return normalized not in {"", "0", "ok", "success", "succeeded"}
+        return False
+
+    for key in ("ret", "errcode", "code"):
+        value = payload.get(key)
+        if failed(value):
+            raw_message = (
+                payload.get("errmsg")
+                or payload.get("message")
+                or payload.get("msg")
+                or ""
+            )
+            if str(value).strip() == "-2":
+                return (
+                    "微信 iLink 拒绝发送（ret=-2，通常是会话上下文过期或频率限制）。"
+                    "请先在微信里给 openEagle 发一条消息刷新会话，再重试；"
+                    f"如果仍失败，请重新扫码绑定。原始返回: {raw_text}"
+                )
+            message = (
+                raw_message
+                or raw_text
+            )
+            return f"{key}={value} {message}".strip()
+
+    success = payload.get("success")
+    if isinstance(success, bool) and not success:
+        message = (
+            payload.get("errmsg")
+            or payload.get("message")
+            or payload.get("msg")
+            or raw_text
+        )
+        return str(message)
+    return None
 
 
 def ensure_open_eagle_clawbot_state_dir() -> Path:
@@ -309,9 +367,23 @@ class WechatAdapter:
             await self._emit_status("error", "微信 ClawBot 凭据未找到，请重新扫码绑定。")
             raise RuntimeError("微信 ClawBot 凭据未找到，请重新扫码绑定。")
         try:
-            from wechat_clawbot.api.client import WeixinApiOptions
+            from wechat_clawbot.api.client import (
+                DEFAULT_API_TIMEOUT_MS,
+                WeixinApiOptions,
+                _api_post_fetch,
+                _build_base_info,
+                _dataclass_to_dict,
+            )
+            from wechat_clawbot.api.types import (
+                MessageItem,
+                MessageItemType,
+                MessageState,
+                MessageType,
+                SendMessageReq,
+                TextItem,
+                WeixinMessage,
+            )
             from wechat_clawbot.messaging.inbound import get_context_token, restore_context_tokens
-            from wechat_clawbot.messaging.send import send_message_weixin
         except ImportError as exc:
             await self._emit_status("error", "缺少 wechat-clawbot 依赖，请先同步后端依赖。")
             raise RuntimeError("缺少 wechat-clawbot 依赖，请先同步后端依赖。") from exc
@@ -322,7 +394,37 @@ class WechatAdapter:
             token=account.token,
             context_token=get_context_token(account.account_id, source.user_id),
         )
-        await send_message_weixin(source.user_id, text, opts)
+        client_id = f"open-eagle-{uuid4().hex}"
+        req = SendMessageReq(
+            msg=WeixinMessage(
+                from_user_id="",
+                to_user_id=source.user_id,
+                client_id=client_id,
+                message_type=MessageType.BOT,
+                message_state=MessageState.FINISH,
+                item_list=[
+                    MessageItem(
+                        type=MessageItemType.TEXT,
+                        text_item=TextItem(text=text),
+                    )
+                ],
+                context_token=opts.context_token or None,
+            )
+        )
+        body = _dataclass_to_dict(req)
+        body["base_info"] = _build_base_info()
+        raw_response = await _api_post_fetch(
+            base_url=opts.base_url,
+            endpoint="ilink/bot/sendmessage",
+            body=json.dumps(body),
+            token=opts.token,
+            timeout_ms=opts.timeout_ms or DEFAULT_API_TIMEOUT_MS,
+            label="sendMessage",
+        )
+        response_error = _wechat_response_error(raw_response)
+        if response_error:
+            await self._emit_status("error", f"微信发送失败: {response_error}")
+            raise RuntimeError(f"微信发送失败: {response_error}")
 
     def _resolve_account(self) -> Any:
         ensure_open_eagle_clawbot_state_dir()
