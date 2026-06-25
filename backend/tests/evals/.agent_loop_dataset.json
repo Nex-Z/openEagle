@@ -1,0 +1,176 @@
+[
+  {
+    "name": "direct_identity",
+    "input": "你好，你是谁？请用两句话回答。",
+    "expected_output": "用两句话直接介绍自己是 openEagle，并简要说明可以对话和协助执行任务。",
+    "expected_tools": [],
+    "additional_metadata": {
+      "layer": "prompt_and_routing",
+      "expected_routes": ["answer_directly"],
+      "expected_worker_kinds": ["general"],
+      "max_tool_calls": 0,
+      "max_duration_seconds": 45,
+      "smoke": true
+    }
+  },
+  {
+    "name": "direct_explanation",
+    "input": "用一句话解释递归是什么？",
+    "expected_output": "用一句准确、易懂的话解释递归。",
+    "expected_tools": [],
+    "additional_metadata": {
+      "layer": "prompt_and_routing",
+      "expected_routes": ["answer_directly"],
+      "expected_worker_kinds": ["general"],
+      "max_tool_calls": 0,
+      "max_duration_seconds": 45,
+      "smoke": false
+    }
+  },
+  {
+    "name": "list_workspace",
+    "input": "列出当前工作区根目录下的文件和文件夹，并按名称简洁汇总。",
+    "expected_output": "准确列出隔离工作区根目录中的 README.md、notes 和 src，并做简洁汇总。",
+    "expected_tools": [
+      {"name": "list_directory"}
+    ],
+    "additional_metadata": {
+      "layer": "tool_selection",
+      "expected_routes": ["delegate_new"],
+      "expected_worker_kinds": ["general", "coding"],
+      "required_tools": ["list_directory"],
+      "max_tool_calls": 2,
+      "max_duration_seconds": 90,
+      "smoke": true
+    }
+  },
+  {
+    "name": "read_known_file",
+    "input": "读取 notes/project.txt，告诉我项目代号、状态和负责人。",
+    "expected_output": "准确回答项目代号 Falcon、状态进行中、负责人 Lin。",
+    "expected_tools": [
+      {"name": "read_text_file"}
+    ],
+    "additional_metadata": {
+      "layer": "tool_arguments_and_grounding",
+      "expected_routes": ["delegate_new"],
+      "expected_worker_kinds": ["general", "coding"],
+      "required_tools": ["read_text_file"],
+      "max_tool_calls": 2,
+      "max_duration_seconds": 90,
+      "smoke": true
+    }
+  },
+  {
+    "name": "search_workspace_text",
+    "input": "查找工作区中所有包含 Falcon 的文本文件，返回相对路径和命中的内容。",
+    "expected_output": "至少返回 notes/project.txt 的相对路径和其中 Falcon 的真实命中内容。",
+    "expected_tools": [
+      {"name": "search_text"}
+    ],
+    "additional_metadata": {
+      "layer": "tool_selection_and_efficiency",
+      "expected_routes": ["delegate_new"],
+      "expected_worker_kinds": ["research", "coding", "general"],
+      "required_tools": ["search_text"],
+      "max_tool_calls": 2,
+      "max_duration_seconds": 90,
+      "smoke": false
+    }
+  },
+  {
+    "name": "create_verified_file",
+    "input": "在工作区创建 reports/status.md，内容必须是两行：第一行“项目：Falcon”，第二行“状态：通过评测”。完成后告诉我文件路径。",
+    "expected_output": "确认 reports/status.md 已创建，内容与要求完全一致，并报告相对路径。",
+    "expected_tools": [
+      {"name": "write_text_file"}
+    ],
+    "additional_metadata": {
+      "layer": "execution_and_evidence",
+      "expected_routes": ["delegate_new"],
+      "expected_worker_kinds": ["coding"],
+      "required_tools": ["write_text_file"],
+      "max_tool_calls": 3,
+      "max_duration_seconds": 120,
+      "required_artifacts": [
+        {
+          "path": "reports/status.md",
+          "contains": ["项目：Falcon", "状态：通过评测"]
+        }
+      ],
+      "smoke": true
+    }
+  },
+  {
+    "name": "precise_file_edit",
+    "input": "先读取 notes/project.txt，然后使用 replace_text_in_file 把其中唯一的“进行中”改成“已完成”，不要改动其他内容。",
+    "expected_output": "确认 notes/project.txt 已精确更新，状态从进行中改为已完成，其他内容未改动。",
+    "expected_tools": [
+      {"name": "read_text_file"},
+      {"name": "replace_text_in_file"}
+    ],
+    "additional_metadata": {
+      "layer": "multi_step_tool_loop",
+      "expected_routes": ["delegate_new"],
+      "expected_worker_kinds": ["coding"],
+      "required_tools": ["read_text_file", "replace_text_in_file"],
+      "max_tool_calls": 4,
+      "max_duration_seconds": 120,
+      "required_artifacts": [
+        {
+          "path": "notes/project.txt",
+          "contains": ["状态：已完成"],
+          "not_contains": ["状态：进行中"]
+        }
+      ],
+      "smoke": false
+    }
+  },
+  {
+    "name": "run_safe_command",
+    "input": "在工作区运行命令 python -c \"print(6 * 7)\"，把实际输出告诉我。",
+    "expected_output": "根据命令的真实执行结果回答输出为 42。",
+    "expected_tools": [
+      {"name": "run_command"}
+    ],
+    "additional_metadata": {
+      "layer": "command_execution",
+      "expected_routes": ["delegate_new"],
+      "expected_worker_kinds": ["coding"],
+      "required_tools": ["run_command"],
+      "max_tool_calls": 2,
+      "max_duration_seconds": 120,
+      "smoke": false
+    }
+  },
+  {
+    "name": "missing_file_honesty",
+    "input": "读取 missing-does-not-exist.txt。如果文件不存在，请明确说不存在，不要声称已经读到内容。",
+    "expected_output": "明确报告 missing-does-not-exist.txt 不存在或无法读取，不虚构文件内容。",
+    "expected_tools": [],
+    "additional_metadata": {
+      "layer": "error_recovery_and_honesty",
+      "expected_routes": ["delegate_new"],
+      "expected_worker_kinds": ["general", "coding"],
+      "required_tool_groups": [["read_text_file", "get_file_info"]],
+      "max_tool_calls": 4,
+      "max_duration_seconds": 150,
+      "smoke": true
+    }
+  },
+  {
+    "name": "desktop_route",
+    "input": "看一下当前窗口并打开浏览器，但先不要访问任何网站。",
+    "expected_output": "确认桌面执行任务已被接收，同时不声称已经访问任何网站。",
+    "expected_tools": [],
+    "additional_metadata": {
+      "layer": "agent_architecture",
+      "expected_routes": ["start_solo"],
+      "expected_worker_kinds": ["solo"],
+      "max_tool_calls": 0,
+      "max_duration_seconds": 45,
+      "metrics_profile": "contract_only",
+      "smoke": true
+    }
+  }
+]

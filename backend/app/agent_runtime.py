@@ -13,6 +13,11 @@ from .conversation_context import ConversationContextService
 from .langgraph_agent import run_text_model
 from .models import AttachmentRef, StatusPayload, utc_now
 from .memory import MemoryService
+from .observability import (
+    trace_agent_request,
+    update_current_observation,
+    update_observation,
+)
 from .paths import resolve_workspace_root
 from .prompts import build_direct_answer_instructions, build_direct_answer_prompt
 from .providers.base import ReplyToolConfirmation, ReplyTrace
@@ -69,6 +74,53 @@ class AgentRuntime:
         self._recent_conversation: dict[str, list[tuple[str, str]]] = {}
 
     async def handle_user_message(
+        self,
+        conversation_id: str,
+        request_id: str,
+        content: str,
+        attachments: list[AttachmentRef] | None = None,
+        preferred_mode: str | None = None,
+        history: list[dict[str, Any]] | None = None,
+    ) -> str:
+        source = (
+            "solo"
+            if preferred_mode == "solo"
+            else "remote"
+            if conversation_id.startswith("im_")
+            else "chat"
+        )
+        with trace_agent_request(
+            name="open-eagle.chat-message",
+            request_id=request_id,
+            conversation_id=conversation_id,
+            input=content,
+            source=source,
+            metadata={
+                "attachmentCount": len(attachments or []),
+                "preferredMode": preferred_mode or "",
+            },
+            tags=["main-agent"],
+        ) as observation:
+            try:
+                reply = await self._handle_user_message(
+                    conversation_id,
+                    request_id,
+                    content,
+                    attachments=attachments,
+                    preferred_mode=preferred_mode,
+                    history=history,
+                )
+            except Exception as exc:
+                update_observation(
+                    observation,
+                    level="ERROR",
+                    status_message=str(exc),
+                )
+                raise
+            update_observation(observation, output=reply)
+            return reply
+
+    async def _handle_user_message(
         self,
         conversation_id: str,
         request_id: str,
@@ -144,6 +196,14 @@ class AgentRuntime:
             recent_tasks=self._subagents.recent_tasks(conversation_id),
             memory_context=memory_context,
             conversation_context=recent_context,
+        )
+        update_current_observation(
+            metadata={
+                "route": decision.route,
+                "workerKind": decision.worker_kind,
+                "requiresWrite": decision.requires_write,
+                "requiresGui": decision.requires_gui,
+            }
         )
         if prepared_attachments and decision.route == "answer_directly":
             decision.route = "delegate_new"

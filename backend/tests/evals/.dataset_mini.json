@@ -1,0 +1,18 @@
+[
+  {
+    "scenario": "User asks assistant to zip pre-2024 tax docs from Desktop for an audit.",
+    "expected_outcome": null,
+    "user_description": null,
+    "context": null,
+    "additional_metadata": {
+      "evolutions": [
+        "Concretizing"
+      ]
+    },
+    "comments": null,
+    "name": null,
+    "custom_column_key_values": null,
+    "turns": null,
+    "images_mapping": null
+  }
+]

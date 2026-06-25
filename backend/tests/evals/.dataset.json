@@ -1,0 +1,93 @@
+[
+  {
+    "scenario": "用户问一个简单问题",
+    "user_description": "用户想知道当前时间",
+    "expected_outcome": "助手直接回答当前时间，不调用工具",
+    "turns": [
+      {
+        "role": "user",
+        "content": "今天星期几？"
+      },
+      {
+        "role": "assistant",
+        "content": "今天是星期日。"
+      }
+    ]
+  },
+  {
+    "scenario": "用户要求创建工作文件",
+    "user_description": "用户想在工作区创建一个简单的笔记文件",
+    "expected_outcome": "助手使用工具创建文件并确认",
+    "turns": [
+      {
+        "role": "user",
+        "content": "帮我在工作区根目录创建一个 todo.md，写入\"- 完成评测\""
+      },
+      {
+        "role": "assistant",
+        "content": "好的，我来创建这个文件。"
+      },
+      {
+        "role": "user",
+        "content": "谢谢，再加一条\"- 整理代码\""
+      },
+      {
+        "role": "assistant",
+        "content": "已更新 todo.md，添加了新条目。"
+      }
+    ]
+  },
+  {
+    "scenario": "用户询问工作区文件列表",
+    "user_description": "用户想看工作区有哪些文件",
+    "expected_outcome": "助手使用 list_directory 工具列出文件",
+    "turns": [
+      {
+        "role": "user",
+        "content": "帮我看看工作区根目录下有哪些文件和文件夹"
+      },
+      {
+        "role": "assistant",
+        "content": "我来查看一下。"
+      }
+    ]
+  },
+  {
+    "scenario": "用户问闲聊问题",
+    "user_description": "用户想聊天，不需要工具",
+    "expected_outcome": "助手直接回答，不调用任何工具",
+    "turns": [
+      {
+        "role": "user",
+        "content": "你好，你能做什么？"
+      },
+      {
+        "role": "assistant",
+        "content": "你好！我是 openEagle 桌面助手..."
+      },
+      {
+        "role": "user",
+        "content": "Python 和 JavaScript 哪个更适合初学者？"
+      },
+      {
+        "role": "assistant",
+        "content": "两者各有优势..."
+      }
+    ]
+  },
+  {
+    "scenario": "用户要求读取文件内容",
+    "user_description": "用户想查看工作区某个配置文件",
+    "expected_outcome": "助手读取文件并展示内容",
+    "turns": [
+      {
+        "role": "user",
+        "content": "帮我读一下 CLAUDE.md 的内容"
+      },
+      {
+        "role": "assistant",
+        "content": "好的，我来读取这个文件。"
+      }
+    ]
+  }
+]

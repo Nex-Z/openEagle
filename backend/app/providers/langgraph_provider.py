@@ -229,6 +229,11 @@ class LangGraphAgentProvider:
         selected_skills: list[SkillConfig],
         preserve_anthropic_image_blocks: bool = False,
     ) -> LangGraphToolAgent:
+        active_workspace_root = (
+            self._attachment_store.workspace_root
+            if self._attachment_store is not None
+            else workspace_root()
+        )
         instructions = build_chat_instructions(
             conversation_id=conversation_id,
             selected_tools=selected_tools,
@@ -237,7 +242,7 @@ class LangGraphAgentProvider:
         )
 
         default_tool_set = default_tools.build_default_tools(
-            workspace_root=workspace_root(),
+            workspace_root=active_workspace_root,
             confirmation_store=self._confirmation_store,
             request_id=self._request_id,
             conversation_id=self._conversation_id or conversation_id,
@@ -251,7 +256,7 @@ class LangGraphAgentProvider:
             instructions.append(default_tool_set.instructions)
         configured_tools, configured_name_map = default_tools.build_configured_tools(
             self._config.tools,
-            workspace_root=workspace_root(),
+            workspace_root=active_workspace_root,
             confirmation_store=self._confirmation_store,
             request_id=self._request_id,
             conversation_id=self._conversation_id or conversation_id,

@@ -18,6 +18,7 @@ from ..confirmations import ToolConfirmationStore
 from ..context_cleanup import compact_messages_for_prompt_with_ai
 from ..memory import MemoryService
 from ..models import AttachmentRef
+from ..observability import trace_tool, update_observation
 from ..paths import resolve_workspace_root
 from ..prompts import build_chat_instructions
 from ..token_usage import record_model_usage
@@ -276,14 +277,24 @@ class AnthropicAgentProvider:
         tool_name: str,
         tool_input: dict[str, Any],
     ) -> str:
-        tool = function_map.get(tool_name)
-        if tool is None:
-            return f"Error: tool '{tool_name}' not found"
-        try:
-            result = tool.invoke(tool_input)
-            return str(result) if result is not None else ""
-        except Exception as exc:
-            return f"Error: {exc}"
+        with trace_tool(tool_name, tool_input) as tool_observation:
+            tool = function_map.get(tool_name)
+            if tool is None:
+                result_text = f"Error: tool '{tool_name}' not found"
+            else:
+                try:
+                    result = tool.invoke(tool_input)
+                    result_text = str(result) if result is not None else ""
+                except Exception as exc:
+                    result_text = f"Error: {exc}"
+            is_error = result_text.startswith("Error:")
+            update_observation(
+                tool_observation,
+                output=result_text,
+                level="ERROR" if is_error else "DEFAULT",
+                status_message=result_text if is_error else None,
+            )
+            return result_text
 
     # ------------------------------------------------------------------
     # Attachment handling

@@ -226,6 +226,20 @@ Key settings (accessible from the in-app Settings panel):
 
 Model settings, web-search credentials, IM, context, and UI preferences are saved in the local `.open-eagle/settings.json`. MCP and Skill definitions are file-backed so they can be reviewed, copied between machines, or versioned separately from runtime preferences. The Tavily API key is never written to `.open-eagle/mcp.json`. Older `settings.json` files that still contain `mcp` or `skills` arrays are migrated automatically on startup.
 
+### Langfuse tracing
+
+The Python backend includes optional Langfuse tracing for main-agent requests, solo desktop runs, OpenAI/OpenAI-compatible and Anthropic generations, token usage, latency, errors, and nested tool calls. Configure credentials in the environment before starting openEagle:
+
+```powershell
+$env:LANGFUSE_PUBLIC_KEY = "pk-lf-..."
+$env:LANGFUSE_SECRET_KEY = "sk-lf-..."
+$env:LANGFUSE_BASE_URL = "https://us.cloud.langfuse.com"
+$env:LANGFUSE_TRACING_ENVIRONMENT = "development"
+pnpm electron:dev
+```
+
+Conversation IDs are pseudonymized before being used as Langfuse session IDs. Raw prompts, replies, tool payloads, screenshots, and attachment contents are not exported by default; traces retain model, token, latency, route, size, and hierarchy information. Set `LANGFUSE_CAPTURE_CONTENT=true` only when the project data policy allows redacted content capture. `LANGFUSE_SAMPLE_RATE` controls sampling, and `LANGFUSE_TRACING_ENABLED=false` disables tracing without code changes.
+
 ## Tools, MCP & Skills
 
 openEagle's capabilities don't stop at the built-ins. Three extension mechanisms let you customize everything from what the agent *can do* to *how it does it*.

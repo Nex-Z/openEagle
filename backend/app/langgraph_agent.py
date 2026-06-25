@@ -17,11 +17,16 @@ from langchain_core.utils.function_calling import convert_to_openai_tool
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, StateGraph
 from langgraph.prebuilt import ToolNode
-from openai import AsyncOpenAI
 
 from .config import AgentConfig, ContextConfig
 from .context_cleanup import compact_messages_for_prompt_with_ai
 from .models import AttachmentRef
+from .observability import (
+    AsyncOpenAI,
+    openai_observation_kwargs,
+    trace_tool,
+    update_observation,
+)
 from .token_usage import record_model_usage
 
 MAX_TOOL_ROUNDS = 100
@@ -473,6 +478,20 @@ class LangGraphToolAgent:
         tool_schemas = [convert_to_openai_tool(tool) for tool in self.tools]
         if tool_schemas:
             request["tools"] = tool_schemas
+        request.update(
+            openai_observation_kwargs(
+                "agent-model",
+                metadata={
+                    "provider": (
+                        self.agent_config.vl_provider
+                        if self.vision
+                        else self.agent_config.provider
+                    ),
+                    "vision": self.vision,
+                    "toolCount": len(tool_schemas),
+                },
+            )
+        )
         if state.get("stream_model"):
             content, tool_calls = await self._stream_chat_completion(request)
         else:
@@ -597,15 +616,23 @@ class LangGraphToolAgent:
                 )
             )
             self._write_stream_event(traces[-1])
-            tool_message = await self._invoke_single_tool(messages, tool_call)
-            if tool_message is not None:
-                tool_messages.append(tool_message)
-            if tool_message is None:
-                result_text = f"Error: tool '{name}' did not return a result"
-                status = "error"
-            else:
-                result_text = stringify_tool_result(tool_message.content)
-                status = "error" if result_text.startswith("Error:") else "completed"
+            kind = "mcp" if name.startswith("mcp_") else "tool"
+            with trace_tool(display_name, arguments, kind=kind) as tool_observation:
+                tool_message = await self._invoke_single_tool(messages, tool_call)
+                if tool_message is not None:
+                    tool_messages.append(tool_message)
+                if tool_message is None:
+                    result_text = f"Error: tool '{name}' did not return a result"
+                    status = "error"
+                else:
+                    result_text = stringify_tool_result(tool_message.content)
+                    status = "error" if result_text.startswith("Error:") else "completed"
+                update_observation(
+                    tool_observation,
+                    output=result_text,
+                    level="ERROR" if status == "error" else "DEFAULT",
+                    status_message=result_text if status == "error" else None,
+                )
             if result_text.startswith("CONFIRMATION_REQUIRED "):
                 confirmation_id = result_text.split(" ", 1)[1].split(":", 1)[0].strip()
                 if confirmation_id:
@@ -644,6 +671,19 @@ class LangGraphToolAgent:
             "model": self.model_id,
             "messages": openai_messages,
         }
+        request.update(
+            openai_observation_kwargs(
+                "agent-final",
+                metadata={
+                    "provider": (
+                        self.agent_config.vl_provider
+                        if self.vision
+                        else self.agent_config.provider
+                    ),
+                    "vision": self.vision,
+                },
+            )
+        )
         if state.get("stream_model"):
             content, _ = await self._stream_chat_completion(request)
         else:

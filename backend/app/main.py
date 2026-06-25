@@ -41,6 +41,12 @@ from .models import (
     ToolConfirmationPayload,
     utc_now,
 )
+from .observability import (
+    shutdown_langfuse,
+    trace_agent_request,
+    trace_tool,
+    update_observation,
+)
 from .paths import resolve_workspace_root
 from .runtime_state import RuntimeState
 from .safety import assess_solo_action, is_repairable_solo_block
@@ -270,6 +276,11 @@ async def announce_ready() -> None:
     port = getattr(app.state, "ws_port", None)
     if port is not None:
         print(f"[AGENT_READY] WS_PORT: {port}", flush=True)
+
+
+@app.on_event("shutdown")
+async def shutdown_observability() -> None:
+    shutdown_langfuse()
 
 
 @app.get("/health")
@@ -673,13 +684,21 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             return {"success": False, "action": action, "executionError": "session not running"}
 
         try:
-            if action in {"run_configured_tool", "call_mcp_tool"} and solo_capabilities is not None:
-                execution_result = await solo_capabilities.execute_action_async(action, action_args)
-            else:
-                execution_result = await asyncio.to_thread(
-                    solo_tools.execute,
-                    action,
-                    action_args,
+            with trace_tool(action, action_args, kind="desktop_action") as action_observation:
+                if action in {"run_configured_tool", "call_mcp_tool"} and solo_capabilities is not None:
+                    execution_result = await solo_capabilities.execute_action_async(action, action_args)
+                else:
+                    execution_result = await asyncio.to_thread(
+                        solo_tools.execute,
+                        action,
+                        action_args,
+                    )
+                update_observation(
+                    action_observation,
+                    output={
+                        "success": bool(execution_result.get("success", True)),
+                        "hasScreenshot": isinstance(execution_result.get("screenshot"), dict),
+                    },
                 )
             if not is_solo_running(session):
                 return {"success": False, "action": action, "executionError": "session stopped"}
@@ -1515,19 +1534,36 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             if solo_service is None or active_solo is None or not is_solo_running(active_solo):
                 return
             try:
-                slog(
-                    f"request={active_solo.request_id} agent_loop starting "
-                    f"task={active_solo.task[:100]}"
-                )
-                solo_logger.write("agent_start", {"task": active_solo.task})
-                await emit_solo_trace(
-                    active_solo,
-                    "agent",
-                    "started",
-                    "Agent 开始自主决策执行任务...",
-                )
-                await emit_solo_status(active_solo)
-                await agent_loop(active_solo, active_solo.last_screenshot_path)
+                with trace_agent_request(
+                    name="open-eagle.solo-run",
+                    request_id=active_solo.request_id,
+                    conversation_id=active_solo.conversation_id,
+                    input=active_solo.task,
+                    source="solo",
+                    metadata={"displayIndex": active_solo.display_index},
+                    tags=["desktop-worker"],
+                ) as observation:
+                    slog(
+                        f"request={active_solo.request_id} agent_loop starting "
+                        f"task={active_solo.task[:100]}"
+                    )
+                    solo_logger.write("agent_start", {"task": active_solo.task})
+                    await emit_solo_trace(
+                        active_solo,
+                        "agent",
+                        "started",
+                        "Agent 开始自主决策执行任务...",
+                    )
+                    await emit_solo_status(active_solo)
+                    await agent_loop(active_solo, active_solo.last_screenshot_path)
+                    update_observation(
+                        observation,
+                        output={
+                            "state": active_solo.state,
+                            "stepCount": active_solo.step_count,
+                            "findingCount": len(active_solo.findings),
+                        },
+                    )
             except Exception as exc:  # noqa: BLE001
                 if active_solo is None or not is_solo_running(active_solo):
                     return

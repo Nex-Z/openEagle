@@ -18,11 +18,20 @@ dependencies = [
   "wechat-clawbot==0.3.0",
   "apscheduler>=3.11.0",
   "langgraph==1.2.1",
+  "deepeval>=4.0.7",
+  "langfuse>=4.9.1",
+  "opentelemetry-instrumentation-anthropic>=0.61.0",
 ]
 
 [project.optional-dependencies]
 build = [
   "pyinstaller>=6.13.0"
+]
+benchmark = [
+  "absl-py>=2.0.0",
+  "immutabledict>=4.2.0",
+  "langdetect>=1.0.9",
+  "nltk>=3.9.0",
 ]
 
 [build-system]
@@ -31,3 +40,9 @@ build-backend = "hatchling.build"
 
 [tool.hatch.build.targets.wheel]
 packages = ["app"]
+
+[tool.pytest.ini_options]
+markers = [
+  "agent_eval_live: runs live end-to-end agent evaluations against the configured model",
+  "independent_benchmark: runs implementation-independent black-box capability cases",
+]

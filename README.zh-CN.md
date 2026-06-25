@@ -226,6 +226,20 @@ openEagle 支持灵活的模型路由——main agent 文本对话和 Vision-Lan
 
 模型、联网搜索凭据、IM、上下文和界面偏好仍保存在本机 `.open-eagle/settings.json`。MCP 与 Skill 定义改为文件态存储，方便用户审阅、复制到其他机器，或单独纳入版本管理。Tavily API Key 不会写入 `.open-eagle/mcp.json`；旧版 `settings.json` 中已有的 `mcp` / `skills` 数组会在启动时自动迁移为文件。
 
+### Langfuse Tracing
+
+Python 后端已支持可选的 Langfuse tracing，覆盖 main agent 请求、桌面执行任务、OpenAI/OpenAI-compatible 与 Anthropic generation、token、延迟、错误和嵌套工具调用。启动 openEagle 前设置环境变量：
+
+```powershell
+$env:LANGFUSE_PUBLIC_KEY = "pk-lf-..."
+$env:LANGFUSE_SECRET_KEY = "sk-lf-..."
+$env:LANGFUSE_BASE_URL = "https://us.cloud.langfuse.com"
+$env:LANGFUSE_TRACING_ENVIRONMENT = "development"
+pnpm electron:dev
+```
+
+conversation ID 会先做不可逆哈希，再作为 Langfuse session ID。默认不会上传原始 prompt、回复、工具参数、截图或附件内容，只保留模型、token、延迟、路由、内容长度和调用层级等诊断信息。仅当项目的数据策略允许上传经脱敏的内容时，才设置 `LANGFUSE_CAPTURE_CONTENT=true`。可用 `LANGFUSE_SAMPLE_RATE` 控制采样率，也可设置 `LANGFUSE_TRACING_ENABLED=false` 无代码关闭 tracing。
+
 ## 工具、MCP 与 Skill
 
 openEagle 的能力不只是内置的。你可以通过三种机制扩展 Agent 的行为，从"能做什么"到"怎么做"全面定制。

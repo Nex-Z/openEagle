@@ -10,6 +10,7 @@ __pycache__/
 *.pyc
 backend/.venv/
 backend/.pytest_cache/
+backend/.deepeval/
 backend/dist/
 backend/binaries/
 build/open-eagle-agent/

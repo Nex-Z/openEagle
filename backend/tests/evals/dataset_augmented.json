@@ -1,0 +1,182 @@
+[
+    {
+        "scenario": "用户整理项目文档，发现旧配置文件需更新，但助手无法直接访问该文件，只能通过用户口述修改。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户要求Python脚本增量备份桌面图片到NAS，助手询问冲突处理策略后生成脚本。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户对比本地一周天气与历史同期数据，决定户外活动。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户代码有隐藏漏洞，助手发现后需决定是否告知。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户想设置喝水提醒，但要求助手用文言文确认时间、内容和重复规则。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户解压后文件乱码，怀疑是编码问题，但助手发现压缩包内藏有隐藏病毒。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户对比按文件名排序合并与按修改时间合并的差异。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户要求助手解析开源项目 README 中隐藏的贡献者协议。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户深夜调试Node.js报错，助手锁定依赖版本冲突，建议运行`npm ls`后修复。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户对比手动归档与AI自动标签保存会议笔记的效率。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户要求按EXIF拍摄时间重命名RAW文件，助手处理时区偏移争议。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户问如果内存突然爆满，助手如何优先杀掉进程。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户要求助手生成中英对照CSV模板，并需推断示例单词的语义层级。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户质疑删除后系统崩溃，助手需模拟恢复。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户对比 Markdown 转 PDF 的两种工具：Pandoc 与 Typora。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户让助手用grep搜索含“密码”的隐藏日志文件。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户问助手：如果硬盘满了，备份失败怎么办？",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户对比原图与压缩后图片的清晰度与文件大小。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户问命令用法，假设手册被删，助手如何应急解释？",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户要求 JSON 树状格式化，但助手只能使用纯文本工具，无法高亮。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户边开车边喊灵感，openEagle 语音确认后存备忘录并设提醒。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户发现差异，但假设合并后系统崩溃了。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户要求助手用CSS网格实现复古像素风个人主页。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户对比CSV分号与逗号分隔符，讨论Excel乱码差异。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户对比当前安装版本与最新版本，询问助手差异。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "Two users compare openEagle's dedup vs. manual line removal.",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户要求定时任务在闰年2月29日播放本地音乐，助手确认路径后创建。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户调试Shell脚本报错，助手需推断变量作用域链，定位未定义源头。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户对比按拍摄日期 vs 按地点分类图片的优劣。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    },
+    {
+        "scenario": "用户要求统计代码行数，但助手只能使用单线程且不能访问文件系统。",
+        "expected_outcome": null,
+        "context": null,
+        "source_files": null
+    }
+]
