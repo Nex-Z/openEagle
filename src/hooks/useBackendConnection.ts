@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke, listen, type UnlistenFn } from "../lib/electron-bridge";
-import { registerMemorySnapshotSender } from "../lib/storage";
 import { executionStateLabel, executionStatusLabel } from "../lib/runLabels";
 import type {
   AgentExecutionTrace,
@@ -636,28 +635,6 @@ export function useBackendConnection(
     socket.send(JSON.stringify(envelope));
     return true;
   }, [conversationId]);
-
-  const sendMemorySnapshot = useCallback((snapshot: {
-    reason: string;
-    content: string;
-    source: string;
-  }) => {
-    const socket = socketRef.current;
-    if (!socket || socket.readyState !== WebSocket.OPEN) {
-      return false;
-    }
-    const envelope: Envelope<typeof snapshot> = {
-      type: "client:memory_ingest_snapshot",
-      requestId: createId("memory-snapshot"),
-      conversationId,
-      payload: snapshot,
-      timestamp: new Date().toISOString(),
-    };
-    socket.send(JSON.stringify(envelope));
-    return true;
-  }, [conversationId]);
-
-  useEffect(() => registerMemorySnapshotSender(sendMemorySnapshot), [sendMemorySnapshot]);
 
   const appendSoloTimeline = (line: string) => {
     const stamped = `[${new Date().toLocaleTimeString()}] ${line}`;
@@ -1394,6 +1371,14 @@ export function useBackendConnection(
       if (envelope.type === "server:solo_step" && envelope.payload.step) {
         const step = envelope.payload.step;
         const visibleText = soloStepVisibleText(step);
+        // 消息卡片走 markdown 多行渲染，必须用 agent_message 原文，不能套用浮窗的 compactOverlayText
+        // （后者会把换行压成空格并截断到 120 字符，破坏最终汇报的完整内容和格式）。
+        const messageCardText =
+          step.agentMessage ||
+          step.expectedOutcome ||
+          step.screenState ||
+          step.visual?.displayText ||
+          "";
         activeSoloRequestIdRef.current = envelope.requestId;
         setSoloStep(step);
         appendSoloTimeline(
@@ -1402,7 +1387,7 @@ export function useBackendConnection(
         patchMessages((current) =>
           appendChatMessage(current, createChatMessage({
             role: "assistant",
-            content: visibleText,
+            content: messageCardText,
             createdAt: step.timestamp,
             requestId: envelope.requestId,
             mode: "solo",

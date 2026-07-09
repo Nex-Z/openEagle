@@ -1076,154 +1076,6 @@ function isConversationSummary(value: unknown): value is ConversationSummary {
   );
 }
 
-function isPersistedConversation(value: unknown): value is PersistedConversation {
-  if (!value || typeof value !== "object") {
-    return false;
-  }
-  const conversation = value as Partial<PersistedConversation>;
-  return isConversationSummary(conversation.summary) && Array.isArray(conversation.messages);
-}
-
-function loadLocalStorageConversations(): PersistedConversation[] {
-  try {
-    const raw = localStorage.getItem(CONVERSATIONS_KEY);
-    if (!raw) {
-      return [];
-    }
-
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    // Validate each conversation; skip corrupted ones.
-    return parsed.filter(isPersistedConversation).map(normalizePersistedConversation);
-  } catch {
-    return [];
-  }
-}
-
-let localStorageConversationCache: PersistedConversation[] | null = null;
-
-function getLocalStorageConversationCache() {
-  if (!localStorageConversationCache) {
-    localStorageConversationCache = loadLocalStorageConversations();
-  }
-  return localStorageConversationCache;
-}
-
-/** Last-resort compaction for browsers that hit localStorage quota. */
-function stripExecutionFields(msg: ChatMessage): ChatMessage {
-  if (!msg.traces && !msg.blocks && !msg.trace) {
-    return msg;
-  }
-  return {
-    ...msg,
-    traces: undefined,
-    blocks: undefined,
-    trace: undefined,
-  };
-}
-
-/** Estimate serialized size in bytes (rough UTF-8). */
-function estimateSize(obj: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(obj)).length;
-}
-
-/** Max localStorage budget: 4 MB (leave headroom under the ~5 MB limit). */
-const STORAGE_BUDGET = 4 * 1024 * 1024;
-type MemorySnapshotSender = (snapshot: {
-  reason: string;
-  content: string;
-  source: string;
-}) => void;
-
-let memorySnapshotSender: MemorySnapshotSender | null = null;
-
-export function registerMemorySnapshotSender(sender: MemorySnapshotSender | null) {
-  memorySnapshotSender = sender;
-  return () => {
-    if (memorySnapshotSender === sender) {
-      memorySnapshotSender = null;
-    }
-  };
-}
-
-function emitMemorySnapshot(reason: string, conversations: PersistedConversation[]) {
-  if (!memorySnapshotSender) {
-    return;
-  }
-  try {
-    memorySnapshotSender({
-      reason,
-      source: "storage_compaction",
-      content: JSON.stringify({
-        reason,
-        conversations,
-        capturedAt: new Date().toISOString(),
-      }),
-    });
-  } catch {
-    // Memory snapshots are best-effort and must not block storage recovery.
-  }
-}
-
-function saveLocalStorageConversations(
-  conversations: PersistedConversation[],
-) {
-  localStorageConversationCache = conversations;
-  const compacted = conversations.map((c) => ({
-    ...c,
-    messages: c.messages.map(compactMessageForStorage),
-  }));
-
-  try {
-    localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(compacted));
-    return;
-  } catch (err) {
-    if (!isQuotaExceeded(err)) {
-      console.warn("[storage] save failed (non-quota):", err);
-      return;
-    }
-    console.warn("[storage] quota exceeded, pruning…");
-  }
-
-  // Quota exceeded — progressively prune until it fits.
-  emitMemorySnapshot("localStorage quota pruning", compacted);
-  let pruned = compacted;
-
-  // Phase 1: drop execution blocks/traces from oldest conversations first.
-  for (let i = 0; i < pruned.length && estimateSize(pruned) > STORAGE_BUDGET; i++) {
-    pruned[i] = {
-      ...pruned[i],
-      messages: pruned[i].messages.map(stripExecutionFields),
-    };
-  }
-
-  // Phase 2: truncate long assistant content in oldest conversations
-  for (let i = 0; i < pruned.length && estimateSize(pruned) > STORAGE_BUDGET; i++) {
-    pruned[i] = {
-      ...pruned[i],
-      messages: pruned[i].messages.map((m) =>
-        m.role === "assistant" && m.content.length > 2000
-          ? { ...m, content: m.content.slice(0, 2000) + "\n…(truncated)" }
-          : m,
-      ),
-    };
-  }
-
-  // Phase 3: remove oldest conversations entirely
-  while (pruned.length > 1 && estimateSize(pruned) > STORAGE_BUDGET) {
-    pruned.shift();
-  }
-
-  try {
-    localStorage.setItem(CONVERSATIONS_KEY, JSON.stringify(pruned));
-  } catch (err) {
-    console.error("[storage] save failed even after pruning:", err);
-  }
-}
-
 function toConversationFilePayload(
   conversation: PersistedConversation,
 ): ConversationFilePayload {
@@ -1233,33 +1085,6 @@ function toConversationFilePayload(
     messages: conversation.messages.map(compactMessageForStorage),
     savedAt: new Date().toISOString(),
   };
-}
-
-function updateLocalStorageIndex(summaries: ConversationSummary[]) {
-  const cache = getLocalStorageConversationCache();
-  const byId = new Map(cache.map((conversation) => [conversation.summary.id, conversation]));
-  const next = summaries.map((summary) => ({
-    summary,
-    messages: byId.get(summary.id)?.messages ?? [],
-  }));
-  saveLocalStorageConversations(next);
-}
-
-function saveLocalStorageConversation(conversation: PersistedConversation) {
-  const cache = getLocalStorageConversationCache();
-  const index = cache.findIndex((item) => item.summary.id === conversation.summary.id);
-  const next =
-    index >= 0
-      ? cache.map((item, itemIndex) => (itemIndex === index ? conversation : item))
-      : [conversation, ...cache];
-  saveLocalStorageConversations(next);
-}
-
-function deleteLocalStorageConversation(conversationId: string) {
-  const next = getLocalStorageConversationCache().filter(
-    (conversation) => conversation.summary.id !== conversationId,
-  );
-  saveLocalStorageConversations(next);
 }
 
 async function saveConversationIndexFile(summaries: ConversationSummary[]) {
@@ -1277,44 +1102,11 @@ async function saveConversationFile(conversation: PersistedConversation) {
   });
 }
 
-async function migrateLocalStorageConversations() {
-  const legacyConversations = loadLocalStorageConversations();
-  if (legacyConversations.length === 0) {
-    return [];
-  }
-
-  const saved: PersistedConversation[] = [];
-  for (const conversation of legacyConversations) {
-    try {
-      await saveConversationFile(conversation);
-      saved.push(conversation);
-    } catch (err) {
-      console.warn(
-        `[storage] failed to migrate conversation ${conversation.summary.id}:`,
-        err,
-      );
-    }
-  }
-
-  if (saved.length > 0) {
-    await saveConversationIndexFile(saved.map((conversation) => conversation.summary));
-    localStorage.removeItem(CONVERSATIONS_KEY);
-  }
-  return saved;
-}
-
 async function loadFileConversations() {
   const index = await invoke<ConversationIndexFile>("load_conversation_index");
   const summaries = Array.isArray(index.conversations)
     ? index.conversations.filter(isConversationSummary)
     : [];
-
-  if (summaries.length === 0) {
-    const migrated = await migrateLocalStorageConversations();
-    if (migrated.length > 0) {
-      return migrated;
-    }
-  }
 
   const conversations: PersistedConversation[] = [];
   const recoveredConversations: PersistedConversation[] = [];
@@ -1346,70 +1138,43 @@ async function loadFileConversations() {
 }
 
 export async function loadPersistedConversations(): Promise<PersistedConversation[]> {
-  if (!isElectronRuntime()) {
-    const conversations = loadLocalStorageConversations();
-    localStorageConversationCache = conversations;
-    return conversations;
-  }
-
   try {
     return await loadFileConversations();
   } catch (err) {
     console.warn("[storage] failed to load file-backed conversations:", err);
     return [];
+  } finally {
+    // 清理历史 localStorage 会话残留（早期浏览器版本遗留，可能含配额降级截断的脏数据）。
+    // 文件持久化已成为唯一会话存储来源后，此 key 不再读写，一次性抹除避免占用配额或被误读。
+    try {
+      localStorage.removeItem(CONVERSATIONS_KEY);
+    } catch {
+      // 忽略：无 localStorage 或被禁用时静默跳过。
+    }
   }
 }
 
 export async function savePersistedConversationIndex(
   summaries: ConversationSummary[],
 ) {
-  if (!isElectronRuntime()) {
-    updateLocalStorageIndex(summaries);
-    return;
-  }
   await saveConversationIndexFile(summaries);
 }
 
 export async function savePersistedConversation(
   conversation: PersistedConversation,
 ) {
-  if (!isElectronRuntime()) {
-    saveLocalStorageConversation(conversation);
-    return;
-  }
   await saveConversationFile(conversation);
 }
 
 export async function deletePersistedConversation(conversationId: string) {
-  if (!isElectronRuntime()) {
-    deleteLocalStorageConversation(conversationId);
-    return;
-  }
   await invoke("delete_conversation_file", { conversationId });
 }
 
 export async function savePersistedConversations(
   conversations: PersistedConversation[],
 ) {
-  if (!isElectronRuntime()) {
-    saveLocalStorageConversations(conversations);
-    return;
-  }
   for (const conversation of conversations) {
     await saveConversationFile(conversation);
   }
   await saveConversationIndexFile(conversations.map((conversation) => conversation.summary));
-}
-
-function isQuotaExceeded(err: unknown): boolean {
-  if (err instanceof DOMException) {
-    // Chromium, Firefox, Safari
-    return (
-      err.code === 22 ||
-      err.code === 1014 ||
-      err.name === "QuotaExceededError" ||
-      err.name === "NS_ERROR_DOM_QUOTA_REACHED"
-    );
-  }
-  return false;
 }
