@@ -3485,9 +3485,17 @@ a {
   max-height: 170px;
   padding: 12px 12px;
   border-radius: var(--radius-card);
+  border-color: transparent;
   color: var(--text-primary);
   font-size: 14px;
   line-height: 1.55;
+}
+
+/* 去除输入框内部边框：聚焦反馈交给外层 .composer-frame:focus-within 提供 */
+.composer-input:focus-visible {
+  outline: none;
+  border-color: transparent;
+  box-shadow: none;
 }
 
 .composer-input::placeholder {
