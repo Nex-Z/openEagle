@@ -17,8 +17,6 @@
 
 > 当前处于项目早期阶段，可能还会有各种问题，欢迎来提 issue。
 
-![openEagle 演示](docs/demo.gif)
-
 ![openEagle 界面截图](docs/image.png)
 
 ## 为什么做这个
