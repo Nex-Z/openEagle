@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { convertFileSrc, invoke } from "../../lib/electron-bridge";
-import { ChevronDown, Feather, Mic, Monitor, SlidersHorizontal, Sparkles, Wrench, X } from "lucide-react";
+import { ChevronDown, Feather, Mic, Monitor, Search, SlidersHorizontal, Sparkles, Wrench, X } from "lucide-react";
 import QRCode from "qrcode";
 import { ThemeToggle } from "../ThemeToggle";
 import type {
@@ -21,19 +21,20 @@ import { SecretInput } from "./SecretInput";
 import { TokenUsagePanel } from "./TokenUsagePanel";
 
 export type SettingsSection =
-  | "general"
+  | "appearance"
+  | "quick_assistant"
   | "models"
   | "voice_input"
+  | "context"
   | "search"
   | "im"
-  | "quick_assistant"
-  | "solo"
-  | "tools"
   | "mcp"
+  | "solo"
+  | "scheduled_tasks"
+  | "tools"
   | "skills"
   | "usage"
-  | "memory"
-  | "scheduled_tasks";
+  | "memory";
 
 interface SettingsDrawerProps {
   open: boolean;
@@ -70,20 +71,31 @@ const sectionMeta: Array<{
   id: SettingsSection;
   title: string;
   summary: string;
+  group: "偏好" | "AI 与聊天" | "连接" | "自动化" | "扩展" | "数据";
 }> = [
-  { id: "general", title: "General", summary: "外观与基础体验。" },
-  { id: "models", title: "Models", summary: "文本模型和视觉模型接入。" },
-  { id: "voice_input", title: "语音输入", summary: "录音转文字与通义模型配置。" },
-  { id: "search", title: "联网搜索", summary: "Tavily 搜索服务与额度选项。" },
-  { id: "im", title: "IM", summary: "飞书、Telegram 与微信远程接入。" },
-  { id: "quick_assistant", title: "悬浮助理", summary: "快捷唤起、选区读取与截图上下文。" },
-  { id: "solo", title: "桌面执行", summary: "显示器预览与截图目标。" },
-  { id: "tools", title: "Tools", summary: "本地工具入口。" },
-  { id: "mcp", title: "MCP", summary: "MCP Server 配置。" },
-  { id: "skills", title: "Skills", summary: "提示技能配置。" },
-  { id: "usage", title: "Token 用量", summary: "模型调用与任务消耗。" },
-  { id: "memory", title: "Memory", summary: "用户画像、笔记与 Agent 个性。" },
-  { id: "scheduled_tasks", title: "定时任务", summary: "自动执行的任务管理与历史。" },
+  { id: "appearance", title: "外观", summary: "主题与界面体验。", group: "偏好" },
+  { id: "quick_assistant", title: "悬浮助理", summary: "快捷唤起与选区上下文。", group: "偏好" },
+  { id: "models", title: "模型", summary: "文本与视觉模型接入。", group: "AI 与聊天" },
+  { id: "voice_input", title: "语音输入", summary: "录音转文字与通义配置。", group: "AI 与聊天" },
+  { id: "context", title: "上下文", summary: "会话整理与保留策略。", group: "AI 与聊天" },
+  { id: "search", title: "联网搜索", summary: "Tavily 搜索服务。", group: "连接" },
+  { id: "im", title: "消息渠道", summary: "飞书、Telegram 与微信。", group: "连接" },
+  { id: "mcp", title: "MCP Servers", summary: "外部工具服务。", group: "连接" },
+  { id: "solo", title: "桌面执行", summary: "显示器与视觉执行。", group: "自动化" },
+  { id: "scheduled_tasks", title: "定时任务", summary: "自动运行与历史。", group: "自动化" },
+  { id: "tools", title: "Tools", summary: "本地命令工具。", group: "扩展" },
+  { id: "skills", title: "Skills", summary: "可复用行为指令。", group: "扩展" },
+  { id: "usage", title: "模型用量", summary: "调用与 token 统计。", group: "数据" },
+  { id: "memory", title: "长期记忆", summary: "用户画像、笔记与审计。", group: "数据" },
+];
+
+const settingsGroups: Array<(typeof sectionMeta)[number]["group"]> = [
+  "偏好",
+  "AI 与聊天",
+  "连接",
+  "自动化",
+  "扩展",
+  "数据",
 ];
 
 function createToolConfig(): ToolConfig {
@@ -492,6 +504,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
   const [expandedSkillId, setExpandedSkillId] = useState<string | null>(null);
   const [expandedMemoryNoteId, setExpandedMemoryNoteId] = useState<string | null>(null);
   const [expandedTaskId, setExpandedTaskId] = useState<string | null>(null);
+  const [settingsQuery, setSettingsQuery] = useState("");
   const [taskFormOpen, setTaskFormOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<ScheduledTask | null>(null);
   const [memoryDraft, setMemoryDraft] = useState<MemoryState>(memoryState);
@@ -710,6 +723,14 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
       : "disabled";
 
   const activeMeta = sectionMeta.find((section) => section.id === activeSection) ?? sectionMeta[0];
+  const normalizedSettingsQuery = settingsQuery.trim().toLowerCase();
+  const visibleSettings = sectionMeta.filter(
+    (section) =>
+      !normalizedSettingsQuery ||
+      [section.title, section.summary, section.group].some((value) =>
+        value.toLowerCase().includes(normalizedSettingsQuery),
+      ),
+  );
   const feishuStatus = imStatuses.feishu;
   const telegramStatus = imStatuses.telegram;
   const wechatStatus = imStatuses.wechat;
@@ -730,17 +751,37 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
           </div>
 
           <div className="settings-nav-list">
-            {sectionMeta.map((section) => (
-              <button
-                key={section.id}
-                className={section.id === activeSection ? "settings-nav-item is-active" : "settings-nav-item"}
-                onClick={() => onSectionChange(section.id)}
-                type="button"
-              >
-                <span>{section.title}</span>
-                <small>{section.summary}</small>
-              </button>
-            ))}
+            <label className="settings-nav-search">
+              <Search size={14} />
+              <input
+                onChange={(event) => setSettingsQuery(event.target.value)}
+                placeholder="搜索设置"
+                value={settingsQuery}
+              />
+            </label>
+            {settingsGroups.map((group) =>
+              visibleSettings.some((section) => section.group === group) ? (
+              <div className="settings-nav-group" key={group}>
+                <span>{group}</span>
+                {visibleSettings
+                  .filter((section) => section.group === group)
+                  .map((section) => (
+                    <button
+                      key={section.id}
+                      className={section.id === activeSection ? "settings-nav-item is-active" : "settings-nav-item"}
+                      onClick={() => onSectionChange(section.id)}
+                      type="button"
+                    >
+                      <span>{section.title}</span>
+                      <small>{section.summary}</small>
+                    </button>
+                  ))}
+              </div>
+              ) : null,
+            )}
+            {visibleSettings.length === 0 ? (
+              <div className="settings-nav-empty">没有匹配的设置。</div>
+            ) : null}
           </div>
         </div>
 
@@ -750,15 +791,19 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
               <p>{activeMeta.title}</p>
               <h2>{activeMeta.summary}</h2>
             </div>
-            <button className="icon-button" onClick={onClose} type="button">
-              <X size={16} />
-            </button>
+            <div className="settings-header-actions">
+              <span>自动保存到本机</span>
+              <button className="icon-button" onClick={onClose} type="button">
+                <X size={16} />
+              </button>
+            </div>
           </header>
 
           <div className="settings-content-scroll">
-            {activeSection === "general" ? (
+            {activeSection === "appearance" || activeSection === "context" ? (
               <div className="settings-stack two-column">
-                <section className="settings-panel">
+                {activeSection === "appearance" ? (
+                <section className="settings-panel" id="settings-appearance">
                   <div className="settings-panel-head">
                     <div>
                       <span className="card-kicker">界面</span>
@@ -776,8 +821,10 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
                     value={settings.appearance.themeMode}
                   />
                 </section>
+                ) : null}
 
-                <section className="settings-panel">
+                {activeSection === "context" ? (
+                <section className="settings-panel" id="settings-context">
                   <div className="settings-panel-head">
                     <div>
                       <span className="card-kicker">Context</span>
@@ -959,12 +1006,13 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
                     />
                   </label>
                 </section>
+                ) : null}
               </div>
             ) : null}
 
             {activeSection === "quick_assistant" ? (
               <div className="settings-stack">
-                <section className="settings-panel">
+                <section className="settings-panel" id="settings-quick-assistant">
                   <div className="settings-panel-head">
                     <div>
                       <span className="card-kicker">Quick Assistant</span>
@@ -1058,7 +1106,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
 
             {activeSection === "im" ? (
               <div className="settings-stack">
-                <section className="settings-panel">
+                <section className="settings-panel" id="settings-im">
                   <div className="settings-panel-head">
                     <div>
                       <span className="card-kicker">状态</span>
@@ -1401,7 +1449,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
             ) : null}
 
             {activeSection === "models" ? (
-              <div className="settings-stack two-column">
+              <div className="settings-stack two-column" id="settings-models">
                 <section className="settings-panel">
                   <div className="settings-panel-head">
                     <div>
@@ -1555,7 +1603,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
 
             {activeSection === "voice_input" ? (
               <div className="settings-stack">
-                <section className="settings-panel">
+                <section className="settings-panel" id="settings-voice-input">
                   <div className="settings-panel-head">
                     <div>
                       <span className="card-kicker">Qwen ASR</span>
@@ -1632,7 +1680,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
 
             {activeSection === "search" ? (
               <div className="settings-stack">
-                <section className="settings-panel">
+                <section className="settings-panel" id="settings-search">
                   <div className="settings-panel-head">
                     <div>
                       <span className="card-kicker">Tavily Search API</span>
@@ -1717,7 +1765,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
             ) : null}
 
             {activeSection === "solo" ? (
-              <div className="settings-stack two-column">
+              <div className="settings-stack two-column" id="settings-solo">
                 <section className="settings-panel">
                   <div className="settings-panel-head">
                     <div>
@@ -1790,7 +1838,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
             ) : null}
 
             {activeSection === "tools" ? (
-              <div className="settings-stack">
+              <div className="settings-stack" id="settings-tools">
                 <div className="settings-section-head">
                   <div>
                     <span className="card-kicker">执行入口</span>
@@ -2003,7 +2051,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
             ) : null}
 
             {activeSection === "mcp" ? (
-              <div className="settings-stack">
+              <div className="settings-stack" id="settings-mcp">
                 <div className="settings-section-head">
                   <div>
                     <span className="card-kicker">Model Context Protocol</span>
@@ -2206,7 +2254,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
             ) : null}
 
             {activeSection === "skills" ? (
-              <div className="settings-stack">
+              <div className="settings-stack" id="settings-skills">
                 <div className="settings-section-head">
                   <div>
                     <span className="card-kicker">Prompt Skills</span>
@@ -2316,12 +2364,14 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
             ) : null}
 
             {activeSection === "usage" ? (
-              <TokenUsagePanel usage={tokenUsageDashboard} onRefresh={onRequestTokenUsage} />
+              <div id="settings-usage">
+                <TokenUsagePanel usage={tokenUsageDashboard} onRefresh={onRequestTokenUsage} />
+              </div>
             ) : null}
 
             {activeSection === "memory" ? (
               <div className="settings-stack">
-                <section className="settings-panel">
+                <section className="settings-panel" id="settings-memory">
                   <div className="settings-panel-head">
                     <div>
                       <span className="card-kicker">Memory</span>
@@ -2547,7 +2597,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
 
             {activeSection === "scheduled_tasks" ? (
               <div className="settings-stack">
-                <section className="settings-panel">
+                <section className="settings-panel" id="settings-scheduled-tasks">
                   <div className="settings-panel-head">
                     <div>
                       <span className="card-kicker">Scheduled</span>

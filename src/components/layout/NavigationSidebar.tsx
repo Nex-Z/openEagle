@@ -6,7 +6,6 @@ import {
   MoreHorizontal,
   Settings2,
   Trash2,
-  Wrench,
   Wifi,
   WifiOff,
   X,
@@ -64,6 +63,8 @@ function NavigationSidebarComponent(props: NavigationSidebarProps) {
     conversations,
     activeConversationId,
     backend,
+    statusLine,
+    statusDetail,
     mobileOpen,
     onSelectConversation,
     onDeleteConversation,
@@ -76,6 +77,9 @@ function NavigationSidebarComponent(props: NavigationSidebarProps) {
   const containerRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const statusCopy = sidebarStatusCopy(backend);
+  const statusDetails = Array.from(
+    new Set([statusCopy.secondary, statusLine, statusDetail].filter(Boolean)),
+  ) as string[];
   const openConversation = conversations.find((conversation) => conversation.id === openMenuId);
 
   useEffect(() => {
@@ -222,23 +226,30 @@ function NavigationSidebarComponent(props: NavigationSidebarProps) {
         </section>
 
         <footer className="nav-sidebar-footer">
-          <div className="sidebar-quick-links" aria-label="工作台入口">
-            <button className="secondary-button" onClick={() => onOpenSettings("tools")} type="button">
-              <Wrench size={15} />
-              <span>工具</span>
-            </button>
-            <button className="secondary-button" onClick={() => onOpenSettings("general")} type="button">
-              <Settings2 size={15} />
-              <span>设置</span>
-            </button>
-          </div>
-
-          <div className={`status-card tone-${statusCopy.tone}`}>
-            <div className="status-card-head">
-              {backend.phase === "connected" ? <Wifi size={15} /> : <WifiOff size={15} />}
-              <span>{statusCopy.primary}</span>
+          <div className="sidebar-footer-actions">
+            <div
+              aria-label={`${statusCopy.primary}：${statusDetails.join("；")}`}
+              className={`service-status-indicator tone-${statusCopy.tone}`}
+              role="status"
+              tabIndex={0}
+            >
+              {backend.phase === "connected" ? <Wifi size={16} /> : <WifiOff size={16} />}
+              <div className="service-status-tooltip" role="tooltip">
+                <strong>{statusCopy.primary}</strong>
+                {statusDetails.map((detail) => (
+                  <span key={detail}>{detail}</span>
+                ))}
+              </div>
             </div>
-            <small>{statusCopy.secondary}</small>
+
+            <button
+              aria-label="打开设置"
+              className="secondary-button sidebar-settings-button"
+              onClick={() => onOpenSettings("appearance")}
+              type="button"
+            >
+              <Settings2 size={15} />
+            </button>
           </div>
         </footer>
       </aside>

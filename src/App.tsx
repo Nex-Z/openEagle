@@ -215,7 +215,7 @@ export default function App() {
     });
     return () => { cancelled = true; };
   }, []);
-  const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("appearance");
   const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
