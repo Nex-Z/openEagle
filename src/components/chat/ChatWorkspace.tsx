@@ -1469,7 +1469,7 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
     estimateSize: estimateVirtualItemSize,
     getItemKey: getVirtualItemKey,
     overscan: 8,
-    gap: 30,
+    gap: 24,
   });
 
   useEffect(() => {
@@ -1686,7 +1686,7 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
   const virtualRows = messageVirtualizer.getVirtualItems();
 
   return (
-    <section className="chat-workspace bg-white motion-safe:animate-[eagle-panel-up_260ms_ease-out_both]">
+    <section className="chat-workspace motion-safe:animate-[eagle-panel-up_260ms_ease-out_both]">
       <div className="workspace-mobile-bar mobile-only">
         <button className="icon-button" onClick={onOpenMobileSidebar} type="button">
           <PanelLeftOpen size={16} />

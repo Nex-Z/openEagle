@@ -216,7 +216,7 @@ export default function App() {
     return () => { cancelled = true; };
   }, []);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("general");
-  const [inspectorCollapsed, setInspectorCollapsed] = useState(false);
+  const [inspectorCollapsed, setInspectorCollapsed] = useState(true);
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const [sidebarWidth, setSidebarWidth] = useState(() => {
     const stored = localStorage.getItem("open-eagle/sidebar-width");

@@ -311,26 +311,7 @@ function ActivityInspectorComponent(props: ActivityInspectorProps) {
     });
   }, [recentTraces.length]);
 
-  const statusTone = useMemo(() => {
-    switch (soloStatus.state) {
-      case "completed":
-        return "success";
-      case "error":
-      case "aborted":
-        return "danger";
-      case "waiting_user_confirmation":
-      case "paused":
-        return "warning";
-      default:
-        return "neutral";
-    }
-  }, [soloStatus.state]);
-
   const hasDecisionSurface = Boolean(soloConfirmation || toolConfirmation || soloLastError);
-  const confirmationCount =
-    Number(Boolean(soloConfirmation)) +
-    Number(Boolean(toolConfirmation)) +
-    Number(Boolean(soloLastError));
 
   const inspector = (
     <aside
@@ -351,10 +332,15 @@ function ActivityInspectorComponent(props: ActivityInspectorProps) {
       </header>
 
       {inspectorCollapsed ? (
-        <div className="inspector-collapsed-summary">
-          <div className={`collapsed-dot tone-${statusTone}`} />
-          <span>{confirmationCount}</span>
-        </div>
+        <button
+          className="inspector-collapsed-toggle"
+          onClick={onToggleCollapsed}
+          aria-label="展开活动栏"
+          title="展开活动栏"
+          type="button"
+        >
+          <ChevronLeft size={18} />
+        </button>
       ) : (
         <>
           <div className="inspector-tabs" role="tablist" aria-label="活动面板标签">

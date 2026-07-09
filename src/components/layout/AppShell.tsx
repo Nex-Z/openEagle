@@ -17,6 +17,10 @@ const INSPECTOR_MIN = 240;
 const INSPECTOR_MAX = 500;
 const SIDEBAR_DEFAULT = 248;
 const INSPECTOR_DEFAULT = 318;
+// 折叠态宽度：放一个胶囊展开按钮的窄卡片列
+const INSPECTOR_COLLAPSED_WIDTH = 52;
+// 栏间间隙宽度（同时作为拖拽热区列）
+const GAP_WIDTH = 12;
 
 function ResizeHandle(props: {
   onResize: (delta: number) => void;
@@ -110,17 +114,17 @@ export function AppShell(props: AppShellProps) {
     startInspectorRef.current = inspectorWidth;
   }, [inspectorWidth]);
 
-  const effectiveInspectorWidth = inspectorCollapsed ? 58 : inspectorWidth;
+  const effectiveInspectorWidth = inspectorCollapsed ? INSPECTOR_COLLAPSED_WIDTH : inspectorWidth;
 
   return (
     <main
       className={
         inspectorCollapsed
-          ? "app-shell inspector-collapsed bg-blue-50/70 text-slate-950 motion-safe:animate-[eagle-shell-in_320ms_ease-out_both]"
-          : "app-shell bg-blue-50/70 text-slate-950 motion-safe:animate-[eagle-shell-in_320ms_ease-out_both]"
+          ? "app-shell inspector-collapsed text-slate-950"
+          : "app-shell text-slate-950"
       }
       style={{
-        gridTemplateColumns: `${sidebarWidth}px 4px minmax(0, 1fr) 4px ${effectiveInspectorWidth}px`,
+        gridTemplateColumns: `${sidebarWidth}px ${GAP_WIDTH}px minmax(0, 1fr) ${GAP_WIDTH}px ${effectiveInspectorWidth}px`,
       }}
     >
       <div className="app-shell-sidebar">{sidebarPanel}</div>
