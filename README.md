@@ -69,6 +69,16 @@ pnpm package:windows
 
 This builds the Python sidecar first, then creates a versioned Windows installer under `release/`, for example `openEagle-0.1.0-win-x64.exe`. The GitHub Actions workflow `Package Desktop` builds Windows, macOS, and Linux artifacts. Manual runs can fill `release_tag` such as `v0.1.0` to create or update a GitHub Release; leaving it empty creates downloadable workflow artifacts only. Pushing a `v*` tag also publishes the generated artifacts to the matching GitHub Release.
 
+### Agent Eval Reports
+
+The backend includes layered fixed agent regression sets for checking routing, worker choice, tool use, real workspace artifacts, and final-answer honesty after code changes. The default command runs the 20-task `core` set; set `AGENT_EVAL_REPORT_PROFILE=full` for the 100-task visible suite, or `holdout` / `variants` for anti-overfitting checks. From `backend`, run:
+
+```powershell
+uv run python tests/evals/run_agent_eval_report.py
+```
+
+The command writes JSON and Markdown reports to `backend/.deepeval/reports/agent-loop-latest.*`. Deterministic rules decide the success rate; the optional LLM Judge adds failure attribution and recommended fixes when `EVAL_MODEL_*` or `DEEPSEEK_*` credentials are available. Reports also separate product failures, efficiency issues, eval-contract issues, and runtime/trace observations. See `backend/tests/evals/README.md` for smoke, holdout, variants, and threshold modes.
+
 ### What's happening under the hood
 
 ```

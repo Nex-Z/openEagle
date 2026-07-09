@@ -227,6 +227,7 @@ class LangGraphAgentProvider:
         selected_tools: list[ToolConfig],
         selected_mcp: list[McpConfig],
         selected_skills: list[SkillConfig],
+        task_context: str = "",
         preserve_anthropic_image_blocks: bool = False,
     ) -> LangGraphToolAgent:
         active_workspace_root = (
@@ -251,6 +252,7 @@ class LangGraphAgentProvider:
             web_search_config=self._config.web_search,
             attachment_store=self._attachment_store,
             memory_service=self._memory_service,
+            task_context=task_context,
         )
         if default_tool_set.instructions:
             instructions.append(default_tool_set.instructions)
@@ -261,6 +263,7 @@ class LangGraphAgentProvider:
             request_id=self._request_id,
             conversation_id=self._conversation_id or conversation_id,
             permission_mode=self._config.permissions.mode,
+            task_context=task_context,
         )
 
         return LangGraphToolAgent(
@@ -297,6 +300,7 @@ class LangGraphAgentProvider:
                 selected_tools=selected_tools,
                 selected_mcp=selected_mcp,
                 selected_skills=selected_skills,
+                task_context=cleaned_prompt,
                 preserve_anthropic_image_blocks=preserve_anthropic_image_blocks,
             )
 
@@ -361,6 +365,7 @@ class LangGraphAgentProvider:
                 selected_tools=selected_tools,
                 selected_mcp=selected_mcp,
                 selected_skills=selected_skills,
+                task_context=cleaned_prompt,
                 preserve_anthropic_image_blocks=preserve_anthropic_image_blocks,
             )
 

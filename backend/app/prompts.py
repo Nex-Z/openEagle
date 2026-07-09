@@ -51,8 +51,10 @@ def build_chat_instructions(
         ),
         (
             "调度策略：工作区文件、搜索、Git、依赖安装、构建、测试、脚本和系统查询，"
-            "优先使用 run_command 或文件工具；能用 rg、git、包管理器脚本或 shell 命令完成时，"
-            "不要改用低效的逐项枚举，也不要启动视觉桌面动作。"
+            "优先使用最贴合的内置工具；文件名查找用 search_files，内容查找用 search_text，"
+            "文件信息用 get_file_info，读取用 read_text_file，普通写入用 write_text_file，"
+            "复制/移动用 copy_path 或 move_path。只有用户明确要求 shell/脚本/系统命令，"
+            "或内置工具无法完成时才用 run_command；不要启动视觉桌面动作。"
         ),
         (
             "定时任务：当用户要求创建定时、重复、提醒类任务时（如'每天8点汇总新闻'、'四点半发汇总'），"
@@ -86,7 +88,7 @@ def build_chat_instructions(
         (
             "错误恢复：工具返回 Error 时，分析错误原因并尝试替代方案；"
             "连续 2 次同类错误应换思路或向用户说明情况；"
-            "不要对同一失败操作无限重试。"
+            "不要对同一失败操作无限重试，尤其不要反复用 run_command 重做内置工具能完成的文件搜索。"
         ),
         (
             "自我迭代：遇到坏输出、工具参数错误或执行出错时，先把错误当成 observation 自己修正并重试；"
@@ -141,7 +143,8 @@ def build_main_router_instructions() -> list[str]:
         "输出为一个合法 JSON 对象，JSON 外不包含 Markdown、解释或推理过程。",
         (
             "在生成 JSON 前，先在内部完成判断：用户真正要完成什么；是否表达了非即时的时间安排；"
-            "完成任务需要哪类能力；是否可以复用最近 worker；是否属于必须先澄清的高风险缺口。"
+            "完成任务需要哪类能力；是否可以复用最近 worker；是否存在不要执行、不要删除、不要改动、"
+            "只读、只分析、先判断风险等负向约束；是否属于必须先澄清的高风险缺口。"
         ),
         "route 可选：answer_directly、delegate_new、delegate_existing、start_solo、control_solo、clarify。",
         "worker_kind 可选：general、coding、research、solo。",
@@ -177,6 +180,11 @@ def build_main_router_instructions() -> list[str]:
         "task_brief 面向 worker，写成干净、可执行的任务说明；定时/提醒类任务写明“创建持久化任务”以及用户希望到点执行的目标。",
         "context_summary 只填写 MainAgent 层才知道、worker 从 task_brief 看不到的会话级约束；没有则留空字符串。",
         "success_criteria 只写对 worker 有实际约束意义的完成条件；没有特殊约束时用空数组，不要复述任务目标。",
+        (
+            "negative_constraints 填写用户明确表达的负向约束，例如不要删除、不要改动、只分析不执行、"
+            "先判断风险、危险则停止；没有则为空数组。forbidden_actions 填写这些约束对应的禁用动作，"
+            "例如 delete_path、write_text_file、move_path、run_command、mutation_tools；没有则为空数组。"
+        ),
         (
             "requires_write 与 requires_gui 是意图 hint，不是 worker 实际执行方式断言；"
             "只有用户意图明确需要写入或 GUI 操作时才置 true。"
@@ -234,13 +242,13 @@ def build_main_router_prompt(
         "内部判断提示：先识别任务性质，再判断是否有非即时的时间安排，最后选择 route 和 worker_kind。\n\n"
         "边界示例（真实输出只给 JSON）：\n"
         '用户说"你是谁" -> '
-        '{"route":"answer_directly","answer":"我是 openEagle，能直接和你聊，也能在需要时调度代码、资料检索或桌面执行。","worker_kind":"general","task_brief":"","task_title":"介绍 openEagle","success_criteria":[],"requires_write":false,"requires_gui":false,"target_worker_id":null,"user_visible_summary":"","context_summary":""}\n'
+        '{"route":"answer_directly","answer":"我是 openEagle，能直接和你聊，也能在需要时调度代码、资料检索或桌面执行。","worker_kind":"general","task_brief":"","task_title":"介绍 openEagle","success_criteria":[],"negative_constraints":[],"forbidden_actions":[],"requires_write":false,"requires_gui":false,"target_worker_id":null,"user_visible_summary":"","context_summary":""}\n'
         '用户说"明天下午把行业新闻整理给我" -> '
-        '{"route":"delegate_new","answer":"","worker_kind":"general","task_brief":"创建持久化任务：明天下午整理行业新闻并提供给用户","task_title":"明天下午整理行业新闻","success_criteria":["只创建持久化任务，不要现在执行新闻检索"],"requires_write":false,"requires_gui":false,"target_worker_id":null,"user_visible_summary":"好，明天下午帮你整理好。","context_summary":""}\n'
+        '{"route":"delegate_new","answer":"","worker_kind":"general","task_brief":"创建持久化任务：明天下午整理行业新闻并提供给用户","task_title":"明天下午整理行业新闻","success_criteria":["只创建持久化任务，不要现在执行新闻检索"],"negative_constraints":["不要现在执行新闻检索"],"forbidden_actions":[],"requires_write":false,"requires_gui":false,"target_worker_id":null,"user_visible_summary":"好，明天下午帮你整理好。","context_summary":""}\n'
         '用户说"现在查一下今天的行业新闻" -> '
-        '{"route":"delegate_new","answer":"","worker_kind":"research","task_brief":"检索并汇总今天的行业新闻","task_title":"查询今天行业新闻","success_criteria":[],"requires_write":false,"requires_gui":false,"target_worker_id":null,"user_visible_summary":"马上查，稍等。","context_summary":""}\n'
+        '{"route":"delegate_new","answer":"","worker_kind":"research","task_brief":"检索并汇总今天的行业新闻","task_title":"查询今天行业新闻","success_criteria":[],"negative_constraints":[],"forbidden_actions":[],"requires_write":false,"requires_gui":false,"target_worker_id":null,"user_visible_summary":"马上查，稍等。","context_summary":""}\n'
         '用户说"看一下当前窗口，把登录表单填好" -> '
-        '{"route":"start_solo","answer":"","worker_kind":"solo","task_brief":"查看当前屏幕并填写登录表单","task_title":"填写当前窗口登录表单","success_criteria":["不要提交表单，除非用户明确要求提交"],"requires_write":false,"requires_gui":true,"target_worker_id":null,"user_visible_summary":"我来处理，一会儿给你结果。","context_summary":""}\n'
+        '{"route":"start_solo","answer":"","worker_kind":"solo","task_brief":"查看当前屏幕并填写登录表单","task_title":"填写当前窗口登录表单","success_criteria":["不要提交表单，除非用户明确要求提交"],"negative_constraints":["不要提交表单，除非用户明确要求提交"],"forbidden_actions":[],"requires_write":false,"requires_gui":true,"target_worker_id":null,"user_visible_summary":"我来处理，一会儿给你结果。","context_summary":""}\n'
         "\n"
         "输出 JSON 结构：\n"
         "{\n"
@@ -249,6 +257,8 @@ def build_main_router_prompt(
         '  "task_title": "短标题",\n'
         '  "task_brief": "给 worker 的干净任务说明",\n'
         '  "success_criteria": ["对 worker 有实际约束的完成条件；没有则为空数组"],\n'
+        '  "negative_constraints": ["用户明确要求不要做的事或执行前约束；没有则为空数组"],\n'
+        '  "forbidden_actions": ["delete_path | write_text_file | move_path | run_command | mutation_tools 等；没有则为空数组"],\n'
         '  "worker_kind": "general | coding | research | solo",\n'
         '  "target_worker_id": null,\n'
         '  "requires_write": false,\n'

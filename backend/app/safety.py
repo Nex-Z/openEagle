@@ -63,6 +63,68 @@ HARD_SOLO_BLOCK_REASONS = (
     "明确高危操作",
     "路径超出工作区范围",
 )
+MUTATING_TOOL_NAMES = {
+    "write_text_file",
+    "create_directory",
+    "copy_path",
+    "move_path",
+    "delete_path",
+    "replace_text_in_file",
+    "apply_text_edits",
+    "run_command",
+    "configured_tool",
+}
+DELETE_NEGATIVE_MARKERS = (
+    "不要删除",
+    "别删除",
+    "不要删",
+    "不删除",
+    "do not delete",
+    "don't delete",
+)
+WRITE_NEGATIVE_MARKERS = (
+    "不要写入",
+    "不要创建",
+    "不要改动",
+    "不要修改",
+    "不改动",
+    "只读",
+    "只看",
+    "只分析",
+    "do not write",
+    "do not modify",
+    "read only",
+)
+MOVE_NEGATIVE_MARKERS = (
+    "不要移动",
+    "不要重命名",
+    "不要改动",
+    "只读",
+    "只看",
+    "只分析",
+    "do not move",
+    "do not rename",
+    "read only",
+)
+EXECUTION_NEGATIVE_MARKERS = (
+    "不要执行",
+    "不执行",
+    "只分析",
+    "只看",
+    "只读",
+    "do not execute",
+    "don't execute",
+    "read only",
+)
+RISK_STOP_MARKERS = (
+    "先判断风险",
+    "如果会破坏",
+    "如果不安全",
+    "危险就停止",
+    "危险则停止",
+    "if unsafe",
+    "if destructive",
+)
 
 
 @dataclass(frozen=True)
@@ -74,6 +136,42 @@ class RiskAssessment:
 
 class BlockedActionError(ValueError):
     pass
+
+
+def assess_contextual_tool_action(
+    name: str,
+    params: dict[str, Any],
+    task_context: str | None = None,
+) -> RiskAssessment | None:
+    """Block tool actions that contradict explicit user constraints."""
+    context = " ".join(str(task_context or "").lower().split())
+    if not context or name not in MUTATING_TOOL_NAMES:
+        return None
+
+    if name == "delete_path" and _contains_any(context, DELETE_NEGATIVE_MARKERS):
+        return RiskAssessment("blocked", "用户明确要求不要删除，已阻断删除操作。")
+
+    if name == "delete_path" and _contains_any(context, RISK_STOP_MARKERS):
+        return RiskAssessment("blocked", "用户要求先判断风险且避免破坏性操作，已阻断删除操作。")
+
+    if name in {"write_text_file", "replace_text_in_file", "apply_text_edits", "create_directory"}:
+        if _contains_any(context, WRITE_NEGATIVE_MARKERS):
+            return RiskAssessment("blocked", "用户明确要求只读或不要改动，已阻断写入/编辑操作。")
+
+    if name in {"move_path", "copy_path"} and _contains_any(context, MOVE_NEGATIVE_MARKERS):
+        return RiskAssessment("blocked", "用户明确要求只读或不要改动，已阻断复制/移动操作。")
+
+    if name in {"run_command", "configured_tool"} and _contains_any(context, EXECUTION_NEGATIVE_MARKERS):
+        return RiskAssessment("blocked", "用户明确要求不要执行命令或只读分析，已阻断命令执行。")
+
+    if "mutation_tools" in context and name in MUTATING_TOOL_NAMES:
+        return RiskAssessment("blocked", "当前任务禁用了会改变状态的工具，已阻断操作。")
+
+    return None
+
+
+def _contains_any(text: str, markers: tuple[str, ...]) -> bool:
+    return any(marker.lower() in text for marker in markers)
 
 
 def normalize_key(token: str) -> str:

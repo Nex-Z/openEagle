@@ -41,6 +41,8 @@ class AgentRouteDecision(BaseModel):
     requires_gui: bool = Field(default=False, alias="requires_gui")
     user_visible_summary: str = Field(default="", alias="user_visible_summary")
     context_summary: str = Field(default="", alias="context_summary")
+    negative_constraints: list[str] = Field(default_factory=list, alias="negative_constraints")
+    forbidden_actions: list[str] = Field(default_factory=list, alias="forbidden_actions")
 
     model_config = {
         "populate_by_name": True,
@@ -77,6 +79,8 @@ class AgentTaskRecord:
     task_brief: str
     success_criteria: list[str]
     context_summary: str = ""
+    negative_constraints: list[str] = field(default_factory=list)
+    forbidden_actions: list[str] = field(default_factory=list)
     requires_write: bool = False
     requires_gui: bool = False
     worker_id: str = field(default_factory=lambda: f"worker-{uuid4()}")
@@ -103,4 +107,6 @@ class AgentTaskRecord:
             "title": self.title,
             "requiresWrite": self.requires_write,
             "requiresGui": self.requires_gui,
+            "negativeConstraints": list(self.negative_constraints),
+            "forbiddenActions": list(self.forbidden_actions),
         }

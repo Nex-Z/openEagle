@@ -69,6 +69,10 @@ class SubAgentManager:
                 existing.task_brief = decision.task_brief or existing.task_brief
                 existing.success_criteria = decision.success_criteria or existing.success_criteria
                 existing.context_summary = decision.context_summary or existing.context_summary
+                existing.negative_constraints = (
+                    decision.negative_constraints or existing.negative_constraints
+                )
+                existing.forbidden_actions = decision.forbidden_actions or existing.forbidden_actions
                 existing.requires_write = existing.requires_write or decision.requires_write
                 existing.requires_gui = existing.requires_gui or decision.requires_gui
                 existing.mark("idle")
@@ -81,6 +85,8 @@ class SubAgentManager:
             task_brief=decision.task_brief,
             success_criteria=decision.success_criteria or ["完成用户本轮请求。"],
             context_summary=decision.context_summary,
+            negative_constraints=decision.negative_constraints,
+            forbidden_actions=decision.forbidden_actions,
             requires_write=decision.requires_write,
             requires_gui=decision.requires_gui,
         )
@@ -265,6 +271,17 @@ class SubAgentManager:
         criteria = "\n".join(f"- {item}" for item in task.success_criteria)
         context = task.context_summary.strip()
         context_block = f"\n必要上下文:\n{context}\n" if context else ""
+        constraints_block = ""
+        if task.negative_constraints or task.forbidden_actions:
+            negative = "\n".join(f"- {item}" for item in task.negative_constraints)
+            forbidden = "\n".join(f"- {item}" for item in task.forbidden_actions)
+            constraints_block = (
+                "\n硬性约束:\n"
+                f"{negative}\n"
+                f"{('禁用动作:\n' + forbidden + chr(10)) if forbidden else ''}"
+                "调用任何写入、移动、删除、覆盖或命令工具前，必须先检查这些约束；"
+                "如果工具动作与约束冲突，直接说明不能执行，不要尝试绕过。\n"
+            )
         memory_block = f"\n长期记忆:\n{memory_context}\n" if memory_context else ""
         conversation_block = (
             f"\n最近会话上下文:\n{conversation_context}\n"
@@ -284,12 +301,17 @@ class SubAgentManager:
             f"{MEMORY_STORAGE_POLICY}\n\n"
             f"任务: {task.task_brief}\n"
             f"{context_block}"
+            f"{constraints_block}"
             f"{memory_block}"
             f"{conversation_block}"
             f"{previous_block}"
             f"完成标准:\n{criteria}\n\n"
             "普通问答和不需要当前状态的解释，直接回答，不要调用工具。"
             "需要工具时先少量验证关键事实，避免展开成无关的批量搜索或命令。"
+            "工作区文件操作优先使用内置文件工具：文件名查找用 search_files，内容查找用 search_text，"
+            "文件信息用 get_file_info，读取用 read_text_file，普通写入用 write_text_file，"
+            "复制/移动用 copy_path 或 move_path。只有用户明确要求 shell/脚本/系统命令，"
+            "或内置工具无法完成时才用 run_command。"
             "每次工具返回后先判断现有信息是否足以形成有用答案；足够就立即停止调用工具。"
             "只有明确缺少完成任务所必需的信息时才继续，下一次调用必须解决具体的新信息缺口，"
             "不能只是改写关键词或追求更完美的结果。多个互补搜索方向优先用一次批量 web_search。"

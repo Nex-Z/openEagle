@@ -217,6 +217,51 @@ class ConfirmationStoreTest(unittest.TestCase):
             blocked_result = toolkit.run_command("git reset --hard HEAD")
             self.assertIn("明确高危操作", blocked_result)
 
+    def test_negative_constraints_block_destructive_tools_even_with_all_permissions(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "project.txt"
+            target.write_text("keep me", encoding="utf-8")
+            toolkit = build_default_tools(
+                workspace_root=root,
+                permission_mode="all",
+                task_context="删除 project.txt 之前先判断风险；如果会破坏，请不要删除。",
+            )
+
+            result = toolkit.delete_path("project.txt")
+
+            self.assertIn("用户明确要求不要删除", result)
+            self.assertTrue(target.exists())
+
+    def test_explicit_delete_without_negative_constraint_is_not_overblocked(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            target = root / "temp.txt"
+            target.write_text("remove me", encoding="utf-8")
+            toolkit = build_default_tools(
+                workspace_root=root,
+                permission_mode="all",
+                task_context="请删除这个临时文件。",
+            )
+
+            result = toolkit.delete_path("temp.txt")
+
+            self.assertIn("Successfully deleted", result)
+            self.assertFalse(target.exists())
+
+    def test_read_only_context_blocks_command_execution(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            toolkit = build_default_tools(
+                workspace_root=root,
+                permission_mode="all",
+                task_context="不要执行命令，只分析这个命令会输出什么。",
+            )
+
+            result = toolkit.run_command(f'"{sys.executable}" -c "print(123)"')
+
+            self.assertIn("不要执行命令", result)
+
     def test_replace_text_confirmation_and_execution(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -1004,6 +1049,24 @@ class AgentRouterTest(unittest.TestCase):
         self.assertEqual(decision.route, "delegate_new")
         self.assertEqual(decision.worker_kind, "general")
 
+    def test_router_extracts_negative_constraints_from_user_message(self) -> None:
+        decision = AgentRouter.heuristic(
+            "删除 notes/project.txt 之前先判断风险；如果会破坏测评工作区，请不要删除。"
+        )
+
+        self.assertIn("不要删除文件或目录。", decision.negative_constraints)
+        self.assertIn("delete_path", decision.forbidden_actions)
+        self.assertTrue(any("硬性约束" in item for item in decision.success_criteria))
+        self.assertIn("硬性约束", decision.context_summary)
+
+    def test_router_routes_command_and_direct_translation_without_case_names(self) -> None:
+        command = AgentRouter.heuristic('运行 python -c "print(1)"，告诉我输出。')
+        translation = AgentRouter.heuristic("不用工具，把 hello world 翻译成中文。")
+
+        self.assertEqual(command.route, "delegate_new")
+        self.assertEqual(command.worker_kind, "coding")
+        self.assertEqual(translation.route, "answer_directly")
+
     def test_router_parse_accepts_principle_routing_cases(self) -> None:
         cases = [
             (
@@ -1141,6 +1204,8 @@ class AgentRouterTest(unittest.TestCase):
         self.assertIn("user_visible_summary 是委派或桌面执行前展示给用户的一句话进展", instructions)
         self.assertIn("使用第一人称口语", instructions)
         self.assertIn("当 route=answer_directly 时，将回复写入 answer 字段", instructions)
+        self.assertIn("negative_constraints", instructions)
+        self.assertIn("forbidden_actions", instructions)
         self.assertIn("非即时的时间安排", prompt)
         self.assertIn("当前日期时间", prompt)
         self.assertIn("不要反问用户今天是周几", prompt)
@@ -1181,6 +1246,22 @@ class SubAgentManagerTest(unittest.TestCase):
         self.assertIn("足够就立即停止调用工具", prompt)
         self.assertIn("工具成功但结果有限不属于执行失败", prompt)
         self.assertIn("批量 web_search", prompt)
+        self.assertIn("文件名查找用 search_files", prompt)
+        self.assertIn("只有用户明确要求 shell/脚本/系统命令", prompt)
+
+    def test_worker_prompt_contains_negative_constraints(self) -> None:
+        manager = SubAgentManager()
+        decision = AgentRouter.heuristic(
+            "删除 notes/project.txt 之前先判断风险；如果会破坏测评工作区，请不要删除。"
+        )
+        task = manager.create_or_reuse("conv", decision)
+
+        prompt = SubAgentManager._build_worker_prompt(task)
+
+        self.assertIn("硬性约束", prompt)
+        self.assertIn("不要删除文件或目录", prompt)
+        self.assertIn("delete_path", prompt)
+        self.assertIn("如果工具动作与约束冲突", prompt)
 
     def test_worker_prompt_contains_persistent_conversation_and_previous_report(self) -> None:
         manager = SubAgentManager()
@@ -1635,7 +1716,9 @@ class SoloDecisionParsingTest(unittest.TestCase):
 class PromptPolicyTest(unittest.TestCase):
     def test_chat_prompt_contains_command_first_and_visual_boundary(self) -> None:
         instructions = "\n".join(build_chat_instructions("conv", [], [], []))
-        self.assertIn("优先使用 run_command", instructions)
+        self.assertIn("优先使用最贴合的内置工具", instructions)
+        self.assertIn("文件名查找用 search_files", instructions)
+        self.assertIn("只有用户明确要求 shell/脚本/系统命令", instructions)
         self.assertIn("当前日期时间", instructions)
         self.assertIn("不要反问用户今天是周几", instructions)
         self.assertIn("不要启动视觉桌面动作", instructions)

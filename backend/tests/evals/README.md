@@ -13,9 +13,11 @@
 
 ## 文件
 
-- `.agent_loop_dataset.json`：10 条人工维护的产品契约用例，包含精确路由、工具和产物要求。
+- `.agent_loop_dataset.json`：20 条人工维护的 core 产品契约用例，包含精确路由、工具、产物和失败归因要求。
+- `agent_loop_case_catalog.py`：在 core 用例基础上确定性扩展到 100 条 visible full 固定任务集，并额外提供 holdout/variants 防过拟合任务。
 - `agent_loop_harness.py`：在临时工作区运行真实 `AgentRuntime`，并生成 DeepEval trace。
 - `test_agent_loop.py`：单轮全链路契约与 traced eval。
+- `run_agent_eval_report.py`：运行固定任务集并输出成功率、分层通过率和失败原因报告。
 - `.dataset.json`：5 条多轮对话 seed 数据集。
 - `dataset_augmented.json`：由 DeepEval 生成的 30 条扩充场景。
 - `chatbot_callback.py`：多轮模拟使用真实 `AgentRuntime`，保留同一会话的上下文和 worker 状态。
@@ -48,8 +50,8 @@ $env:EVAL_MODEL_NAME="<judge model>"
 只跑零网络成本的结构契约：
 
 ```powershell
-uv run deepeval test run tests/evals/test_agent_loop.py -m "not agent_eval_live" `
-  --identifier "agent-loop-contracts"
+uv run python -m pytest tests/evals/test_agent_loop.py -m "not agent_eval_live"
+uv run python -m pytest tests/evals/test_agent_eval_report.py
 ```
 
 默认 smoke profile 跑 6 条代表性链路：
@@ -60,7 +62,7 @@ uv run deepeval test run tests/evals/test_agent_loop.py `
   --identifier "agent-loop-smoke"
 ```
 
-跑完整 10 条契约：
+跑完整 20 条契约：
 
 ```powershell
 $env:AGENT_EVAL_PROFILE="full"
@@ -68,6 +70,47 @@ uv run deepeval test run tests/evals/test_agent_loop.py `
   --identifier "agent-loop-full" `
   --ignore-errors
 ```
+
+生成 core 固定任务集报告（默认 20 条）：
+
+```powershell
+uv run python tests/evals/run_agent_eval_report.py
+```
+
+只生成 smoke 报告：
+
+```powershell
+$env:AGENT_EVAL_REPORT_PROFILE="smoke"
+uv run python tests/evals/run_agent_eval_report.py
+```
+
+生成 full 报告（100 条，耗时和模型成本明显更高）：
+
+```powershell
+$env:AGENT_EVAL_REPORT_PROFILE="full"
+uv run python tests/evals/run_agent_eval_report.py
+```
+
+设置最低成功率门槛，低于门槛时命令退出码为 1：
+
+```powershell
+$env:AGENT_EVAL_MIN_SUCCESS_RATE="0.8"
+uv run python tests/evals/run_agent_eval_report.py
+```
+
+生成 holdout / variants 防过拟合报告：
+
+```powershell
+$env:AGENT_EVAL_REPORT_PROFILE="holdout"
+uv run python tests/evals/run_agent_eval_report.py
+
+$env:AGENT_EVAL_REPORT_PROFILE="variants"
+uv run python tests/evals/run_agent_eval_report.py
+```
+
+`AGENT_EVAL_REPORT_PROFILE` 支持 `smoke`、`core`、`full`、`holdout`、`variants`。报告会写入 `backend/.deepeval/reports/agent-loop-latest.json` 和
+`backend/.deepeval/reports/agent-loop-latest.md`。成功率只由确定性规则决定；
+LLM Judge 负责补充失败 stage、原因和修复建议，不单独推翻规则结果。报告会同时区分真实产品失败、效率问题、评测合同问题和 runtime/trace 观测问题。
 
 跑多轮会话：
 

@@ -159,6 +159,105 @@
     }
   },
   {
+    "name": "file_info_readme",
+    "input": "查看 README.md 的文件信息，告诉我它是文件还是目录，并给出大小信息。",
+    "expected_output": "准确说明 README.md 是文件，并给出真实的大小或元数据信息。",
+    "expected_tools": [
+      {"name": "get_file_info"}
+    ],
+    "additional_metadata": {
+      "layer": "tool_arguments_and_grounding",
+      "expected_routes": ["delegate_new"],
+      "expected_worker_kinds": ["general", "coding"],
+      "required_tools": ["get_file_info"],
+      "max_tool_calls": 2,
+      "max_duration_seconds": 90,
+      "smoke": false
+    }
+  },
+  {
+    "name": "search_file_by_name",
+    "input": "在工作区按文件名搜索 sample.py，返回它的相对路径。",
+    "expected_output": "返回 src/sample.py 的相对路径，不虚构其他路径。",
+    "expected_tools": [
+      {"name": "search_files"}
+    ],
+    "additional_metadata": {
+      "layer": "tool_selection",
+      "expected_routes": ["delegate_new"],
+      "expected_worker_kinds": ["general", "coding"],
+      "required_tools": ["search_files"],
+      "max_tool_calls": 2,
+      "max_duration_seconds": 90,
+      "smoke": false
+    }
+  },
+  {
+    "name": "copy_project_note",
+    "input": "把 notes/project.txt 复制到 reports/project-copy.txt，完成后告诉我复制后的相对路径。",
+    "expected_output": "确认 reports/project-copy.txt 已创建，并且来自 notes/project.txt。",
+    "expected_tools": [
+      {"name": "copy_path"}
+    ],
+    "additional_metadata": {
+      "layer": "execution_and_evidence",
+      "expected_routes": ["delegate_new"],
+      "expected_worker_kinds": ["coding"],
+      "required_tools": ["copy_path"],
+      "max_tool_calls": 3,
+      "max_duration_seconds": 120,
+      "required_artifacts": [
+        {
+          "path": "reports/project-copy.txt",
+          "contains": ["项目代号：Falcon", "状态：进行中", "负责人：Lin"]
+        }
+      ],
+      "smoke": false
+    }
+  },
+  {
+    "name": "create_nested_report",
+    "input": "创建 reports/weekly/README.txt，内容写成“weekly report ready”。必要时先创建目录。",
+    "expected_output": "确认 reports/weekly/README.txt 已创建，内容为 weekly report ready。",
+    "expected_tools": [
+      {"name": "create_directory"},
+      {"name": "write_text_file"}
+    ],
+    "additional_metadata": {
+      "layer": "multi_step_tool_loop",
+      "expected_routes": ["delegate_new"],
+      "expected_worker_kinds": ["coding"],
+      "required_tool_groups": [["create_directory", "write_text_file"]],
+      "required_tools": ["write_text_file"],
+      "max_tool_calls": 4,
+      "max_duration_seconds": 120,
+      "required_artifacts": [
+        {
+          "path": "reports/weekly/README.txt",
+          "contains": ["weekly report ready"]
+        }
+      ],
+      "smoke": true
+    }
+  },
+  {
+    "name": "read_code_and_reason",
+    "input": "读取 src/sample.py，告诉我 add(2, 5) 的返回值，并说明依据是哪一行代码。",
+    "expected_output": "根据 src/sample.py 中 return left + right 的真实代码，回答 add(2, 5) 返回 7。",
+    "expected_tools": [
+      {"name": "read_text_file"}
+    ],
+    "additional_metadata": {
+      "layer": "tool_arguments_and_grounding",
+      "expected_routes": ["delegate_new"],
+      "expected_worker_kinds": ["general", "coding"],
+      "required_tools": ["read_text_file"],
+      "max_tool_calls": 2,
+      "max_duration_seconds": 90,
+      "smoke": true
+    }
+  },
+  {
     "name": "desktop_route",
     "input": "看一下当前窗口并打开浏览器，但先不要访问任何网站。",
     "expected_output": "确认桌面执行任务已被接收，同时不声称已经访问任何网站。",
@@ -170,6 +269,110 @@
       "max_tool_calls": 0,
       "max_duration_seconds": 45,
       "metrics_profile": "contract_only",
+      "smoke": true
+    }
+  },
+  {
+    "name": "summarize_readme_heading",
+    "input": "读取 README.md，告诉我标题是什么，并用一句话概括这个工作区的用途。",
+    "expected_output": "准确指出 README.md 标题是 openEagle Eval Workspace，并说明这是隔离的 Agent 测评工作区。",
+    "expected_tools": [
+      {"name": "read_text_file"}
+    ],
+    "additional_metadata": {
+      "layer": "tool_arguments_and_grounding",
+      "expected_routes": ["delegate_new"],
+      "expected_worker_kinds": ["general", "coding"],
+      "required_tools": ["read_text_file"],
+      "max_tool_calls": 2,
+      "max_duration_seconds": 90,
+      "smoke": true
+    }
+  },
+  {
+    "name": "append_project_note",
+    "input": "读取 notes/project.txt，然后在文件末尾追加一行“备注：评测通过”。不要删除原有三行。",
+    "expected_output": "确认 notes/project.txt 已追加备注，并保留项目代号、状态和负责人三行。",
+    "expected_tools": [
+      {"name": "read_text_file"},
+      {"name": "write_text_file"}
+    ],
+    "additional_metadata": {
+      "layer": "multi_step_tool_loop",
+      "expected_routes": ["delegate_new"],
+      "expected_worker_kinds": ["coding"],
+      "required_tools": ["read_text_file", "write_text_file"],
+      "max_tool_calls": 4,
+      "max_duration_seconds": 120,
+      "required_artifacts": [
+        {
+          "path": "notes/project.txt",
+          "contains": ["项目代号：Falcon", "状态：进行中", "负责人：Lin", "备注：评测通过"]
+        }
+      ],
+      "smoke": false
+    }
+  },
+  {
+    "name": "create_json_report",
+    "input": "创建 reports/summary.json，内容必须是合法 JSON：{\"project\":\"Falcon\",\"status\":\"ready\",\"passed\":true}。完成后告诉我相对路径。",
+    "expected_output": "确认 reports/summary.json 已创建，内容是指定的合法 JSON，并报告相对路径。",
+    "expected_tools": [
+      {"name": "write_text_file"}
+    ],
+    "additional_metadata": {
+      "layer": "execution_and_evidence",
+      "expected_routes": ["delegate_new"],
+      "expected_worker_kinds": ["coding"],
+      "required_tools": ["write_text_file"],
+      "max_tool_calls": 3,
+      "max_duration_seconds": 120,
+      "required_artifacts": [
+        {
+          "path": "reports/summary.json",
+          "json_equals": {"project": "Falcon", "status": "ready", "passed": true}
+        }
+      ],
+      "smoke": false
+    }
+  },
+  {
+    "name": "rename_report_file",
+    "input": "创建 reports/draft.txt，内容为“ready to rename”，然后把它重命名为 reports/final.txt。完成后告诉我最终相对路径。",
+    "expected_output": "确认 reports/final.txt 存在且内容为 ready to rename，并说明最终相对路径。",
+    "expected_tools": [
+      {"name": "write_text_file"},
+      {"name": "move_path"}
+    ],
+    "additional_metadata": {
+      "layer": "multi_step_tool_loop",
+      "expected_routes": ["delegate_new"],
+      "expected_worker_kinds": ["coding"],
+      "required_tools": ["write_text_file", "move_path"],
+      "max_tool_calls": 4,
+      "max_duration_seconds": 120,
+      "required_artifacts": [
+        {
+          "path": "reports/final.txt",
+          "contains": ["ready to rename"]
+        }
+      ],
+      "forbidden_artifacts": ["reports/draft.txt"],
+      "smoke": false
+    }
+  },
+  {
+    "name": "forbidden_unneeded_command",
+    "input": "不用运行命令，直接回答：单词 Falcon 有几个英文字母？",
+    "expected_output": "直接回答 Falcon 有 6 个英文字母，不调用命令或文件工具。",
+    "expected_tools": [],
+    "additional_metadata": {
+      "layer": "prompt_and_routing",
+      "expected_routes": ["answer_directly"],
+      "expected_worker_kinds": ["general"],
+      "forbidden_tools": ["run_command", "read_text_file", "write_text_file"],
+      "max_tool_calls": 0,
+      "max_duration_seconds": 45,
       "smoke": true
     }
   }

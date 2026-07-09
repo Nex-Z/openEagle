@@ -21,7 +21,12 @@ from .command_runner import execute_workspace_command
 from .config import ToolConfig, WebSearchConfig
 from .confirmations import PendingToolConfirmation, ToolConfirmationStore
 from .paths import resolve_workspace_root
-from .safety import BlockedActionError, assess_tool_action, resolve_workspace_path
+from .safety import (
+    BlockedActionError,
+    assess_contextual_tool_action,
+    assess_tool_action,
+    resolve_workspace_path,
+)
 from .scheduler.tools import create_scheduled_task
 
 DEFAULT_MAX_CHARS = 12_000
@@ -403,6 +408,7 @@ class OpenEagleDefaultTools:
         web_search_config: WebSearchConfig | None = None,
         attachment_store: AttachmentStore | None = None,
         memory_service: Any | None = None,
+        task_context: str | None = None,
     ):
         self.workspace_root = workspace_root.resolve()
         self.confirmation_store = confirmation_store
@@ -411,6 +417,7 @@ class OpenEagleDefaultTools:
         self.permission_mode = permission_mode
         self.attachment_store = attachment_store
         self.memory_service = memory_service
+        self.task_context = task_context or ""
         self.web_search_config = web_search_config or WebSearchConfig()
         self._read_cache = _ReadCache()
         self._agent_tools: list[BaseTool] = []
@@ -496,6 +503,9 @@ class OpenEagleDefaultTools:
         return self.permission_mode != "all"
 
     def _run_guarded_tool(self, name: str, params: dict[str, object]) -> str:
+        contextual_assessment = assess_contextual_tool_action(name, params, self.task_context)
+        if contextual_assessment is not None:
+            return f"Error: {contextual_assessment.reason}"
         assessment = assess_tool_action(name, params, self.workspace_root)
         if assessment.level == "blocked" and not (assessment.overridable and self.permission_mode == "all"):
             return f"Error: {assessment.reason}"
@@ -1333,6 +1343,7 @@ def build_default_tools(
     web_search_config: WebSearchConfig | None = None,
     attachment_store: AttachmentStore | None = None,
     memory_service: Any | None = None,
+    task_context: str | None = None,
 ) -> OpenEagleDefaultTools:
     root = workspace_root or resolve_workspace_root()
     return OpenEagleDefaultTools(
@@ -1345,6 +1356,7 @@ def build_default_tools(
         web_search_config=web_search_config,
         attachment_store=attachment_store,
         memory_service=memory_service,
+        task_context=task_context,
     )
 
 
@@ -1364,6 +1376,7 @@ def build_configured_tools(
     request_id: str | None = None,
     conversation_id: str | None = None,
     permission_mode: str = "default",
+    task_context: str | None = None,
 ) -> tuple[list[BaseTool], dict[str, str]]:
     root = (workspace_root or resolve_workspace_root()).resolve()
     tools: list[BaseTool] = []
@@ -1408,6 +1421,13 @@ def build_configured_tools(
                         "tail": tail,
                     }
                     assessment = assess_tool_action("configured_tool", params, root)
+                    contextual_assessment = assess_contextual_tool_action(
+                        "configured_tool",
+                        params,
+                        task_context,
+                    )
+                    if contextual_assessment is not None:
+                        return f"Error: {contextual_assessment.reason}"
                     if assessment.level == "blocked" and not (assessment.overridable and permission_mode == "all"):
                         return f"Error: {assessment.reason}"
                     if assessment.level == "confirm" and permission_mode != "all":
@@ -1442,6 +1462,13 @@ def build_configured_tools(
                         "tail": tail,
                     }
                     assessment = assess_tool_action("configured_tool", params, root)
+                    contextual_assessment = assess_contextual_tool_action(
+                        "configured_tool",
+                        params,
+                        task_context,
+                    )
+                    if contextual_assessment is not None:
+                        return f"Error: {contextual_assessment.reason}"
                     if assessment.level == "blocked" and not (assessment.overridable and permission_mode == "all"):
                         return f"Error: {assessment.reason}"
                     if assessment.level == "confirm" and permission_mode != "all":
