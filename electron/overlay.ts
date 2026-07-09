@@ -222,7 +222,10 @@ export function showSoloOverlay(payload: OverlayPayload, isDev: boolean): { ok: 
     resizable: false,
     focusable: true,
     show: false,
-    transparent: true,
+    // 不透明窗口：禁用 GPU 合成时 transparent:true 在 Windows 上失效（回退成系统底色
+    // #e9e9ea 边框），故改用不透明窗口，背景由 styles.css 的 --bg-panel 跟随主题填充。
+    // backgroundColor 仅作 CSS 加载前的防闪底色（取 light 主题面板色）。
+    backgroundColor: "#ffffff",
     acceptFirstMouse: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),

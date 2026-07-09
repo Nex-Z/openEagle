@@ -335,9 +335,10 @@ export function showQuickAssistant(
     minHeight: QUICK_MIN_HEIGHT,
     focusable: true,
     show: false,
-    transparent: true,
-    backgroundColor: "#00000000",
-    hasShadow: true,
+    // 不透明窗口：禁用 GPU 合成时 transparent:true 在 Windows 上失效（回退成系统底色
+    // 边框），故改用不透明窗口，背景由 styles.css 的 --bg-panel 跟随主题填充。
+    // backgroundColor 仅作 CSS 加载前的防闪底色（取 light 主题面板色）。
+    backgroundColor: "#ffffff",
     acceptFirstMouse: true,
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
@@ -345,7 +346,6 @@ export function showQuickAssistant(
       nodeIntegration: false,
     },
   });
-  quickAssistantWindow.setBackgroundColor("#00000000");
 
   quickAssistantWindow.on("closed", () => {
     quickAssistantWindow = null;

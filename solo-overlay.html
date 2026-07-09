@@ -1,21 +1,36 @@
 <!DOCTYPE html>
-<html lang="zh">
+<html lang="zh" class="solo-overlay-page">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
     <title>SOLO Overlay</title>
+    <script>
+      (() => {
+        const defaultTheme = "light";
+        let themeMode = defaultTheme;
+        try {
+          const raw = window.localStorage.getItem("open-eagle/settings");
+          const settings = raw ? JSON.parse(raw) : null;
+          themeMode = settings?.appearance?.themeMode || defaultTheme;
+        } catch {
+          themeMode = defaultTheme;
+        }
+        const prefersDark = window.matchMedia?.("(prefers-color-scheme: dark)")?.matches;
+        document.documentElement.dataset.theme =
+          themeMode === "system" ? (prefersDark ? "dark" : "light") : themeMode;
+      })();
+    </script>
     <style>
       html, body, #app {
         margin: 0;
         padding: 0;
         width: 100%;
         height: 100%;
-        background: transparent;
         overflow: hidden;
       }
     </style>
   </head>
-  <body>
+  <body class="solo-overlay-page">
     <div id="app"></div>
     <script type="module" src="/src/soloOverlay.tsx"></script>
   </body>
