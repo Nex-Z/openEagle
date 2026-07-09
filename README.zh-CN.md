@@ -70,6 +70,16 @@ pnpm package:windows
 
 该命令会先构建 Python sidecar，再在 `release/` 下生成带版本号的 Windows 安装包，例如 `openEagle-0.1.0-win-x64.exe`。GitHub Actions 里的 `Package Desktop` workflow 会构建 Windows、macOS、Linux 三个平台产物。手动触发时填写 `release_tag`（例如 `v0.1.0`）会创建或更新对应 GitHub Release；留空则只生成可下载的 workflow artifacts。推送 `v*` tag 时也会自动把产物上传到对应 Release。
 
+### Agent 评测报告
+
+后端内置分层固定 agent 回归用例，用于在代码改动后检查路由、worker 选择、工具使用、真实工作区产物和最终答复真实性。默认命令运行 20 条 `core` 用例；设置 `AGENT_EVAL_REPORT_PROFILE=full` 可运行 100 条 visible 套件，或用 `holdout` / `variants` 做防过拟合检查。用 `AGENT_EVAL_CATEGORIES` 或 `AGENT_EVAL_CAPABILITY_TAGS` 只跑某一功能领域，例如命令执行、指令遵循、桌面操作、安全或效率。在 `backend` 目录下运行：
+
+```powershell
+uv run python tests/evals/run_agent_eval_report.py
+```
+
+该命令会把 JSON 和 Markdown 报告写入 `backend/.deepeval/reports/agent-loop-latest.*`。成功率由确定性规则决定；当 `EVAL_MODEL_*` 或 `DEEPSEEK_*` 凭据可用时，可选的 LLM Judge 会补充失败归因和修复建议。报告还会区分真实产品失败、效率问题、评测合同问题、runtime/trace 观测问题，以及每个 case 的 token 用量。smoke、holdout、variants、分类过滤、token 报告与门槛模式详见 `backend/tests/evals/README.md`。
+
 ### 底层流程
 
 ```
@@ -375,12 +385,12 @@ Skill 会以可迁移的目录形式保存：
 
 ## Roadmap
 
-- [x] 离开主窗口后，执行状态也能更清楚地呈现给用户（结构化悬浮窗 HUD）
 - [ ] 更快的响应操作（prompt caching 等）
 - [ ] macOS 和 Linux 支持
 - [ ] 社区插件系统
 - [ ] 会话回放与更完整的历史记录
 - [ ] 语音输入
+- [x] 离开主窗口后，执行状态也能更清楚地呈现给用户（结构化悬浮窗 HUD）
 - [x] Hermes 风格长期记忆：用户画像、用户笔记、Soul、原始事件与系统默认记忆工具
 - [x] 可配置上下文整理：token 阈值、最近消息保留、工具预清理、AI 中段摘要与 IM 静默窗口
 - [x] 定时任务：持久化存储、worker 执行、UI 管理与执行历史
