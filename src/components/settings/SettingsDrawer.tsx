@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from "react";
 import { convertFileSrc, invoke } from "../../lib/electron-bridge";
-import { ChevronDown, Feather, Monitor, SlidersHorizontal, Sparkles, Wrench, X } from "lucide-react";
+import { ChevronDown, Feather, Mic, Monitor, SlidersHorizontal, Sparkles, Wrench, X } from "lucide-react";
 import QRCode from "qrcode";
 import { ThemeToggle } from "../ThemeToggle";
 import type {
@@ -23,6 +23,7 @@ import { TokenUsagePanel } from "./TokenUsagePanel";
 export type SettingsSection =
   | "general"
   | "models"
+  | "voice_input"
   | "search"
   | "im"
   | "quick_assistant"
@@ -72,6 +73,7 @@ const sectionMeta: Array<{
 }> = [
   { id: "general", title: "General", summary: "外观与基础体验。" },
   { id: "models", title: "Models", summary: "文本模型和视觉模型接入。" },
+  { id: "voice_input", title: "语音输入", summary: "录音转文字与通义模型配置。" },
   { id: "search", title: "联网搜索", summary: "Tavily 搜索服务与额度选项。" },
   { id: "im", title: "IM", summary: "飞书、Telegram 与微信远程接入。" },
   { id: "quick_assistant", title: "悬浮助理", summary: "快捷唤起、选区读取与截图上下文。" },
@@ -670,6 +672,16 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
       ...settings,
       webSearch: {
         ...settings.webSearch,
+        ...patch,
+      },
+    });
+  };
+
+  const updateVoiceInputSettings = (patch: Partial<AppSettings["voiceInput"]>) => {
+    onChange({
+      ...settings,
+      voiceInput: {
+        ...settings.voiceInput,
         ...patch,
       },
     });
@@ -1537,6 +1549,83 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
                       value={settings.agent.vlBaseUrl}
                     />
                   </label>
+                </section>
+              </div>
+            ) : null}
+
+            {activeSection === "voice_input" ? (
+              <div className="settings-stack">
+                <section className="settings-panel">
+                  <div className="settings-panel-head">
+                    <div>
+                      <span className="card-kicker">Qwen ASR</span>
+                      <strong>语音输入</strong>
+                    </div>
+                    <Mic size={16} />
+                  </div>
+                  <label className="form-switch">
+                    <span>启用语音输入</span>
+                    <div className="toggle-switch">
+                      <input
+                        checked={settings.voiceInput.enabled}
+                        onChange={(event) =>
+                          updateVoiceInputSettings({ enabled: event.target.checked })
+                        }
+                        type="checkbox"
+                      />
+                      <span className="toggle-track" />
+                    </div>
+                  </label>
+                  <label className="form-field">
+                    <span>API Key</span>
+                    <SecretInput
+                      onChange={(apiKey) => updateVoiceInputSettings({ apiKey })}
+                      value={settings.voiceInput.apiKey}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>Base URL</span>
+                    <input
+                      onChange={(event) =>
+                        updateVoiceInputSettings({ baseUrl: event.target.value })
+                      }
+                      value={settings.voiceInput.baseUrl}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>模型 ID</span>
+                    <input
+                      onChange={(event) =>
+                        updateVoiceInputSettings({ modelId: event.target.value })
+                      }
+                      value={settings.voiceInput.modelId}
+                    />
+                  </label>
+                  <label className="form-field">
+                    <span>单次最长录音（秒）</span>
+                    <input
+                      max={300}
+                      min={10}
+                      onChange={(event) =>
+                        updateVoiceInputSettings({
+                          maxDurationSeconds: Math.min(
+                            300,
+                            readBoundedInteger(
+                              event.target.value,
+                              settings.voiceInput.maxDurationSeconds,
+                              10,
+                            ),
+                          ),
+                        })
+                      }
+                      type="number"
+                      value={settings.voiceInput.maxDurationSeconds}
+                    />
+                  </label>
+                  <div className="form-hint">
+                    <span>录音结束后才会转写，不会自动发送消息。</span>
+                    <span>空白或过短录音会在本地丢弃，不会消耗语音额度。</span>
+                  </div>
                 </section>
               </div>
             ) : null}

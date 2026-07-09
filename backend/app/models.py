@@ -60,6 +60,16 @@ class MessagePayload(BaseModel):
     history: list[ConversationHistoryMessage] = Field(default_factory=list)
 
 
+class AudioTranscriptionPayload(BaseModel):
+    audio_base64: str = Field(alias="audioBase64", min_length=1)
+    mime_type: str = Field(default="audio/webm", alias="mimeType")
+    duration_ms: int = Field(alias="durationMs", ge=1, le=300_000)
+
+    model_config = {
+        "populate_by_name": True,
+    }
+
+
 class ErrorPayload(BaseModel):
     message: str
     code: str | None = None

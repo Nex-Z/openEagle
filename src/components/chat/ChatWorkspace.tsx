@@ -7,6 +7,7 @@ import {
   FileText,
   Image as ImageIcon,
   LoaderCircle,
+  Mic,
   MonitorSmartphone,
   PanelLeftOpen,
   Paperclip,
@@ -15,6 +16,7 @@ import {
   ShieldAlert,
   ShieldCheck,
   SquareStop,
+  Square,
   X,
 } from "lucide-react";
 import ReactMarkdown from "react-markdown";
@@ -36,6 +38,11 @@ interface ChatWorkspaceProps {
   messages: ChatMessage[];
   canSend: boolean;
   onSend: (content: string, attachments?: AttachmentRef[]) => void;
+  onTranscribeAudio: (params: {
+    audioBase64: string;
+    mimeType: string;
+    durationMs: number;
+  }) => Promise<string>;
   onSoloPause: () => boolean;
   onSoloResume: () => boolean;
   onSoloStop: () => boolean;
@@ -61,6 +68,33 @@ type SlashItem = {
   enabled: boolean;
   keywords: string[];
 };
+
+type VoiceRecordingState = "idle" | "recording" | "transcribing";
+
+const MIN_VOICE_DURATION_MS = 1_000;
+const MIN_ACTIVE_VOICE_MS = 300;
+const MAX_VOICE_AUDIO_BYTES = 7 * 1024 * 1024;
+const VOICE_SAMPLE_INTERVAL_MS = 100;
+const VOICE_ACTIVITY_RMS_THRESHOLD = 0.015;
+
+function preferredVoiceMimeType() {
+  const candidates = ["audio/webm;codecs=opus", "audio/webm"];
+  return candidates.find((mimeType) => MediaRecorder.isTypeSupported(mimeType));
+}
+
+async function blobToBase64(blob: Blob) {
+  const buffer = await blob.arrayBuffer();
+  const bytes = new Uint8Array(buffer);
+  let binary = "";
+  for (let index = 0; index < bytes.length; index += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000));
+  }
+  return btoa(binary);
+}
+
+function formatVoiceDuration(seconds: number) {
+  return `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+}
 
 function buildSlashItems(settings: AppSettings): SlashItem[] {
   return [
@@ -1377,6 +1411,7 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
     messages,
     canSend,
     onSend,
+    onTranscribeAudio,
     onSoloPause,
     onSoloResume,
     onSoloStop,
@@ -1395,13 +1430,31 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
   const [draft, setDraft] = useState("");
   const [draftAttachments, setDraftAttachments] = useState<AttachmentRef[]>([]);
   const [attachmentError, setAttachmentError] = useState<string | null>(null);
+  const [voiceState, setVoiceState] = useState<VoiceRecordingState>("idle");
+  const [voiceElapsedSeconds, setVoiceElapsedSeconds] = useState(0);
+  const [voiceError, setVoiceError] = useState<string | null>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const [expandedTraceIds, setExpandedTraceIds] = useState<Set<string>>(new Set());
   const [expandedProcessGroups, setExpandedProcessGroups] = useState<Set<string>>(new Set());
+  const draftRef = useRef(draft);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const streamRef = useRef<HTMLDivElement | null>(null);
   const shouldStickToBottomRef = useRef(true);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const mediaStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const voiceSampleTimerRef = useRef<number | null>(null);
+  const voiceDisplayTimerRef = useRef<number | null>(null);
+  const voiceTimeoutRef = useRef<number | null>(null);
+  const voiceChunksRef = useRef<Blob[]>([]);
+  const voiceStartedAtRef = useRef(0);
+  const voiceDurationMsRef = useRef(0);
+  const activeVoiceMsRef = useRef(0);
+  const voiceActivityDetectionAvailableRef = useRef(false);
+  const voiceCancelledRef = useRef(false);
+
+  draftRef.current = draft;
 
   const slashItems = useMemo(() => buildSlashItems(settings), [settings]);
   const caretIndex = textareaRef.current?.selectionStart ?? draft.length;
@@ -1486,6 +1539,215 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
     const nextHeight = Math.min(Math.max(element.scrollHeight, 80), 170);
     element.style.height = `${nextHeight}px`;
   }, [draft]);
+
+  const clearVoiceTimers = () => {
+    if (voiceSampleTimerRef.current) {
+      window.clearInterval(voiceSampleTimerRef.current);
+      voiceSampleTimerRef.current = null;
+    }
+    if (voiceDisplayTimerRef.current) {
+      window.clearInterval(voiceDisplayTimerRef.current);
+      voiceDisplayTimerRef.current = null;
+    }
+    if (voiceTimeoutRef.current) {
+      window.clearTimeout(voiceTimeoutRef.current);
+      voiceTimeoutRef.current = null;
+    }
+  };
+
+  const releaseVoiceResources = () => {
+    clearVoiceTimers();
+    const context = audioContextRef.current;
+    audioContextRef.current = null;
+    if (context) {
+      void context.close().catch(() => {});
+    }
+    const stream = mediaStreamRef.current;
+    mediaStreamRef.current = null;
+    stream?.getTracks().forEach((track) => track.stop());
+    mediaRecorderRef.current = null;
+  };
+
+  const insertVoiceTranscript = (text: string) => {
+    const textarea = textareaRef.current;
+    const currentDraft = draftRef.current;
+    const start = textarea?.selectionStart ?? currentDraft.length;
+    const end = textarea?.selectionEnd ?? start;
+    const nextDraft = `${currentDraft.slice(0, start)}${text}${currentDraft.slice(end)}`;
+    setDraft(nextDraft);
+    setActiveIndex(0);
+    requestAnimationFrame(() => {
+      textarea?.focus();
+      const caret = start + text.length;
+      textarea?.setSelectionRange(caret, caret);
+    });
+  };
+
+  const stopVoiceRecording = () => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === "inactive") {
+      return;
+    }
+    voiceDurationMsRef.current = Math.max(1, Date.now() - voiceStartedAtRef.current);
+    clearVoiceTimers();
+    setVoiceState("transcribing");
+    recorder.stop();
+  };
+
+  const cancelVoiceRecording = () => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === "inactive") {
+      return;
+    }
+    voiceCancelledRef.current = true;
+    clearVoiceTimers();
+    setVoiceState("idle");
+    recorder.stop();
+  };
+
+  const startVoiceRecording = async () => {
+    if (
+      !settings.voiceInput.enabled ||
+      !settings.voiceInput.apiKey.trim() ||
+      !settings.voiceInput.baseUrl.trim() ||
+      !settings.voiceInput.modelId.trim()
+    ) {
+      setVoiceError("请先在设置 → 语音输入中完成配置。");
+      return;
+    }
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      setVoiceError("当前环境不支持麦克风录音。");
+      return;
+    }
+
+    setVoiceError(null);
+    voiceCancelledRef.current = false;
+    voiceChunksRef.current = [];
+    activeVoiceMsRef.current = 0;
+    voiceActivityDetectionAvailableRef.current = false;
+    voiceDurationMsRef.current = 0;
+    setVoiceElapsedSeconds(0);
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 1,
+          echoCancellation: true,
+          noiseSuppression: true,
+        },
+      });
+      const mimeType = preferredVoiceMimeType();
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      mediaStreamRef.current = stream;
+      mediaRecorderRef.current = recorder;
+      voiceStartedAtRef.current = Date.now();
+
+      try {
+        const context = new AudioContext();
+        const analyser = context.createAnalyser();
+        analyser.fftSize = 512;
+        void context.resume().catch(() => {});
+        context.createMediaStreamSource(stream).connect(analyser);
+        audioContextRef.current = context;
+        voiceActivityDetectionAvailableRef.current = true;
+        const sampleData = new Uint8Array(analyser.fftSize);
+        voiceSampleTimerRef.current = window.setInterval(() => {
+          analyser.getByteTimeDomainData(sampleData);
+          const rms = Math.sqrt(
+            sampleData.reduce((sum, sample) => {
+              const value = (sample - 128) / 128;
+              return sum + value * value;
+            }, 0) / sampleData.length,
+          );
+          if (rms >= VOICE_ACTIVITY_RMS_THRESHOLD) {
+            activeVoiceMsRef.current += VOICE_SAMPLE_INTERVAL_MS;
+          }
+        }, VOICE_SAMPLE_INTERVAL_MS);
+      } catch {
+        // 无法读取音量时保留录音能力，由服务端识别空白结果。
+      }
+
+      recorder.ondataavailable = (event) => {
+        if (event.data.size > 0) {
+          voiceChunksRef.current.push(event.data);
+        }
+      };
+      recorder.onstop = () => {
+        const chunks = voiceChunksRef.current;
+        const durationMs = voiceDurationMsRef.current || Date.now() - voiceStartedAtRef.current;
+        const activeVoiceMs = activeVoiceMsRef.current;
+        const cancelled = voiceCancelledRef.current;
+        const audioBlob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        voiceChunksRef.current = [];
+        releaseVoiceResources();
+
+        if (cancelled) {
+          return;
+        }
+        if (
+          durationMs < MIN_VOICE_DURATION_MS ||
+          (voiceActivityDetectionAvailableRef.current && activeVoiceMs < MIN_ACTIVE_VOICE_MS)
+        ) {
+          setVoiceError("录音过短或未检测到语音，未发送转写请求。");
+          setVoiceState("idle");
+          return;
+        }
+        if (audioBlob.size === 0 || audioBlob.size > MAX_VOICE_AUDIO_BYTES) {
+          setVoiceError("录音文件过大或无效，请缩短后重试。");
+          setVoiceState("idle");
+          return;
+        }
+
+        void blobToBase64(audioBlob)
+          .then((audioBase64) =>
+            onTranscribeAudio({
+              audioBase64,
+              mimeType: audioBlob.type || "audio/webm",
+              durationMs,
+            }),
+          )
+          .then((text) => {
+            if (!text.trim()) {
+              throw new Error("未识别到可用文字，请重新录制。");
+            }
+            insertVoiceTranscript(text);
+            setVoiceError(null);
+          })
+          .catch((error: unknown) => {
+            setVoiceError(error instanceof Error ? error.message : "语音转写失败，请稍后重试。");
+          })
+          .finally(() => {
+            setVoiceState("idle");
+          });
+      };
+      recorder.start(500);
+      setVoiceState("recording");
+      voiceDisplayTimerRef.current = window.setInterval(() => {
+        setVoiceElapsedSeconds(Math.floor((Date.now() - voiceStartedAtRef.current) / 1000));
+      }, 250);
+      voiceTimeoutRef.current = window.setTimeout(
+        stopVoiceRecording,
+        settings.voiceInput.maxDurationSeconds * 1000,
+      );
+    } catch (error) {
+      releaseVoiceResources();
+      setVoiceState("idle");
+      setVoiceError(error instanceof Error ? `无法开始录音：${error.message}` : "无法开始录音。");
+    }
+  };
+
+  useEffect(
+    () => () => {
+      voiceCancelledRef.current = true;
+      const recorder = mediaRecorderRef.current;
+      if (recorder && recorder.state !== "inactive") {
+        recorder.onstop = null;
+        recorder.stop();
+      }
+      releaseVoiceResources();
+    },
+    [],
+  );
 
   useEffect(() => {
     const stream = streamRef.current;
@@ -1643,6 +1905,11 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (voiceState === "recording" && event.key === "Escape") {
+      event.preventDefault();
+      cancelVoiceRecording();
+      return;
+    }
     if (slashQuery && flatItems.length > 0) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
@@ -1683,6 +1950,13 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
   };
 
   const permissionIsAll = settings.permissions.mode === "all";
+  const voiceInputReady =
+    settings.voiceInput.enabled &&
+    Boolean(
+      settings.voiceInput.apiKey.trim() &&
+        settings.voiceInput.baseUrl.trim() &&
+        settings.voiceInput.modelId.trim(),
+    );
   const virtualRows = messageVirtualizer.getVirtualItems();
 
   return (
@@ -1862,6 +2136,7 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
             />
           ) : null}
           {attachmentError ? <div className="attachment-error">{attachmentError}</div> : null}
+          {voiceError ? <div className="attachment-error">{voiceError}</div> : null}
 
           <div className="composer-input-wrap">
             <textarea
@@ -1944,6 +2219,45 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
               type="button"
             >
               <Paperclip size={14} />
+            </button>
+            {voiceState === "recording" ? (
+              <span className="voice-recording-status" aria-live="polite">
+                <span className="voice-recording-dot" />
+                {formatVoiceDuration(voiceElapsedSeconds)}
+              </span>
+            ) : null}
+            <button
+              aria-label={
+                voiceState === "recording"
+                  ? "结束录音并转写"
+                  : voiceState === "transcribing"
+                    ? "正在转写语音"
+                    : "开始语音输入"
+              }
+              className={voiceState === "recording" ? "attach-button voice-button is-recording" : "attach-button voice-button"}
+              disabled={
+                voiceState === "transcribing" ||
+                (voiceState === "idle" && (!canSend || !voiceInputReady))
+              }
+              onClick={() => {
+                if (voiceState === "recording") {
+                  stopVoiceRecording();
+                  return;
+                }
+                void startVoiceRecording();
+              }}
+              title={
+                voiceState === "recording"
+                  ? "结束录音并转写"
+                  : voiceState === "transcribing"
+                    ? "正在转写..."
+                    : voiceInputReady
+                      ? "开始语音输入"
+                      : "请先在设置 → 语音输入中完成配置"
+              }
+              type="button"
+            >
+              {voiceState === "recording" ? <Square size={13} fill="currentColor" /> : <Mic size={14} />}
             </button>
             <button
               aria-label={isSoloBusy ? "停止桌面执行" : "发送消息"}

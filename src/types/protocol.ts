@@ -253,6 +253,14 @@ export interface WebSearchSettings {
   maxResults: number;
 }
 
+export interface VoiceInputSettings {
+  enabled: boolean;
+  apiKey: string;
+  baseUrl: string;
+  modelId: string;
+  maxDurationSeconds: number;
+}
+
 export interface AppSettings {
   feishu: FeishuSettings;
   telegram: TelegramSettings;
@@ -267,6 +275,7 @@ export interface AppSettings {
   tools: ToolConfig[];
   builtinTools: BuiltinToolConfig[];
   webSearch: WebSearchSettings;
+  voiceInput: VoiceInputSettings;
   mcp: McpServerConfig[];
   skills: SkillConfig[];
 }

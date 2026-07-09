@@ -124,6 +124,29 @@ function normalizeWebSearch(raw: unknown): AppSettings["webSearch"] {
   };
 }
 
+function normalizeVoiceInput(raw: unknown): AppSettings["voiceInput"] {
+  const value =
+    raw && typeof raw === "object"
+      ? (raw as Partial<AppSettings["voiceInput"]>)
+      : {};
+  const maxDurationSeconds = Number(value.maxDurationSeconds);
+  return {
+    enabled: Boolean(value.enabled),
+    apiKey: typeof value.apiKey === "string" ? value.apiKey : "",
+    baseUrl:
+      typeof value.baseUrl === "string" && value.baseUrl.trim()
+        ? value.baseUrl
+        : "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    modelId:
+      typeof value.modelId === "string" && value.modelId.trim()
+        ? value.modelId
+        : "qwen3-asr-flash",
+    maxDurationSeconds: Number.isFinite(maxDurationSeconds)
+      ? Math.max(10, Math.min(Math.round(maxDurationSeconds), 300))
+      : 120,
+  };
+}
+
 function isUnmodifiedLegacyMcp(server: AppSettings["mcp"][number]) {
   return (
     server.id === LEGACY_DEFAULT_MCP.id &&
@@ -216,6 +239,13 @@ export const defaultSettings: AppSettings = {
     apiKey: "",
     searchDepth: "basic",
     maxResults: 5,
+  },
+  voiceInput: {
+    enabled: false,
+    apiKey: "",
+    baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1",
+    modelId: "qwen3-asr-flash",
+    maxDurationSeconds: 120,
   },
   mcp: [],
   skills: [],
@@ -342,6 +372,7 @@ export function loadSettings(): AppSettings {
       tools: normalizeTools(parsed.tools),
       builtinTools: normalizeBuiltinTools(parsed.builtinTools),
       webSearch: normalizeWebSearch(parsed.webSearch),
+      voiceInput: normalizeVoiceInput(parsed.voiceInput),
       mcp: Array.isArray(parsed.mcp)
         ? parsed.mcp.filter((server) => !isUnmodifiedLegacyMcp(server))
         : defaultSettings.mcp,
@@ -374,6 +405,7 @@ export async function loadSettingsFromFile(): Promise<AppSettings | null> {
       ...defaultSettings,
       ...raw,
       webSearch: normalizeWebSearch(raw.webSearch),
+      voiceInput: normalizeVoiceInput(raw.voiceInput),
     } as AppSettings;
   } catch {
     return null;

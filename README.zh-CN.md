@@ -212,6 +212,9 @@ openEagle 支持灵活的模型路由——main agent 文本对话和 Vision-Lan
 | `webSearch.provider`                                  | 内置联网搜索提供商（`tavily` 或 `disabled`）      |
 | `webSearch.apiKey`                                    | Tavily API Key，也可使用 `TAVILY_API_KEY` 环境变量 |
 | `webSearch.searchDepth` / `webSearch.maxResults`      | 搜索深度与默认结果数量                            |
+| `voiceInput.enabled`                                  | 启用主聊天输入框中的麦克风入口                    |
+| `voiceInput.apiKey` / `voiceInput.baseUrl` / `voiceInput.modelId` | 独立的通义语音识别凭据与模型（默认 `qwen3-asr-flash`） |
+| `voiceInput.maxDurationSeconds`                       | 单次录音时长上限，默认 120 秒，范围 10–300 秒     |
 | `feishu.enabled`                                      | 启用飞书远程入口                                  |
 | `feishu.appId` / `feishu.appSecret`                   | 飞书长连接应用凭据                                |
 | `feishu.allowedOpenIds` / `feishu.allowedChatIds`     | 飞书用户/会话白名单                               |
@@ -233,6 +236,12 @@ openEagle 支持灵活的模型路由——main agent 文本对话和 Vision-Lan
 | `skills`                                              | 自定义 Skill 行为指令，保存于 `.open-eagle/skills/`（[详见下方](#skill--注入私域经验)） |
 
 模型、联网搜索凭据、IM、上下文和界面偏好仍保存在本机 `.open-eagle/settings.json`。MCP 与 Skill 定义改为文件态存储，方便用户审阅、复制到其他机器，或单独纳入版本管理。Tavily API Key 不会写入 `.open-eagle/mcp.json`；旧版 `settings.json` 中已有的 `mcp` / `skills` 数组会在启动时自动迁移为文件。
+
+### 语音输入
+
+在 **Settings -> 语音输入** 中配置独立的通义语音识别 API Key、Base URL 与模型，并开启功能。随后点击主聊天输入框中发送按钮左侧的麦克风开始录音；再次点击即可停止并转写。识别出的文字会插入当前光标位置，绝不会自动发送，你可以先编辑、补充或删除。
+
+为控制成本和保护隐私，短于 1 秒或本地未检测到足够语音的录音会在上传前丢弃；达到设置的时长上限会自动停止。原始音频不会写入会话、附件、日志或本地文件。
 
 ### Langfuse Tracing
 
@@ -387,7 +396,7 @@ Skill 会以可迁移的目录形式保存：
 - [ ] macOS 和 Linux 支持
 - [ ] 社区插件系统
 - [ ] 会话回放与更完整的历史记录
-- [ ] 语音输入
+- [x] 语音输入：主聊天框接入通义语音识别，并在本地过滤静音录音
 - [x] 离开主窗口后，执行状态也能更清楚地呈现给用户（结构化悬浮窗 HUD）
 - [x] Hermes 风格长期记忆：用户画像、用户笔记、Soul、原始事件与系统默认记忆工具
 - [x] 可配置上下文整理：token 阈值、最近消息保留、工具预清理、AI 中段摘要与 IM 静默窗口

@@ -29,6 +29,7 @@ from .im.models import IMConversationBinding
 from .im.outbound import RemoteOutboundService
 from .memory import MemoryService, init_db as init_memory_db
 from .models import (
+    AudioTranscriptionPayload,
     AttachmentRef,
     Envelope,
     ErrorPayload,
@@ -78,6 +79,7 @@ from .token_usage import (
     token_usage_dashboard,
     token_usage_scope,
 )
+from .voice_transcription import VoiceTranscriptionError, transcribe_audio
 
 app = FastAPI(title="openEagle Agent Backend")
 config = load_config()
@@ -171,6 +173,10 @@ def _client_payload_summary(type_: str, payload: dict[str, Any]) -> str:
                 f" mcp={len(settings.get('mcp') or [])}"
                 f" skills={len(settings.get('skills') or [])}"
             )
+    if type_ == "client:transcribe_audio":
+        duration_ms = payload.get("durationMs")
+        mime_type = payload.get("mimeType")
+        return f" duration_ms={duration_ms} mime_type={mime_type}"
     if type_.startswith("client:memory_"):
         notes = payload.get("notes")
         note_count = len(notes) if isinstance(notes, list) else 0
@@ -1868,6 +1874,42 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
             raw = await websocket.receive_text()
             envelope = Envelope.model_validate_json(raw)
             log_client_event(envelope)
+
+            if envelope.type == "client:transcribe_audio":
+                audio_payload = AudioTranscriptionPayload.model_validate(envelope.payload)
+                voice_config = runtime_state.get_config().voice_input
+                if audio_payload.duration_ms > voice_config.max_duration_seconds * 1000:
+                    await safe_send(
+                        "server:error",
+                        envelope.request_id,
+                        envelope.conversation_id,
+                        ErrorPayload(
+                            message="录音超过当前时长限制，请缩短后重试。",
+                            code="voice_duration_exceeded",
+                        ).model_dump(),
+                    )
+                    continue
+                try:
+                    text = await transcribe_audio(
+                        voice_config,
+                        audio_base64=audio_payload.audio_base64,
+                        mime_type=audio_payload.mime_type,
+                    )
+                except VoiceTranscriptionError as exc:
+                    await safe_send(
+                        "server:error",
+                        envelope.request_id,
+                        envelope.conversation_id,
+                        ErrorPayload(message=exc.message, code=exc.code).model_dump(),
+                    )
+                    continue
+                await safe_send(
+                    "server:audio_transcribed",
+                    envelope.request_id,
+                    envelope.conversation_id,
+                    {"text": text},
+                )
+                continue
 
             if envelope.type == "client:update_settings":
                 next_config = AppConfig.model_validate(envelope.payload["settings"])

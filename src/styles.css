@@ -4726,6 +4726,35 @@ a {
     0 1px 0 rgba(255, 255, 255, 0.46) inset;
 }
 
+.voice-button.is-recording {
+  color: #dc2626;
+  background: rgba(254, 226, 226, 0.78);
+  animation: voice-recording-pulse 1.2s ease-in-out infinite;
+}
+
+.voice-recording-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 42px;
+  color: #b91c1c;
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+}
+
+.voice-recording-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+@keyframes voice-recording-pulse {
+  50% {
+    box-shadow: 0 0 0 4px rgba(220, 38, 38, 0.12);
+  }
+}
+
 .permission-status.is-all,
 .current-action-target,
 .trace-status-completed,
@@ -5145,5 +5174,4 @@ body.solo-overlay-page #app {
 .quick-response-head .spin {
   animation: spin 1s linear infinite;
 }
-
 

@@ -213,6 +213,9 @@ Key settings (accessible from the in-app Settings panel):
 | `webSearch.provider` | Built-in search provider (`tavily` or `disabled`) |
 | `webSearch.apiKey` | Tavily API key; `TAVILY_API_KEY` is also supported |
 | `webSearch.searchDepth` / `webSearch.maxResults` | Search depth and default result count |
+| `voiceInput.enabled` | Enables microphone input in the main chat composer |
+| `voiceInput.apiKey` / `voiceInput.baseUrl` / `voiceInput.modelId` | Dedicated Qwen ASR-compatible credentials and model (default: `qwen3-asr-flash`) |
+| `voiceInput.maxDurationSeconds` | Per-recording limit in seconds (default: 120, range: 10–300) |
 | `feishu.enabled` | Enable the Feishu remote entry |
 | `feishu.appId` / `feishu.appSecret` | Feishu app credentials for long-connection events |
 | `feishu.allowedOpenIds` / `feishu.allowedChatIds` | Feishu user/chat whitelist |
@@ -234,6 +237,12 @@ Key settings (accessible from the in-app Settings panel):
 | `skills` | Custom skill directives, stored under `.open-eagle/skills/` ([see below](#skill--inject-domain-specific-knowledge)) |
 
 Model settings, web-search credentials, IM, context, and UI preferences are saved in the local `.open-eagle/settings.json`. MCP and Skill definitions are file-backed so they can be reviewed, copied between machines, or versioned separately from runtime preferences. The Tavily API key is never written to `.open-eagle/mcp.json`. Older `settings.json` files that still contain `mcp` or `skills` arrays are migrated automatically on startup.
+
+### Voice Input
+
+Open **Settings -> 语音输入** to configure a dedicated Qwen ASR API key, base URL, and model. After enabling it, click the microphone immediately left of the send button in the main chat composer; click it again to stop and transcribe. The recognized text is inserted at the current cursor position and is never sent automatically, so you can edit it first.
+
+To protect quota and privacy, recordings shorter than one second or without enough locally detected speech are discarded before upload. Recording stops at the configured limit, and the app does not persist raw audio in conversations, attachments, logs, or local files.
 
 ### Langfuse tracing
 
@@ -390,7 +399,7 @@ All three compose. For example: an MCP server that provides database queries, a 
 - [ ] macOS and Linux support
 - [ ] Community plugin system
 - [ ] Session replay and richer history
-- [ ] Voice input
+- [x] Voice input: Qwen ASR transcription in the main chat composer with local silence filtering
 - [x] Hermes-style long-term memory: user profile, user notes, Soul, raw events, and built-in memory tools
 - [x] Configurable context cleanup: token threshold, recent-message preservation, tool pre-cleaning, AI middle summaries, and IM idle windows
 - [x] Scheduled tasks with persistent storage, worker execution, UI management, and run history

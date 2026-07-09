@@ -434,6 +434,11 @@ type PendingMessageDelta = {
   timestamp: string;
 };
 
+type PendingAudioTranscription = {
+  resolve: (text: string) => void;
+  reject: (message: string) => void;
+};
+
 export function useBackendConnection(
   conversationId: string,
   settings: AppSettings,
@@ -488,6 +493,7 @@ export function useBackendConnection(
   const parentMessageSyncTimerRef = useRef<number | null>(null);
   const pendingMessageDeltasRef = useRef<Map<string, PendingMessageDelta>>(new Map());
   const pendingScheduledRunRequestsRef = useRef<Map<string, string>>(new Map());
+  const pendingAudioTranscriptionsRef = useRef<Map<string, PendingAudioTranscription>>(new Map());
   const tokenUsageByRequestRef = useRef<Map<string, TokenUsageSummary>>(new Map());
   const deltaFlushTimerRef = useRef<number | null>(null);
   const activeSoloRequestIdRef = useRef<string | null>(null);
@@ -854,6 +860,10 @@ export function useBackendConnection(
         socketRef.current = null;
       }
       activePortRef.current = null;
+      for (const pending of pendingAudioTranscriptionsRef.current.values()) {
+        pending.reject("后端连接已断开，语音转写未完成。");
+      }
+      pendingAudioTranscriptionsRef.current.clear();
 
       const nextRetry = retryCountRef.current + 1;
       retryCountRef.current = nextRetry;
@@ -928,6 +938,7 @@ export function useBackendConnection(
           error?: string;
           requestUsage?: TokenUsageSummary & { requestId: string };
           dashboard?: TokenUsageDashboard;
+          text?: string;
         } & ErrorPayload &
           StatusPayload
       >;
@@ -945,6 +956,15 @@ export function useBackendConnection(
           }),
         );
       };
+
+      if (envelope.type === "server:audio_transcribed") {
+        const pending = pendingAudioTranscriptionsRef.current.get(envelope.requestId);
+        if (pending) {
+          pendingAudioTranscriptionsRef.current.delete(envelope.requestId);
+          pending.resolve(envelope.payload.text?.trim() ?? "");
+        }
+        return;
+      }
 
       if (envelope.type === "server:im_status") {
         if (envelope.payload.provider && envelope.payload.state) {
@@ -1598,6 +1618,12 @@ export function useBackendConnection(
       }
 
       if (envelope.type === "server:error") {
+        const pendingAudio = pendingAudioTranscriptionsRef.current.get(envelope.requestId);
+        if (pendingAudio) {
+          pendingAudioTranscriptionsRef.current.delete(envelope.requestId);
+          pendingAudio.reject(envelope.payload.message ?? "语音转写失败，请稍后重试。");
+          return;
+        }
         const pendingTaskId = pendingScheduledRunRequestsRef.current.get(envelope.requestId);
         if (pendingTaskId) {
           pendingScheduledRunRequestsRef.current.delete(envelope.requestId);
@@ -1891,6 +1917,32 @@ export function useBackendConnection(
     return { ok: true, requestId };
   }, [conversationId, messages, settings.context.conversationTurnLimit]);
 
+  const transcribeAudio = useCallback((params: {
+    audioBase64: string;
+    mimeType: string;
+    durationMs: number;
+  }) => {
+    const socket = socketRef.current;
+    if (!socket || socket.readyState !== WebSocket.OPEN) {
+      return Promise.reject("后端服务未就绪，无法转写语音。");
+    }
+    const requestId = createId("voice");
+    const envelope: Envelope<typeof params> = {
+      type: "client:transcribe_audio",
+      requestId,
+      conversationId,
+      payload: params,
+      timestamp: new Date().toISOString(),
+    };
+    return new Promise<string>((resolve, reject) => {
+      pendingAudioTranscriptionsRef.current.set(requestId, {
+        resolve,
+        reject: (message) => reject(new Error(message)),
+      });
+      socket.send(JSON.stringify(envelope));
+    });
+  }, [conversationId]);
+
   const pauseSolo = useCallback(() => sendSoloControl({ action: "pause" }), [sendSoloControl]);
   const resumeSolo = useCallback(() => sendSoloControl({ action: "resume" }), [sendSoloControl]);
   const stopSolo = useCallback(() => sendSoloControl({ action: "stop" }), [sendSoloControl]);
@@ -2038,6 +2090,7 @@ export function useBackendConnection(
     messages,
     canSend: backend.phase === "connected",
     sendMessage,
+    transcribeAudio,
     statusDetail,
     statusLine,
     soloStatus,

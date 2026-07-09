@@ -344,6 +344,7 @@ export default function App() {
     messages,
     canSend,
     sendMessage,
+    transcribeAudio,
     statusLine,
     statusDetail,
     soloStatus,
@@ -843,6 +844,7 @@ export default function App() {
             onRejectDangerousStep={rejectDangerousStep}
             onRejectToolConfirmation={rejectToolConfirmation}
             onSend={sendMessage}
+            onTranscribeAudio={transcribeAudio}
             onSoloPause={pauseSolo}
             onSoloResume={resumeSolo}
             onSoloStop={stopSolo}

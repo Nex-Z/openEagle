@@ -62,6 +62,26 @@ class WebSearchConfig(BaseModel):
     }
 
 
+class VoiceInputConfig(BaseModel):
+    enabled: bool = False
+    api_key: str | None = Field(default=None, alias="apiKey")
+    base_url: str = Field(
+        default="https://dashscope.aliyuncs.com/compatible-mode/v1",
+        alias="baseUrl",
+    )
+    model_id: str = Field(default="qwen3-asr-flash", alias="modelId")
+    max_duration_seconds: int = Field(
+        default=120,
+        ge=10,
+        le=300,
+        alias="maxDurationSeconds",
+    )
+
+    model_config = {
+        "populate_by_name": True,
+    }
+
+
 class SoloConfig(BaseModel):
     preferred_display_index: int = Field(default=1, alias="preferredDisplayIndex")
 
@@ -203,6 +223,7 @@ class AppConfig(BaseModel):
     tools: list[ToolConfig] = Field(default_factory=list)
     builtin_tools: list[BuiltinToolConfig] = Field(default_factory=list, alias="builtinTools")
     web_search: WebSearchConfig = Field(default_factory=WebSearchConfig, alias="webSearch")
+    voice_input: VoiceInputConfig = Field(default_factory=VoiceInputConfig, alias="voiceInput")
     mcp: list[McpConfig] = Field(default_factory=list)
     skills: list[SkillConfig] = Field(default_factory=list)
 
