@@ -18,6 +18,7 @@ from app.attachments import AttachmentStore
 from app.config import AgentConfig, AppConfig, PermissionConfig, WebSearchConfig
 from app.confirmations import ToolConfirmationStore
 from app.subagent_models import AgentRouteDecision
+from app.token_usage import init_token_usage_db, token_usage_scope
 
 TRACE_ONLY_TOOL_PARAM_KEYS = {"agentTaskId", "workerKind"}
 
@@ -33,6 +34,7 @@ class AgentLoopRun:
     duration_seconds: float
     workspace_root: Path
     workspace_files: dict[str, str] = field(default_factory=dict)
+    token_usage: dict[str, Any] = field(default_factory=dict)
 
     @property
     def tool_names(self) -> list[str]:
@@ -246,13 +248,19 @@ async def run_agent_golden(
         )
         conversation_id = f"eval-{uuid4().hex}"
         request_id = f"request-{uuid4().hex}"
+        init_token_usage_db(workspace_root / ".open-eagle" / "eval-token-usage.db")
         started = time.perf_counter()
-        with patch.object(AgentRouter, "route", capture_route):
-            output = await runtime.handle_user_message(
-                conversation_id,
-                request_id,
-                input_text,
-            )
+        async with token_usage_scope(
+            request_id=request_id,
+            conversation_id=conversation_id,
+            source="agent_eval",
+        ) as request_usage:
+            with patch.object(AgentRouter, "route", capture_route):
+                output = await runtime.handle_user_message(
+                    conversation_id,
+                    request_id,
+                    input_text,
+                )
         duration_seconds = time.perf_counter() - started
         decision = captured_decisions[-1]
         tools_called = tool_calls_from_events(events)
@@ -320,4 +328,5 @@ async def run_agent_golden(
             duration_seconds=duration_seconds,
             workspace_root=workspace_root,
             workspace_files=workspace_files,
+            token_usage=request_usage.payload(),
         )

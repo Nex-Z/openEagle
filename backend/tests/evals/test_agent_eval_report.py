@@ -21,6 +21,7 @@ from agent_loop_case_catalog import (
 from agent_loop_harness import AgentLoopRun
 from run_agent_eval_report import (
     ALLOWED_FAILURE_STAGES,
+    ALLOWED_FUNCTIONAL_CATEGORIES,
     DATASET_PATH,
     _json_from_model_text,
     _normalize_judge_result,
@@ -113,6 +114,11 @@ def test_agent_loop_dataset_contract() -> None:
     assert len({case["name"] for case in cases}) == TOTAL_CASE_COUNT
     assert "judge" in ALLOWED_FAILURE_STAGES
     assert "constraint_following" in ALLOWED_FAILURE_STAGES
+    assert "command_execution" in ALLOWED_FUNCTIONAL_CATEGORIES
+    assert all(
+        case["additional_metadata"]["functional_category"] in ALLOWED_FUNCTIONAL_CATEGORIES
+        for case in cases
+    )
     assert sum("smoke" in case["additional_metadata"]["profiles"] for case in cases) >= 10
     assert sum("core" in case["additional_metadata"]["profiles"] for case in cases) == CORE_CASE_COUNT
     assert sum("full" in case["additional_metadata"]["profiles"] for case in cases) == FULL_CASE_COUNT
@@ -134,6 +140,29 @@ def test_report_profiles_select_expected_slices(monkeypatch) -> None:
     monkeypatch.setenv("AGENT_EVAL_REPORT_PROFILE", "smoke")
     smoke_cases = _selected_cases(cases)
     assert 10 <= len(smoke_cases) < CORE_CASE_COUNT
+
+    monkeypatch.setenv("AGENT_EVAL_REPORT_PROFILE", "full")
+    monkeypatch.setenv("AGENT_EVAL_CATEGORIES", "command_execution")
+    command_cases = _selected_cases(cases)
+    assert command_cases
+    assert all(
+        case["additional_metadata"]["functional_category"] == "command_execution"
+        for case in command_cases
+    )
+
+    monkeypatch.delenv("AGENT_EVAL_CATEGORIES")
+    monkeypatch.setenv("AGENT_EVAL_CAPABILITY_TAGS", "negative_constraints")
+    tagged_cases = _selected_cases(cases)
+    assert tagged_cases
+    assert all(
+        "negative_constraints" in case["additional_metadata"].get("capability_tags", [])
+        for case in tagged_cases
+    )
+
+    monkeypatch.delenv("AGENT_EVAL_CAPABILITY_TAGS")
+    monkeypatch.setenv("AGENT_EVAL_CASE_FILTER", "cmd_json")
+    filtered_cases = _selected_cases(cases)
+    assert [case["name"] for case in filtered_cases] == ["cmd_json_dump"]
 
 
 def test_verify_rules_assigns_diagnostic_stages() -> None:
@@ -222,12 +251,46 @@ def test_render_markdown_includes_failure_summary_and_judge_reason() -> None:
             "stage_failure_counts": {"routing": 1},
             "failure_category_counts": {"product_failure": 1, "none": 1},
             "layer_pass_rates": {"unit": 0.5},
+            "functional_category_pass_rates": {"command_execution": 0.5},
             "capability_pass_rates": {"routing": 0.5},
+            "token_usage": {
+                "agent": {
+                    "input_tokens": 100,
+                    "output_tokens": 50,
+                    "total_tokens": 150,
+                    "calls": 2,
+                    "models": ["model"],
+                    "average_tokens_per_case": 75,
+                    "median_tokens_per_case": 75,
+                    "max_tokens_per_case": 100,
+                },
+                "judge": {
+                    "input_tokens": 10,
+                    "output_tokens": 5,
+                    "total_tokens": 15,
+                    "calls": 1,
+                    "models": ["judge"],
+                    "average_tokens_per_case": 7.5,
+                    "median_tokens_per_case": 7.5,
+                    "max_tokens_per_case": 15,
+                },
+                "total": {
+                    "input_tokens": 110,
+                    "output_tokens": 55,
+                    "total_tokens": 165,
+                    "calls": 3,
+                    "models": ["judge", "model"],
+                    "average_tokens_per_case": 82.5,
+                    "median_tokens_per_case": 82.5,
+                    "max_tokens_per_case": 115,
+                },
+            },
             "failure_cases": [
                 {
                     "id": "bad_case",
                     "index": 2,
                     "layer": "unit",
+                    "functional_category": "command_execution",
                     "stages": ["routing"],
                     "reasons": ["routing: bad route"],
                     "judge_reasons": ["路由选择错误"],
@@ -240,11 +303,13 @@ def test_render_markdown_includes_failure_summary_and_judge_reason() -> None:
                     "id": "good_case",
                     "index": 1,
                     "layer": "unit",
+                    "functional_category": "command_execution",
                     "passed": True,
                     "route": "delegate_new",
                     "worker_kind": "coding",
                     "tools_called": ["read_text_file"],
                     "duration_seconds": 1,
+                    "total_token_usage": {"total_tokens": 50},
                     "failure_category": "none",
                     "rule_failures": [],
                     "judge": None,
@@ -253,11 +318,13 @@ def test_render_markdown_includes_failure_summary_and_judge_reason() -> None:
                     "id": "bad_case",
                     "index": 2,
                     "layer": "unit",
+                    "functional_category": "command_execution",
                     "passed": False,
                     "route": "answer_directly",
                     "worker_kind": "general",
                     "tools_called": [],
                     "duration_seconds": 2,
+                    "total_token_usage": {"total_tokens": 115},
                     "failure_category": "product_failure",
                     "rule_failures": [{"stage": "routing", "message": "bad route"}],
                     "judge": {
@@ -273,6 +340,8 @@ def test_render_markdown_includes_failure_summary_and_judge_reason() -> None:
     )
 
     assert "Success: 1/2 (50.0%)" in markdown
+    assert "Total tokens: 165" in markdown
+    assert "## Functional Category Pass Rates" in markdown
     assert "## Failure Cases" in markdown
     assert "bad_case" in markdown
     assert "路由选择错误" in markdown

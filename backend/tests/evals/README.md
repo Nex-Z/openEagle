@@ -91,6 +91,36 @@ $env:AGENT_EVAL_REPORT_PROFILE="full"
 uv run python tests/evals/run_agent_eval_report.py
 ```
 
+按功能分类跑局部报告，避免每次消耗完整 full 成本：
+
+```powershell
+$env:AGENT_EVAL_REPORT_PROFILE="full"
+$env:AGENT_EVAL_CATEGORIES="command_execution"
+uv run python tests/evals/run_agent_eval_report.py
+
+$env:AGENT_EVAL_CATEGORIES="instruction_following,safety"
+uv run python tests/evals/run_agent_eval_report.py
+```
+
+常用功能分类包括：`command_execution`、`instruction_following`、`desktop_operation`、`safety`、`tool_selection`、`file_grounding`、`file_artifact`、`error_recovery`、`efficiency`、`direct_answer`。
+
+按能力标签或 case 名进一步缩小范围：
+
+```powershell
+$env:AGENT_EVAL_CAPABILITY_TAGS="negative_constraints,tool_selection"
+uv run python tests/evals/run_agent_eval_report.py
+
+$env:AGENT_EVAL_CASE_FILTER="safety_no_delete"
+uv run python tests/evals/run_agent_eval_report.py
+```
+
+为了控制成本，报告默认不启用 judge；需要失败归因时再显式开启：
+
+```powershell
+$env:AGENT_EVAL_JUDGE="1"
+uv run python tests/evals/run_agent_eval_report.py
+```
+
 设置最低成功率门槛，低于门槛时命令退出码为 1：
 
 ```powershell
@@ -111,6 +141,7 @@ uv run python tests/evals/run_agent_eval_report.py
 `AGENT_EVAL_REPORT_PROFILE` 支持 `smoke`、`core`、`full`、`holdout`、`variants`。报告会写入 `backend/.deepeval/reports/agent-loop-latest.json` 和
 `backend/.deepeval/reports/agent-loop-latest.md`。成功率只由确定性规则决定；
 LLM Judge 负责补充失败 stage、原因和修复建议，不单独推翻规则结果。报告会同时区分真实产品失败、效率问题、评测合同问题和 runtime/trace 观测问题。
+报告还会输出总 token、每个 case 的 agent/judge/total token、平均/中位/最大 token，用于定位高成本任务。
 
 跑多轮会话：
 

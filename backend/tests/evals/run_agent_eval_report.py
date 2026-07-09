@@ -18,8 +18,13 @@ if str(_backend_dir) not in sys.path:
 if str(_evals_dir) not in sys.path:
     sys.path.insert(0, str(_evals_dir))
 
-from agent_loop_case_catalog import TOTAL_CASE_COUNT, load_agent_loop_cases
+from agent_loop_case_catalog import (
+    FUNCTIONAL_CATEGORIES,
+    TOTAL_CASE_COUNT,
+    load_agent_loop_cases,
+)
 from agent_loop_harness import AgentLoopRun, run_agent_golden
+from app.token_usage import normalize_usage
 
 
 DATASET_PATH = _evals_dir / ".agent_loop_dataset.json"
@@ -43,6 +48,7 @@ ALLOWED_FAILURE_STAGES = {
     "none",
 }
 ALLOWED_PROFILES = {"full", "core", "smoke", "holdout", "variants"}
+ALLOWED_FUNCTIONAL_CATEGORIES = FUNCTIONAL_CATEGORIES
 PRODUCT_FAILURE_STAGES = {
     "instruction_understanding",
     "constraint_following",
@@ -147,6 +153,11 @@ def validate_dataset(cases: list[dict[str, Any]]) -> None:
                 _require_str_list(metadata[field], field, case_id)
         if "eval_split" in metadata and metadata["eval_split"] not in {"visible", "holdout"}:
             raise ValueError(f"{case_id}: eval_split 必须是 visible 或 holdout")
+        category = metadata.get("functional_category")
+        if not isinstance(category, str) or not category.strip():
+            raise ValueError(f"{case_id}: functional_category 必须是非空字符串")
+        if category not in ALLOWED_FUNCTIONAL_CATEGORIES:
+            raise ValueError(f"{case_id}: functional_category 包含未知值 {category!r}")
         for group in metadata.get("required_tool_groups", []):
             _require_str_list(group, "required_tool_groups[]", case_id)
         if int(metadata.get("max_tool_calls", 0)) < 0:
@@ -167,6 +178,32 @@ def _selected_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for case in cases
         if profile in set(case.get("additional_metadata", {}).get("profiles", []))
     ]
+    category_filter = _csv_env("AGENT_EVAL_CATEGORIES")
+    if category_filter:
+        unknown = sorted(set(category_filter) - ALLOWED_FUNCTIONAL_CATEGORIES)
+        if unknown:
+            raise ValueError(f"AGENT_EVAL_CATEGORIES 包含未知分类 {unknown}")
+        selected = [
+            case
+            for case in selected
+            if case.get("additional_metadata", {}).get("functional_category") in category_filter
+        ]
+    capability_filter = _csv_env("AGENT_EVAL_CAPABILITY_TAGS")
+    if capability_filter:
+        wanted = set(capability_filter)
+        selected = [
+            case
+            for case in selected
+            if wanted.intersection(case.get("additional_metadata", {}).get("capability_tags", []))
+        ]
+    case_filter = os.environ.get("AGENT_EVAL_CASE_FILTER", "").strip().lower()
+    if case_filter:
+        selected = [
+            case
+            for case in selected
+            if case_filter in _case_id(case).lower()
+            or case_filter in str(case.get("input", "")).lower()
+        ]
     limit = os.environ.get("AGENT_EVAL_LIMIT")
     if limit:
         parsed_limit = int(limit)
@@ -174,6 +211,11 @@ def _selected_cases(cases: list[dict[str, Any]]) -> list[dict[str, Any]]:
             raise ValueError("AGENT_EVAL_LIMIT 必须是正整数")
         selected = selected[:parsed_limit]
     return selected
+
+
+def _csv_env(name: str) -> list[str]:
+    raw = os.environ.get(name, "")
+    return [item.strip() for item in raw.split(",") if item.strip()]
 
 
 def _failure(stage: str, message: str) -> dict[str, str]:
@@ -371,6 +413,63 @@ def _tool_payloads(run: AgentLoopRun) -> list[dict[str, Any]]:
     return payloads
 
 
+def _usage_from_payload(payload: dict[str, Any] | None) -> dict[str, Any]:
+    payload = payload or {}
+    return {
+        "input_tokens": int(payload.get("inputTokens", payload.get("input_tokens", 0)) or 0),
+        "output_tokens": int(payload.get("outputTokens", payload.get("output_tokens", 0)) or 0),
+        "total_tokens": int(payload.get("totalTokens", payload.get("total_tokens", 0)) or 0),
+        "calls": int(payload.get("calls", 0) or 0),
+        "models": list(payload.get("models", [])) if isinstance(payload.get("models", []), list) else [],
+    }
+
+
+def _usage_from_response(response: Any) -> dict[str, Any]:
+    input_tokens, output_tokens, total_tokens = normalize_usage(getattr(response, "usage", None))
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+        "total_tokens": total_tokens,
+        "calls": 1 if total_tokens > 0 else 0,
+        "models": [],
+    }
+
+
+def _add_usage(left: dict[str, Any], right: dict[str, Any]) -> dict[str, Any]:
+    models = sorted(set(left.get("models", [])) | set(right.get("models", [])))
+    return {
+        "input_tokens": int(left.get("input_tokens", 0)) + int(right.get("input_tokens", 0)),
+        "output_tokens": int(left.get("output_tokens", 0)) + int(right.get("output_tokens", 0)),
+        "total_tokens": int(left.get("total_tokens", 0)) + int(right.get("total_tokens", 0)),
+        "calls": int(left.get("calls", 0)) + int(right.get("calls", 0)),
+        "models": models,
+    }
+
+
+def _empty_usage() -> dict[str, Any]:
+    return {
+        "input_tokens": 0,
+        "output_tokens": 0,
+        "total_tokens": 0,
+        "calls": 0,
+        "models": [],
+    }
+
+
+def _usage_summary(results: list[dict[str, Any]], field: str) -> dict[str, Any]:
+    usages = [result.get(field, _empty_usage()) for result in results]
+    total = _empty_usage()
+    for usage in usages:
+        total = _add_usage(total, usage)
+    totals = [int(usage.get("total_tokens", 0)) for usage in usages]
+    return {
+        **total,
+        "average_tokens_per_case": round(total["total_tokens"] / len(usages), 2) if usages else 0,
+        "median_tokens_per_case": statistics.median(totals) if totals else 0,
+        "max_tokens_per_case": max(totals) if totals else 0,
+    }
+
+
 def _failure_category(stages: list[str]) -> str:
     stage_set = set(stages)
     if not stage_set:
@@ -391,8 +490,10 @@ def _failure_category(stages: list[str]) -> str:
 def _judge_enabled() -> bool:
     explicit = os.environ.get("AGENT_EVAL_JUDGE")
     if explicit is not None:
-        return explicit.strip().lower() not in FALSE_TEXT
-    return bool(os.environ.get("EVAL_MODEL_API_KEY") or os.environ.get("DEEPSEEK_API_KEY"))
+        return explicit.strip().lower() in BOOL_TEXT
+    if _env_flag("AGENT_EVAL_JUDGE_ALL"):
+        return True
+    return False
 
 
 def _judge_client() -> tuple[AsyncOpenAI, str]:
@@ -510,9 +611,13 @@ async def judge_case(
         ],
         temperature=0,
     )
-    return _normalize_judge_result(
+    result = _normalize_judge_result(
         _json_from_model_text(response.choices[0].message.content or "")
     )
+    usage = _usage_from_response(response)
+    usage["models"] = [model] if usage["calls"] else []
+    result["token_usage"] = usage
+    return result
 
 
 async def evaluate() -> dict[str, Any]:
@@ -528,6 +633,7 @@ async def evaluate() -> dict[str, Any]:
 
     results: list[dict[str, Any]] = []
     layer_counts: dict[str, dict[str, int]] = {}
+    functional_category_counts: dict[str, dict[str, int]] = {}
     stage_failures: dict[str, int] = {}
     category_counts: dict[str, int] = {}
     capability_counts: dict[str, dict[str, int]] = {}
@@ -552,9 +658,16 @@ async def evaluate() -> dict[str, Any]:
 
         passed = not rule_failures
         layer = str(metadata.get("layer", "uncategorized"))
+        functional_category = str(metadata.get("functional_category", "uncategorized"))
         counts = layer_counts.setdefault(layer, {"passed": 0, "total": 0})
         counts["total"] += 1
         counts["passed"] += int(passed)
+        functional_counts = functional_category_counts.setdefault(
+            functional_category,
+            {"passed": 0, "total": 0},
+        )
+        functional_counts["total"] += 1
+        functional_counts["passed"] += int(passed)
         for failure in rule_failures:
             stage = failure["stage"]
             stage_failures[stage] = stage_failures.get(stage, 0) + 1
@@ -570,10 +683,14 @@ async def evaluate() -> dict[str, Any]:
             tag_counts = capability_counts.setdefault(str(tag), {"passed": 0, "total": 0})
             tag_counts["total"] += 1
             tag_counts["passed"] += int(passed)
+        agent_token_usage = _usage_from_payload(run.token_usage)
+        judge_token_usage = (judge_result or {}).get("token_usage", _empty_usage())
+        total_token_usage = _add_usage(agent_token_usage, judge_token_usage)
         result = {
             "id": case_id,
             "index": index,
             "layer": layer,
+            "functional_category": functional_category,
             "passed": passed,
             "failure_stages": failure_stages,
             "failure_category": failure_category,
@@ -585,6 +702,9 @@ async def evaluate() -> dict[str, Any]:
             "tool_call_count": len(run.tools_called),
             "tool_error_count": run.error_tool_count,
             "duration_seconds": round(run.duration_seconds, 3),
+            "agent_token_usage": agent_token_usage,
+            "judge_token_usage": judge_token_usage,
+            "total_token_usage": total_token_usage,
             "output": run.output,
             "workspace_files": run.workspace_files,
         }
@@ -592,7 +712,7 @@ async def evaluate() -> dict[str, Any]:
         print(
             f"[{index}/{len(cases)}] {case_id} passed={passed} "
             f"route={run.route}/{run.worker_kind} tools={len(run.tools_called)} "
-            f"duration={run.duration_seconds:.2f}s",
+            f"duration={run.duration_seconds:.2f}s tokens={total_token_usage['total_tokens']}",
             flush=True,
         )
 
@@ -602,6 +722,7 @@ async def evaluate() -> dict[str, Any]:
             "id": result["id"],
             "index": result["index"],
             "layer": result["layer"],
+            "functional_category": result["functional_category"],
             "stages": result["failure_stages"],
             "reasons": [
                 f"{failure['stage']}: {failure['message']}"
@@ -631,9 +752,18 @@ async def evaluate() -> dict[str, Any]:
             layer: counts["passed"] / counts["total"]
             for layer, counts in sorted(layer_counts.items())
         },
+        "functional_category_pass_rates": {
+            category: counts["passed"] / counts["total"]
+            for category, counts in sorted(functional_category_counts.items())
+        },
         "capability_pass_rates": {
             tag: counts["passed"] / counts["total"]
             for tag, counts in sorted(capability_counts.items())
+        },
+        "token_usage": {
+            "agent": _usage_summary(results, "agent_token_usage"),
+            "judge": _usage_summary(results, "judge_token_usage"),
+            "total": _usage_summary(results, "total_token_usage"),
         },
         "median_tool_calls": statistics.median(
             result["tool_call_count"] for result in results
@@ -662,6 +792,8 @@ def render_markdown(report: dict[str, Any]) -> str:
         f"- Judge: {'enabled' if report['judge_enabled'] else 'disabled'}",
         f"- Median tool calls: {report['median_tool_calls']}",
         f"- Median duration: {report['median_duration_seconds']}s",
+        f"- Total tokens: {report.get('token_usage', {}).get('total', {}).get('total_tokens', 0)}",
+        f"- Median tokens/case: {report.get('token_usage', {}).get('total', {}).get('median_tokens_per_case', 0)}",
         "",
         "## Failure Stages",
         "",
@@ -679,9 +811,28 @@ def render_markdown(report: dict[str, Any]) -> str:
     else:
         lines.append("- none")
 
+    token_usage = report.get("token_usage", {})
+    if token_usage:
+        lines.extend(["", "## Token Usage", ""])
+        for label in ("agent", "judge", "total"):
+            usage = token_usage.get(label, {})
+            lines.append(
+                f"- {label}: total={usage.get('total_tokens', 0)}, "
+                f"input={usage.get('input_tokens', 0)}, output={usage.get('output_tokens', 0)}, "
+                f"calls={usage.get('calls', 0)}, "
+                f"avg/case={usage.get('average_tokens_per_case', 0)}, "
+                f"median/case={usage.get('median_tokens_per_case', 0)}, "
+                f"max/case={usage.get('max_tokens_per_case', 0)}"
+            )
+
     lines.extend(["", "## Layer Pass Rates", ""])
     for layer, rate in report["layer_pass_rates"].items():
         lines.append(f"- {layer}: {rate:.1%}")
+
+    if report.get("functional_category_pass_rates"):
+        lines.extend(["", "## Functional Category Pass Rates", ""])
+        for category, rate in report["functional_category_pass_rates"].items():
+            lines.append(f"- {category}: {rate:.1%}")
 
     if report.get("capability_pass_rates"):
         lines.extend(["", "## Capability Pass Rates", ""])
@@ -693,7 +844,11 @@ def render_markdown(report: dict[str, Any]) -> str:
         for failure_case in report["failure_cases"]:
             stages = ", ".join(failure_case["stages"]) or "unknown"
             category = failure_case.get("failure_category", "product_failure")
-            lines.append(f"- {failure_case['index']}. {failure_case['id']} ({stages}; {category})")
+            functional_category = failure_case.get("functional_category", "uncategorized")
+            lines.append(
+                f"- {failure_case['index']}. {failure_case['id']} "
+                f"({functional_category}; {stages}; {category})"
+            )
             for reason in failure_case["reasons"]:
                 lines.append(f"  - {reason}")
             judge_reasons = "; ".join(str(item) for item in failure_case.get("judge_reasons", []))
@@ -715,10 +870,13 @@ def render_markdown(report: dict[str, Any]) -> str:
             f"- Layer: `{result['layer']}`; route: `{result['route']}`; "
             f"worker: `{result['worker_kind']}`"
         )
+        lines.append(f"- Functional category: `{result.get('functional_category', 'uncategorized')}`")
         lines.append(f"- Category: `{result.get('failure_category', 'none')}`")
+        token_usage = result.get("total_token_usage", {})
         lines.append(
             f"- Tools: {', '.join(result['tools_called']) or 'none'}; "
-            f"duration: {result['duration_seconds']}s"
+            f"duration: {result['duration_seconds']}s; "
+            f"tokens: {token_usage.get('total_tokens', 0)}"
         )
         if result["rule_failures"]:
             lines.append("- Rule failures:")

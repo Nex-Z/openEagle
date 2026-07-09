@@ -22,3 +22,8 @@ src-tauri/binaries/*-x86_64-*
 
 # IDE
 .idea/
+
+# Claude Code local skill install artifacts (third-party skills + machine-specific symlinks)
+.agents/
+.claude/skills/
+skills-lock.json

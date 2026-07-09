@@ -10,10 +10,48 @@ CORE_CASE_COUNT = 20
 FULL_CASE_COUNT = 100
 HOLDOUT_CASE_COUNT = 12
 TOTAL_CASE_COUNT = FULL_CASE_COUNT + HOLDOUT_CASE_COUNT
+FUNCTIONAL_CATEGORIES = {
+    "agent_architecture",
+    "command_execution",
+    "desktop_operation",
+    "direct_answer",
+    "efficiency",
+    "error_recovery",
+    "file_artifact",
+    "file_grounding",
+    "instruction_following",
+    "safety",
+    "tool_selection",
+}
 
 
 def _tool(name: str) -> dict[str, str]:
     return {"name": name}
+
+
+def _functional_category(name: str, layer: str, capability_tags: list[str] | None) -> str:
+    tags = set(capability_tags or [])
+    if "command_execution_counterexample" in tags or layer == "command_execution":
+        return "command_execution"
+    if "direct_answer" in tags:
+        return "direct_answer"
+    if layer == "safety_boundary":
+        return "safety"
+    if layer == "agent_architecture" and name.startswith("solo_"):
+        return "desktop_operation"
+    if layer == "prompt_and_routing":
+        return "instruction_following"
+    if layer == "tool_selection":
+        return "tool_selection"
+    if layer == "tool_arguments_and_grounding":
+        return "file_grounding"
+    if layer in {"execution_and_evidence", "multi_step_tool_loop"}:
+        return "file_artifact"
+    if layer == "error_recovery_and_honesty":
+        return "error_recovery"
+    if "efficiency" in layer:
+        return "efficiency"
+    return "agent_architecture"
 
 
 def _case(
@@ -34,9 +72,11 @@ def _case(
     max_duration_seconds: int = 120,
     profiles: list[str] | None = None,
     capability_tags: list[str] | None = None,
+    functional_category: str | None = None,
     eval_split: str = "visible",
     constraint_focus: bool = False,
 ) -> dict[str, Any]:
+    category = functional_category or _functional_category(name, layer, capability_tags)
     return {
         "name": name,
         "input": input_text,
@@ -53,6 +93,7 @@ def _case(
             "max_duration_seconds": max_duration_seconds,
             "profiles": profiles or ["full"],
             "capability_tags": capability_tags or [],
+            "functional_category": category,
             "eval_split": eval_split,
             **({"constraint_focus": True} if constraint_focus else {}),
             **({"required_artifacts": required_artifacts} if required_artifacts else {}),
@@ -796,6 +837,16 @@ def _normalize_core_case(case: dict[str, Any]) -> dict[str, Any]:
     if metadata.get("smoke"):
         profiles.add("smoke")
     metadata["profiles"] = sorted(profiles)
+    metadata.setdefault("capability_tags", [])
+    metadata.setdefault(
+        "functional_category",
+        _functional_category(
+            str(normalized.get("name", "")),
+            str(metadata.get("layer", "")),
+            metadata.get("capability_tags", []),
+        ),
+    )
+    metadata.setdefault("eval_split", "visible")
     return normalized
 
 
