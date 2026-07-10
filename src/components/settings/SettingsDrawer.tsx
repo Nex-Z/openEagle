@@ -55,6 +55,7 @@ interface SettingsDrawerProps {
   onUnbindWechat: () => boolean;
   onRequestScheduledTasks: () => boolean;
   onRequestMemoryState: () => boolean;
+  onUpdateLearningCandidate: (candidateId: string, action: "approve" | "reject") => boolean;
   onRequestTokenUsage: () => boolean;
   onSaveMemoryState: (memory: MemoryState) => boolean;
   onCreateScheduledTask: (task: Omit<ScheduledTask, "id" | "createdAt" | "updatedAt">) => boolean;
@@ -485,6 +486,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
     onUnbindWechat,
     onRequestScheduledTasks,
     onRequestMemoryState,
+    onUpdateLearningCandidate,
     onRequestTokenUsage,
     onSaveMemoryState,
     onCreateScheduledTask,
@@ -2407,6 +2409,20 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
                       </button>
                     </div>
                   </div>
+                  {(memoryState.learningCandidates ?? []).filter((item) => item.status === "pending").length > 0 ? (
+                    <div className="settings-note">
+                      <strong>待审学习</strong>
+                      {(memoryState.learningCandidates ?? []).filter((item) => item.status === "pending").map((item) => (
+                        <div className="config-row" key={item.id}>
+                          <div><strong>{item.title}</strong><p>{item.reason} · 验证：{item.validation.status === "passed" ? "已通过" : "未通过"}</p></div>
+                          <div className="config-row-actions">
+                            <button className="ghost-button" disabled={item.validation.status !== "passed" || item.riskFlags.length > 0} onClick={() => onUpdateLearningCandidate(item.id, "approve")} type="button">批准</button>
+                            <button className="ghost-button" onClick={() => onUpdateLearningCandidate(item.id, "reject")} type="button">拒绝</button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
                   <label className="form-field">
                     <span>用户画像</span>
                     <textarea

@@ -374,6 +374,7 @@ export default function App() {
     runningScheduledTaskIds,
     memoryState,
     requestMemoryState,
+    updateLearningCandidate,
     saveMemoryState,
     tokenUsageDashboard,
     requestTokenUsage,
@@ -886,6 +887,7 @@ export default function App() {
         onRefreshSoloDisplays={requestSoloDisplays}
         onRefreshSettings={refreshSettings}
         onRequestMemoryState={requestMemoryState}
+        onUpdateLearningCandidate={updateLearningCandidate}
         onRequestTokenUsage={requestTokenUsage}
         onSectionChange={handleSettingsSectionChange}
         onStartWechatBind={startWechatBind}

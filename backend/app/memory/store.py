@@ -18,11 +18,16 @@ from .models import (
     MemoryNotePayload,
     MemoryProfilePayload,
     MemoryStatePayload,
+    MemoryRecallResult,
+    LearningCandidate,
+    ValidationEvidence,
 )
 
 
 _DB_PATH: Path | None = None
 DEFAULT_ID = "default"
+DEFAULT_USER_SCOPE = "desktop:default"
+WORKSPACE_SCOPE = "workspace"
 
 
 def init_db(db_path: Path) -> None:
@@ -57,7 +62,9 @@ def init_db(db_path: Path) -> None:
                 confidence REAL NOT NULL DEFAULT 1.0,
                 status TEXT NOT NULL DEFAULT 'active',
                 created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL
+                updated_at TEXT NOT NULL,
+                scope_kind TEXT NOT NULL DEFAULT 'user',
+                scope_id TEXT NOT NULL DEFAULT 'desktop:default'
             );
 
             CREATE TABLE IF NOT EXISTS memory_events (
@@ -68,7 +75,9 @@ def init_db(db_path: Path) -> None:
                 summary TEXT NOT NULL DEFAULT '',
                 content TEXT NOT NULL DEFAULT '',
                 payload_json TEXT NOT NULL DEFAULT '{}',
-                created_at TEXT NOT NULL
+                created_at TEXT NOT NULL,
+                scope_kind TEXT NOT NULL DEFAULT 'user',
+                scope_id TEXT NOT NULL DEFAULT 'desktop:default'
             );
 
             CREATE TABLE IF NOT EXISTS memory_audit (
@@ -90,6 +99,8 @@ def init_db(db_path: Path) -> None:
                 route TEXT NOT NULL DEFAULT '',
                 metadata_json TEXT NOT NULL DEFAULT '{}',
                 created_at TEXT NOT NULL,
+                scope_kind TEXT NOT NULL DEFAULT 'user',
+                scope_id TEXT NOT NULL DEFAULT 'desktop:default',
                 UNIQUE(conversation_id, request_id)
             );
 
@@ -101,13 +112,62 @@ def init_db(db_path: Path) -> None:
                 updated_at TEXT NOT NULL
             );
 
+            CREATE TABLE IF NOT EXISTS memory_profiles_scoped (
+                scope_kind TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                content TEXT NOT NULL DEFAULT '',
+                updated_at TEXT NOT NULL,
+                manual_updated_at TEXT,
+                PRIMARY KEY (scope_kind, scope_id)
+            );
+
+            CREATE TABLE IF NOT EXISTS learning_candidates (
+                id TEXT PRIMARY KEY,
+                kind TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                scope_kind TEXT NOT NULL,
+                scope_id TEXT NOT NULL,
+                title TEXT NOT NULL,
+                reason TEXT NOT NULL,
+                proposal_json TEXT NOT NULL DEFAULT '{}',
+                source_event_ids_json TEXT NOT NULL DEFAULT '[]',
+                risk_flags_json TEXT NOT NULL DEFAULT '[]',
+                validation_json TEXT NOT NULL DEFAULT '{}',
+                created_at TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS conversation_scopes (
+                conversation_id TEXT PRIMARY KEY,
+                scope_id TEXT NOT NULL,
+                updated_at TEXT NOT NULL
+            );
+
+            CREATE VIRTUAL TABLE IF NOT EXISTS memory_search USING fts5(
+                item_id UNINDEXED,
+                item_kind UNINDEXED,
+                scope_kind UNINDEXED,
+                scope_id UNINDEXED,
+                content
+            );
+
             CREATE INDEX IF NOT EXISTS idx_memory_notes_status ON memory_notes(status);
             CREATE INDEX IF NOT EXISTS idx_memory_events_created_at ON memory_events(created_at);
             CREATE INDEX IF NOT EXISTS idx_memory_audit_created_at ON memory_audit(created_at);
             CREATE INDEX IF NOT EXISTS idx_conversation_turns_lookup
                 ON conversation_turns(conversation_id, id);
+            CREATE INDEX IF NOT EXISTS idx_memory_notes_scope
+                ON memory_notes(scope_kind, scope_id, status, updated_at);
+            CREATE INDEX IF NOT EXISTS idx_learning_candidates_status
+                ON learning_candidates(status, updated_at);
             """
         )
+        _ensure_column(conn, "memory_notes", "scope_kind", "TEXT NOT NULL DEFAULT 'user'")
+        _ensure_column(conn, "memory_notes", "scope_id", "TEXT NOT NULL DEFAULT 'desktop:default'")
+        _ensure_column(conn, "memory_events", "scope_kind", "TEXT NOT NULL DEFAULT 'user'")
+        _ensure_column(conn, "memory_events", "scope_id", "TEXT NOT NULL DEFAULT 'desktop:default'")
+        _ensure_column(conn, "conversation_turns", "scope_kind", "TEXT NOT NULL DEFAULT 'user'")
+        _ensure_column(conn, "conversation_turns", "scope_id", "TEXT NOT NULL DEFAULT 'desktop:default'")
         now = utc_now()
         conn.execute(
             """
@@ -124,9 +184,200 @@ def init_db(db_path: Path) -> None:
             (DEFAULT_ID, DEFAULT_AGENT_SOUL_CORE, now),
         )
         _migrate_default_agent_soul_core(conn, now)
+        _migrate_legacy_memory(conn, now)
+        _rebuild_search_index(conn)
         conn.commit()
     finally:
         conn.close()
+
+
+def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+    columns = {row["name"] for row in conn.execute(f"PRAGMA table_info({table})")}
+    if column not in columns:
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+
+def _migrate_legacy_memory(conn: sqlite3.Connection, now: str) -> None:
+    row = conn.execute("SELECT content, updated_at, manual_updated_at FROM memory_profile WHERE id = ?", (DEFAULT_ID,)).fetchone()
+    if row is not None:
+        conn.execute(
+            """INSERT OR IGNORE INTO memory_profiles_scoped
+               (scope_kind, scope_id, content, updated_at, manual_updated_at)
+               VALUES ('user', ?, ?, ?, ?)""",
+            (DEFAULT_USER_SCOPE, row["content"], row["updated_at"], row["manual_updated_at"]),
+        )
+    conn.execute("UPDATE memory_notes SET scope_kind = COALESCE(NULLIF(scope_kind, ''), 'user'), scope_id = COALESCE(NULLIF(scope_id, ''), ?)", (DEFAULT_USER_SCOPE,))
+    conn.execute("UPDATE memory_events SET scope_kind = COALESCE(NULLIF(scope_kind, ''), 'user'), scope_id = COALESCE(NULLIF(scope_id, ''), ?)", (DEFAULT_USER_SCOPE,))
+    conn.execute("UPDATE conversation_turns SET scope_kind = COALESCE(NULLIF(scope_kind, ''), 'user'), scope_id = COALESCE(NULLIF(scope_id, ''), ?)", (DEFAULT_USER_SCOPE,))
+
+
+def _rebuild_search_index(conn: sqlite3.Connection) -> None:
+    conn.execute("DELETE FROM memory_search")
+    conn.execute("""INSERT INTO memory_search(item_id, item_kind, scope_kind, scope_id, content)
+                    SELECT id, 'note', scope_kind, scope_id, text FROM memory_notes WHERE status = 'active'""")
+    conn.execute("""INSERT INTO memory_search(item_id, item_kind, scope_kind, scope_id, content)
+                    SELECT id, 'event', scope_kind, scope_id, summary || '\n' || content FROM memory_events""")
+    conn.execute("""INSERT INTO memory_search(item_id, item_kind, scope_kind, scope_id, content)
+                    SELECT CAST(id AS TEXT), 'turn', scope_kind, scope_id, user_content || '\n' || assistant_content FROM conversation_turns""")
+
+
+def _reindex_item(
+    conn: sqlite3.Connection,
+    item_id: str,
+    item_kind: str,
+    scope_kind: str,
+    scope_id: str,
+    content: str,
+) -> None:
+    conn.execute("DELETE FROM memory_search WHERE item_id = ? AND item_kind = ?", (item_id, item_kind))
+    conn.execute(
+        "INSERT INTO memory_search(item_id, item_kind, scope_kind, scope_id, content) VALUES (?, ?, ?, ?, ?)",
+        (item_id, item_kind, scope_kind, scope_id, content),
+    )
+
+
+def register_conversation_scope(conversation_id: str, scope_id: str) -> None:
+    if not conversation_id or not scope_id:
+        return
+    conn = _conn()
+    try:
+        conn.execute(
+            """INSERT INTO conversation_scopes(conversation_id, scope_id, updated_at) VALUES (?, ?, ?)
+               ON CONFLICT(conversation_id) DO UPDATE SET scope_id = excluded.scope_id, updated_at = excluded.updated_at""",
+            (conversation_id, scope_id, utc_now()),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def scope_id_for_conversation(conversation_id: str) -> str:
+    if not conversation_id:
+        return DEFAULT_USER_SCOPE
+    conn = _conn()
+    try:
+        row = conn.execute("SELECT scope_id FROM conversation_scopes WHERE conversation_id = ?", (conversation_id,)).fetchone()
+        return str(row["scope_id"]) if row else DEFAULT_USER_SCOPE
+    finally:
+        conn.close()
+
+
+def search_history(query: str, *, scope_id: str = DEFAULT_USER_SCOPE, limit: int = 8) -> list[MemoryRecallResult]:
+    terms = [term.replace('"', "") for term in query.split() if term.strip()]
+    if not terms:
+        return []
+    match = " OR ".join(f'"{term}"' for term in terms[:8])
+    conn = _conn()
+    try:
+        rows = conn.execute(
+            """SELECT item_id, item_kind, scope_kind, scope_id, content
+               FROM memory_search
+               WHERE memory_search MATCH ? AND ((scope_kind = 'user' AND scope_id = ?)
+                    OR (scope_kind = 'workspace' AND scope_id = ?))
+               ORDER BY rank LIMIT ?""",
+            (match, scope_id, WORKSPACE_SCOPE, max(1, min(limit, 20))),
+        ).fetchall()
+        return [
+            MemoryRecallResult(
+                id=row["item_id"], kind=row["item_kind"], text=row["content"][:1600],
+                source="history", scopeKind=row["scope_kind"], scopeId=row["scope_id"],
+                createdAt="", confidence=1.0,
+            )
+            for row in rows
+        ]
+    finally:
+        conn.close()
+
+
+def create_learning_candidate(candidate: LearningCandidate) -> LearningCandidate:
+    conn = _conn()
+    try:
+        existing = conn.execute(
+            """SELECT id FROM learning_candidates WHERE status = 'pending' AND kind = ? AND scope_kind = ?
+               AND scope_id = ? AND title = ?""",
+            (candidate.kind, candidate.scope_kind, candidate.scope_id, candidate.title),
+        ).fetchone()
+        if existing:
+            row = conn.execute("SELECT * FROM learning_candidates WHERE id = ?", (existing["id"],)).fetchone()
+            assert row is not None
+            return _row_to_learning_candidate(row)
+        conn.execute(
+            """INSERT INTO learning_candidates (
+                id, kind, status, scope_kind, scope_id, title, reason, proposal_json,
+                source_event_ids_json, risk_flags_json, validation_json, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            _learning_candidate_values(candidate),
+        )
+        conn.execute(
+            """INSERT INTO memory_audit(id, action, target_kind, target_id, summary, source, created_at)
+               VALUES (?, 'create', 'learning_candidate', ?, ?, 'auto:learning', ?)""",
+            (f"audit-{uuid4().hex}", candidate.id, candidate.title, utc_now()),
+        )
+        conn.commit()
+        return candidate
+    finally:
+        conn.close()
+
+
+def list_learning_candidates(*, status: str | None = None, limit: int = 80) -> list[LearningCandidate]:
+    conn = _conn()
+    try:
+        if status:
+            rows = conn.execute("SELECT * FROM learning_candidates WHERE status = ? ORDER BY updated_at DESC LIMIT ?", (status, limit)).fetchall()
+        else:
+            rows = conn.execute("SELECT * FROM learning_candidates ORDER BY updated_at DESC LIMIT ?", (limit,)).fetchall()
+        return [_row_to_learning_candidate(row) for row in rows]
+    finally:
+        conn.close()
+
+
+def set_learning_candidate_status(candidate_id: str, status: str) -> LearningCandidate | None:
+    conn = _conn()
+    try:
+        conn.execute("UPDATE learning_candidates SET status = ?, updated_at = ? WHERE id = ?", (status, utc_now(), candidate_id))
+        row = conn.execute("SELECT * FROM learning_candidates WHERE id = ?", (candidate_id,)).fetchone()
+        conn.commit()
+        return _row_to_learning_candidate(row) if row else None
+    finally:
+        conn.close()
+
+
+def update_learning_candidate_validation(
+    candidate_id: str,
+    validation: ValidationEvidence,
+) -> LearningCandidate | None:
+    conn = _conn()
+    try:
+        conn.execute(
+            "UPDATE learning_candidates SET validation_json = ?, updated_at = ? WHERE id = ?",
+            (_json_dumps(validation.model_dump(by_alias=True)), utc_now(), candidate_id),
+        )
+        row = conn.execute("SELECT * FROM learning_candidates WHERE id = ?", (candidate_id,)).fetchone()
+        conn.commit()
+        return _row_to_learning_candidate(row) if row else None
+    finally:
+        conn.close()
+
+
+def _learning_candidate_values(candidate: LearningCandidate) -> tuple[Any, ...]:
+    return (
+        candidate.id, candidate.kind, candidate.status, candidate.scope_kind, candidate.scope_id,
+        candidate.title, candidate.reason, _json_dumps(candidate.proposal),
+        _json_dumps(candidate.source_event_ids), _json_dumps(candidate.risk_flags),
+        _json_dumps(candidate.validation.model_dump(by_alias=True)), candidate.created_at, candidate.updated_at,
+    )
+
+
+def _row_to_learning_candidate(row: sqlite3.Row) -> LearningCandidate:
+    validation = _json_loads(row["validation_json"], {})
+    return LearningCandidate(
+        id=row["id"], kind=row["kind"], status=row["status"], scopeKind=row["scope_kind"],
+        scopeId=row["scope_id"], title=row["title"], reason=row["reason"],
+        proposal=_json_loads(row["proposal_json"], {}),
+        sourceEventIds=_json_loads(row["source_event_ids_json"], []),
+        riskFlags=_json_loads(row["risk_flags_json"], []),
+        validation=ValidationEvidence.model_validate(validation), createdAt=row["created_at"], updatedAt=row["updated_at"],
+    )
 
 
 def _migrate_default_agent_soul_core(conn: sqlite3.Connection, now: str) -> None:
@@ -212,6 +463,8 @@ def _row_to_note(row: sqlite3.Row) -> MemoryNotePayload:
         status=row["status"],
         createdAt=row["created_at"],
         updatedAt=row["updated_at"],
+        scopeKind=row["scope_kind"],
+        scopeId=row["scope_id"],
     )
 
 
@@ -237,6 +490,8 @@ def _row_to_event(row: sqlite3.Row) -> MemoryEventPayload:
         content=row["content"],
         payload=_json_loads(row["payload_json"], {}),
         createdAt=row["created_at"],
+        scopeKind=row["scope_kind"],
+        scopeId=row["scope_id"],
     )
 
 
@@ -250,6 +505,8 @@ def _row_to_conversation_turn(row: sqlite3.Row) -> ConversationTurnPayload:
         route=row["route"],
         metadata=_json_loads(row["metadata_json"], {}),
         createdAt=row["created_at"],
+        scopeKind=row["scope_kind"],
+        scopeId=row["scope_id"],
     )
 
 
@@ -297,26 +554,35 @@ def get_state(
     include_archived: bool = True,
     audit_limit: int = 80,
     event_limit: int = 20,
+    scope_id: str = DEFAULT_USER_SCOPE,
 ) -> MemoryStatePayload:
     conn = _conn()
     try:
         profile = _row_to_profile(
-            conn.execute("SELECT * FROM memory_profile WHERE id = ?", (DEFAULT_ID,)).fetchone()
+            conn.execute(
+                "SELECT * FROM memory_profiles_scoped WHERE scope_kind = 'user' AND scope_id = ?",
+                (scope_id,),
+            ).fetchone()
         )
         agent_soul = _row_to_agent_soul(
             conn.execute("SELECT * FROM agent_soul WHERE id = ?", (DEFAULT_ID,)).fetchone()
         )
         if include_archived:
             note_rows = conn.execute(
-                "SELECT * FROM memory_notes ORDER BY status ASC, updated_at DESC"
+                """SELECT * FROM memory_notes
+                   WHERE (scope_kind = 'user' AND scope_id = ?) OR (scope_kind = 'workspace' AND scope_id = ?)
+                   ORDER BY status ASC, updated_at DESC""",
+                (scope_id, WORKSPACE_SCOPE),
             ).fetchall()
         else:
             note_rows = conn.execute(
                 """
                 SELECT * FROM memory_notes
                 WHERE status = 'active'
+                    AND ((scope_kind = 'user' AND scope_id = ?) OR (scope_kind = 'workspace' AND scope_id = ?))
                 ORDER BY updated_at DESC
-                """
+                """,
+                (scope_id, WORKSPACE_SCOPE),
             ).fetchall()
         audit_rows = conn.execute(
             """
@@ -404,13 +670,15 @@ def upsert_conversation_turn(
             """
             INSERT INTO conversation_turns (
                 conversation_id, request_id, user_content, assistant_content,
-                route, metadata_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                route, metadata_json, created_at, scope_kind, scope_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(conversation_id, request_id) DO UPDATE SET
                 user_content = excluded.user_content,
                 assistant_content = excluded.assistant_content,
                 route = excluded.route,
-                metadata_json = excluded.metadata_json
+                metadata_json = excluded.metadata_json,
+                scope_kind = excluded.scope_kind,
+                scope_id = excluded.scope_id
             """,
             (
                 conversation_id,
@@ -420,7 +688,17 @@ def upsert_conversation_turn(
                 route,
                 _json_dumps(metadata or {}),
                 now,
+                "user",
+                scope_id_for_conversation(conversation_id),
             ),
+        )
+        _reindex_item(
+            conn,
+            f"{conversation_id}:{request_id}",
+            "turn",
+            "user",
+            scope_id_for_conversation(conversation_id),
+            f"{user_content}\n{assistant_content}",
         )
         row = conn.execute(
             """
@@ -539,17 +817,31 @@ def update_conversation_context_state(
     )
 
 
-def update_profile(content: str, *, source: str = "system", manual: bool = False) -> None:
+def update_profile(
+    content: str,
+    *,
+    source: str = "system",
+    manual: bool = False,
+    scope_id: str = DEFAULT_USER_SCOPE,
+) -> None:
     now = utc_now()
     conn = _conn()
     try:
         conn.execute(
+            """INSERT INTO memory_profiles_scoped(scope_kind, scope_id, content, updated_at, manual_updated_at)
+               VALUES ('user', ?, ?, ?, ?)
+               ON CONFLICT(scope_kind, scope_id) DO UPDATE SET content = excluded.content,
+                   updated_at = excluded.updated_at,
+                   manual_updated_at = CASE WHEN ? THEN excluded.manual_updated_at ELSE memory_profiles_scoped.manual_updated_at END""",
+            (scope_id, content, now, now if manual else None, 1 if manual else 0),
+        )
+        conn.execute(
             """
             UPDATE memory_profile
             SET content = ?, updated_at = ?, manual_updated_at = CASE WHEN ? THEN ? ELSE manual_updated_at END
-            WHERE id = ?
+            WHERE id = ? AND ? = ?
             """,
-            (content, now, 1 if manual else 0, now, DEFAULT_ID),
+            (content, now, 1 if manual else 0, now, DEFAULT_ID, scope_id, DEFAULT_USER_SCOPE),
         )
         conn.execute(
             """
@@ -625,15 +917,17 @@ def upsert_note(note: MemoryNotePayload, *, source: str = "system") -> None:
         conn.execute(
             """
             INSERT INTO memory_notes (
-                id, text, tags_json, source, confidence, status, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                id, text, tags_json, source, confidence, status, created_at, updated_at, scope_kind, scope_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(id) DO UPDATE SET
                 text = excluded.text,
                 tags_json = excluded.tags_json,
                 source = excluded.source,
                 confidence = excluded.confidence,
                 status = excluded.status,
-                updated_at = excluded.updated_at
+                updated_at = excluded.updated_at,
+                scope_kind = excluded.scope_kind,
+                scope_id = excluded.scope_id
             """,
             (
                 note.id,
@@ -644,8 +938,11 @@ def upsert_note(note: MemoryNotePayload, *, source: str = "system") -> None:
                 note.status,
                 created_at,
                 now,
+                note.scope_kind,
+                note.scope_id,
             ),
         )
+        _reindex_item(conn, note.id, "note", note.scope_kind, note.scope_id, note.text)
         conn.execute(
             """
             INSERT INTO memory_audit (
@@ -680,6 +977,7 @@ def archive_note(note_id: str, *, source: str = "system", reason: str = "") -> b
             (now, note_id),
         )
         if cursor.rowcount:
+            conn.execute("DELETE FROM memory_search WHERE item_id = ? AND item_kind = 'note'", (note_id,))
             conn.execute(
                 """
                 INSERT INTO memory_audit (
@@ -710,6 +1008,7 @@ def append_event(
     summary: str = "",
     content: str = "",
     payload: dict[str, Any] | None = None,
+    scope_id: str | None = None,
 ) -> str:
     event_id = f"event-{uuid4().hex}"
     now = utc_now()
@@ -718,8 +1017,8 @@ def append_event(
         conn.execute(
             """
             INSERT INTO memory_events (
-                id, source, conversation_id, request_id, summary, content, payload_json, created_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                id, source, conversation_id, request_id, summary, content, payload_json, created_at, scope_kind, scope_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 event_id,
@@ -730,8 +1029,11 @@ def append_event(
                 content,
                 _json_dumps(payload or {}),
                 now,
+                "user",
+                scope_id or scope_id_for_conversation(conversation_id),
             ),
         )
+        _reindex_item(conn, event_id, "event", "user", scope_id or scope_id_for_conversation(conversation_id), f"{summary}\n{content}")
         conn.execute(
             """
             INSERT INTO memory_audit (

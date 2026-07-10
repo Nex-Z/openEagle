@@ -9,6 +9,9 @@ from ..models import utc_now
 
 
 MemoryNoteStatus = Literal["active", "archived"]
+MemoryScopeKind = Literal["user", "workspace"]
+LearningCandidateKind = Literal["memory_note", "profile", "skill_create", "skill_patch"]
+LearningCandidateStatus = Literal["pending", "approved", "rejected", "archived"]
 
 DEFAULT_AGENT_SOUL_CORE = """# SOUL.md - Who You Are
 
@@ -94,6 +97,8 @@ class MemoryNotePayload(BaseModel):
     status: MemoryNoteStatus = "active"
     created_at: str = Field(default_factory=utc_now, alias="createdAt")
     updated_at: str = Field(default_factory=utc_now, alias="updatedAt")
+    scope_kind: MemoryScopeKind = Field(default="user", alias="scopeKind")
+    scope_id: str = Field(default="desktop:default", alias="scopeId")
 
     model_config = {"populate_by_name": True}
 
@@ -128,6 +133,8 @@ class MemoryEventPayload(BaseModel):
     content: str = ""
     payload: dict[str, Any] = Field(default_factory=dict)
     created_at: str = Field(default_factory=utc_now, alias="createdAt")
+    scope_kind: MemoryScopeKind = Field(default="user", alias="scopeKind")
+    scope_id: str = Field(default="desktop:default", alias="scopeId")
 
     model_config = {"populate_by_name": True}
 
@@ -141,6 +148,8 @@ class ConversationTurnPayload(BaseModel):
     route: str = ""
     metadata: dict[str, Any] = Field(default_factory=dict)
     created_at: str = Field(default_factory=utc_now, alias="createdAt")
+    scope_kind: MemoryScopeKind = Field(default="user", alias="scopeKind")
+    scope_id: str = Field(default="desktop:default", alias="scopeId")
 
     model_config = {"populate_by_name": True}
 
@@ -161,5 +170,45 @@ class MemoryStatePayload(BaseModel):
     agent_soul: AgentSoulPayload = Field(default_factory=AgentSoulPayload, alias="agentSoul")
     audit: list[MemoryAuditPayload] = Field(default_factory=list)
     events: list[MemoryEventPayload] = Field(default_factory=list)
+
+    model_config = {"populate_by_name": True}
+
+
+class MemoryRecallResult(BaseModel):
+    id: str
+    kind: Literal["note", "turn", "event"]
+    text: str
+    source: str = ""
+    scope_kind: MemoryScopeKind = Field(alias="scopeKind")
+    scope_id: str = Field(alias="scopeId")
+    created_at: str = Field(alias="createdAt")
+    confidence: float = 1.0
+
+    model_config = {"populate_by_name": True}
+
+
+class ValidationEvidence(BaseModel):
+    status: Literal["passed", "failed", "not_run"] = "not_run"
+    commands: list[str] = Field(default_factory=list)
+    summary: str = ""
+    verified_at: str | None = Field(default=None, alias="verifiedAt")
+
+    model_config = {"populate_by_name": True}
+
+
+class LearningCandidate(BaseModel):
+    id: str = Field(default_factory=lambda: f"learning-{uuid4().hex}")
+    kind: LearningCandidateKind
+    status: LearningCandidateStatus = "pending"
+    scope_kind: MemoryScopeKind = Field(default="workspace", alias="scopeKind")
+    scope_id: str = Field(default="workspace", alias="scopeId")
+    title: str
+    reason: str
+    proposal: dict[str, Any] = Field(default_factory=dict)
+    source_event_ids: list[str] = Field(default_factory=list, alias="sourceEventIds")
+    risk_flags: list[str] = Field(default_factory=list, alias="riskFlags")
+    validation: ValidationEvidence = Field(default_factory=ValidationEvidence)
+    created_at: str = Field(default_factory=utc_now, alias="createdAt")
+    updated_at: str = Field(default_factory=utc_now, alias="updatedAt")
 
     model_config = {"populate_by_name": True}

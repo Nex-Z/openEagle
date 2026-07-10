@@ -10,7 +10,7 @@ from unittest.mock import AsyncMock, patch
 
 from app.config import AgentConfig, AppConfig
 from app.memory import MemoryService, init_db
-from app.memory.models import DEFAULT_AGENT_SOUL_CORE
+from app.memory.models import DEFAULT_AGENT_SOUL_CORE, ValidationEvidence
 
 
 class MemoryServiceTest(unittest.TestCase):
@@ -336,7 +336,7 @@ class MemoryServiceTest(unittest.TestCase):
         self.assertEqual(deleted.status, "archived")
         self.assertEqual([note["id"] for note in payload["notes"]], ["note-keep"])
 
-    def test_distillation_applies_model_json(self) -> None:
+    def test_distillation_stages_model_json_until_approved(self) -> None:
         service = MemoryService(
             config_getter=lambda: AppConfig(
                 agent=AgentConfig(provider="openai", apiKey="test-key")
@@ -359,11 +359,57 @@ class MemoryServiceTest(unittest.TestCase):
         ):
             changed = asyncio.run(service.distill_event(event_id))
 
-        state = service.state()
         self.assertTrue(changed)
-        self.assertIn("短答案", state.profile.content)
-        self.assertIn("回答要短", state.agent_soul.side_notes)
-        self.assertEqual(state.notes[0].text, "偏好短答案")
+        self.assertEqual(service.state().profile.content, "")
+        self.assertEqual(service.state().notes, [])
+        candidates = service.learning_candidates(status="pending")
+        self.assertEqual(len(candidates), 2)
+        self.assertTrue(all(candidate.validation.status == "passed" for candidate in candidates))
+        profile = next(candidate for candidate in candidates if candidate.kind == "profile")
+        note = next(candidate for candidate in candidates if candidate.kind == "memory_note")
+        self.assertIsNotNone(service.approve_learning_candidate(profile.id))
+        self.assertIsNotNone(service.approve_learning_candidate(note.id))
+        self.assertIn("短答案", service.state().profile.content)
+        self.assertEqual(service.state().notes[0].text, "偏好短答案")
+
+    def test_history_search_is_scoped_and_never_leaks_other_user(self) -> None:
+        from app.memory import store
+
+        store.register_conversation_scope("alice-chat", "telegram:alice")
+        store.register_conversation_scope("bob-chat", "telegram:bob")
+        self.service.record_turn(
+            conversation_id="alice-chat",
+            request_id="alice-1",
+            user_content="我喜欢 TypeScript。",
+            assistant_content="已了解。",
+        )
+        self.service.record_turn(
+            conversation_id="bob-chat",
+            request_id="bob-1",
+            user_content="我喜欢 Rust。",
+            assistant_content="已了解。",
+        )
+        alice = self.service.search_history("TypeScript", conversation_id="alice-chat")
+        bob = self.service.search_history("TypeScript", conversation_id="bob-chat")
+        self.assertTrue(any("TypeScript" in item.text for item in alice))
+        self.assertEqual(bob, [])
+
+    def test_validated_skill_candidate_is_written_only_after_approval(self) -> None:
+        workspace = Path(self._tmp.name) / "workspace"
+        workspace.mkdir()
+        candidate = self.service.propose_skill_candidate(
+            name="发布检查",
+            description="发布前运行检查。",
+            prompt="# 发布检查\n\n## 验证\n\n运行测试。",
+            event_id="event-skill",
+            validation=ValidationEvidence(status="passed", commands=["uv run python -m unittest"], summary="固定回归已通过。"),
+        )
+        self.assertFalse((workspace / ".open-eagle" / "skills").exists())
+        approved = self.service.approve_learning_candidate(candidate.id, workspace_root=workspace)
+        self.assertIsNotNone(approved)
+        skill_files = list((workspace / ".open-eagle" / "skills").glob("*/SKILL.md"))
+        self.assertEqual(len(skill_files), 1)
+        self.assertIn("发布检查", skill_files[0].read_text(encoding="utf-8"))
 
     def test_bad_distillation_json_returns_false(self) -> None:
         service = MemoryService(

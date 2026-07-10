@@ -48,6 +48,7 @@ const emptyMemoryState: MemoryState = {
   agentSoul: { core: "", sideNotes: "", updatedAt: "" },
   audit: [],
   events: [],
+  learningCandidates: [],
 };
 
 const emptyTokenUsageDashboard: TokenUsageDashboard = {
@@ -1943,6 +1944,22 @@ export function useBackendConnection(
     });
   }, [conversationId]);
 
+  const updateLearningCandidate = useCallback(
+    (candidateId: string, action: "approve" | "reject") => {
+      const socket = socketRef.current;
+      if (!socket || socket.readyState !== WebSocket.OPEN || !candidateId) return false;
+      socket.send(JSON.stringify({
+        type: action === "approve" ? "client:learning_candidate_approve" : "client:learning_candidate_reject",
+        requestId: createId("learning"),
+        conversationId,
+        payload: { candidateId },
+        timestamp: new Date().toISOString(),
+      }));
+      return true;
+    },
+    [conversationId],
+  );
+
   const pauseSolo = useCallback(() => sendSoloControl({ action: "pause" }), [sendSoloControl]);
   const resumeSolo = useCallback(() => sendSoloControl({ action: "resume" }), [sendSoloControl]);
   const stopSolo = useCallback(() => sendSoloControl({ action: "stop" }), [sendSoloControl]);
@@ -2122,6 +2139,7 @@ export function useBackendConnection(
     runningScheduledTaskIds,
     memoryState,
     requestMemoryState,
+    updateLearningCandidate,
     saveMemoryState,
     tokenUsageDashboard,
     requestTokenUsage,

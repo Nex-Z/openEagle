@@ -2,13 +2,22 @@ from __future__ import annotations
 
 import json
 import re
+import subprocess
 from collections.abc import Callable
+from pathlib import Path
 from typing import Any
 
 from ..config import AgentConfig, AppConfig
 from ..langgraph_agent import run_text_model
 from ..token_usage import record_model_usage
-from .models import DEFAULT_AGENT_SOUL_CORE, MemoryNotePayload, MemoryStatePayload
+from .models import (
+    DEFAULT_AGENT_SOUL_CORE,
+    LearningCandidate,
+    MemoryNotePayload,
+    MemoryRecallResult,
+    MemoryStatePayload,
+    ValidationEvidence,
+)
 from . import store
 
 
@@ -277,10 +286,15 @@ class MemoryService:
         return store.get_state()
 
     def state_payload(self) -> dict[str, Any]:
-        return store.get_state(include_archived=False).model_dump(
+        payload = store.get_state(include_archived=False).model_dump(
             by_alias=True,
             exclude_none=True,
         )
+        payload["learningCandidates"] = [
+            candidate.model_dump(by_alias=True, exclude_none=True)
+            for candidate in store.list_learning_candidates()
+        ]
+        return payload
 
     def tool_state_payload(self, *, include_archived: bool = False) -> dict[str, Any]:
         state = store.get_state(
@@ -300,6 +314,83 @@ class MemoryService:
                 for item in state.audit
             ],
         }
+
+    def search_history(self, query: str, *, conversation_id: str = "", limit: int = 8) -> list[MemoryRecallResult]:
+        """Search is recall-only: results are reference material, never instructions."""
+        return store.search_history(
+            sanitize_text(query, limit=400),
+            scope_id=store.scope_id_for_conversation(conversation_id),
+            limit=limit,
+        )
+
+    def learning_candidates(self, *, status: str | None = None) -> list[LearningCandidate]:
+        return store.list_learning_candidates(status=status)
+
+    def reject_learning_candidate(self, candidate_id: str) -> LearningCandidate | None:
+        return store.set_learning_candidate_status(candidate_id, "rejected")
+
+    def approve_learning_candidate(
+        self,
+        candidate_id: str,
+        *,
+        workspace_root: Path | None = None,
+    ) -> LearningCandidate | None:
+        candidate = next((item for item in self.learning_candidates() if item.id == candidate_id), None)
+        if candidate is None or candidate.status != "pending" or candidate.validation.status != "passed":
+            return None
+        if candidate.kind == "memory_note":
+            text = str(candidate.proposal.get("text") or "").strip()
+            if not text:
+                return None
+            store.upsert_note(
+                MemoryNotePayload(
+                    text=sanitize_text(text, limit=4_000),
+                    tags=_normalize_tags(candidate.proposal.get("tags")),
+                    confidence=self._safe_confidence(candidate.proposal.get("confidence")),
+                    source=f"approved:{candidate.id}",
+                    scopeKind=candidate.scope_kind,
+                    scopeId=candidate.scope_id,
+                ),
+                source=f"approved:{candidate.id}",
+            )
+        elif candidate.kind == "profile":
+            content = str(candidate.proposal.get("content") or "").strip()
+            if not content:
+                return None
+            store.update_profile(
+                sanitize_text(content, limit=8_000),
+                source=f"approved:{candidate.id}",
+                manual=True,
+                scope_id=candidate.scope_id,
+            )
+        elif candidate.kind in {"skill_create", "skill_patch"}:
+            if workspace_root is None or candidate.risk_flags:
+                return None
+            from ..capability_files import load_skill_configs, save_skill_configs
+
+            prompt = str(candidate.proposal.get("prompt") or "").strip()
+            name = str(candidate.proposal.get("name") or candidate.title).strip()
+            if not name or not prompt or self._unsafe_learning_text(prompt):
+                return None
+            existing = list(load_skill_configs(workspace_root) or [])
+            skill_id = str(candidate.proposal.get("id") or f"learned-{candidate.id[-12:]}")
+            next_skill = {
+                "id": skill_id,
+                "name": name,
+                "description": str(candidate.proposal.get("description") or candidate.reason),
+                "prompt": prompt,
+                "enabled": True,
+            }
+            replaced = False
+            for index, skill in enumerate(existing):
+                if str(skill.get("id")) == skill_id:
+                    existing[index] = next_skill
+                    replaced = True
+                    break
+            if not replaced:
+                existing.append(next_skill)
+            save_skill_configs(workspace_root, existing)
+        return store.set_learning_candidate_status(candidate_id, "approved")
 
     def prompt_context(
         self,
@@ -572,7 +663,125 @@ class MemoryService:
             payload = _extract_json(raw)
         except Exception:
             return False
-        return self.apply_distillation(payload, source=f"auto:{event.id}")
+        return bool(self.propose_distillation(payload, event_id=event.id, scope_id=event.scope_id))
+
+    def propose_distillation(
+        self,
+        payload: dict[str, Any],
+        *,
+        event_id: str,
+        scope_id: str = store.DEFAULT_USER_SCOPE,
+    ) -> list[LearningCandidate]:
+        """Turn model output into reviewable proposals; it never writes active memory."""
+        candidates: list[LearningCandidate] = []
+        profile = payload.get("profile")
+        content = profile.get("content") if isinstance(profile, dict) else profile
+        if isinstance(content, str) and content.strip():
+            candidates.append(
+                store.create_learning_candidate(
+                    LearningCandidate(
+                        kind="profile", scopeKind="user", scopeId=scope_id,
+                        title="更新用户画像", reason="从已完成对话中提炼的长期偏好或工作方式。",
+                        proposal={"content": sanitize_text(content, limit=8_000)}, sourceEventIds=[event_id],
+                        validation=ValidationEvidence(status="passed", summary="结构化内容与敏感信息过滤已通过。"),
+                    )
+                )
+            )
+        for raw_note in payload.get("notes", []) if isinstance(payload.get("notes"), list) else []:
+            if not isinstance(raw_note, dict) or str(raw_note.get("action") or "add") != "add":
+                continue
+            text = sanitize_text(str(raw_note.get("text") or "").strip(), limit=4_000)
+            if not text or self._unsafe_learning_text(text):
+                continue
+            candidates.append(
+                store.create_learning_candidate(
+                    LearningCandidate(
+                        kind="memory_note", scopeKind="user", scopeId=scope_id,
+                        title=text[:80], reason="从真实对话中提炼出的候选长期事实。",
+                        proposal={"text": text, "tags": _normalize_tags(raw_note.get("tags")),
+                                  "confidence": self._safe_confidence(raw_note.get("confidence"))},
+                        sourceEventIds=[event_id],
+                        validation=ValidationEvidence(status="passed", summary="结构化内容与敏感信息过滤已通过。"),
+                    )
+                )
+            )
+        for raw_skill in payload.get("skills", []) if isinstance(payload.get("skills"), list) else []:
+            if not isinstance(raw_skill, dict):
+                continue
+            name = str(raw_skill.get("name") or "").strip()
+            prompt = str(raw_skill.get("prompt") or "").strip()
+            if not name or not prompt:
+                continue
+            candidates.append(
+                self.propose_skill_candidate(
+                    name=name,
+                    description=str(raw_skill.get("description") or "").strip(),
+                    prompt=prompt,
+                    event_id=event_id,
+                    validation=ValidationEvidence(status="not_run", summary="等待固定 Agent 回归验证。"),
+                )
+            )
+        return candidates
+
+    def propose_skill_candidate(
+        self,
+        *,
+        name: str,
+        description: str,
+        prompt: str,
+        event_id: str,
+        validation: ValidationEvidence,
+    ) -> LearningCandidate:
+        safe_prompt = sanitize_text(prompt.strip(), limit=12_000)
+        risk_flags = ["unsafe-content"] if self._unsafe_learning_text(safe_prompt) else []
+        return store.create_learning_candidate(
+            LearningCandidate(
+                kind="skill_create",
+                scopeKind="workspace",
+                scopeId=store.WORKSPACE_SCOPE,
+                title=name.strip()[:120] or "未命名工作流",
+                reason=description.strip() or "从成功工作流提炼的可复用步骤。",
+                proposal={"name": name.strip(), "description": description.strip(), "prompt": safe_prompt},
+                sourceEventIds=[event_id],
+                riskFlags=risk_flags,
+                validation=validation,
+            )
+        )
+
+    def validate_skill_candidate(
+        self,
+        candidate_id: str,
+        *,
+        workspace_root: Path,
+    ) -> LearningCandidate | None:
+        candidate = next((item for item in self.learning_candidates() if item.id == candidate_id), None)
+        if candidate is None or candidate.kind not in {"skill_create", "skill_patch"}:
+            return candidate
+        if candidate.risk_flags:
+            return store.update_learning_candidate_validation(
+                candidate_id,
+                ValidationEvidence(status="failed", summary="内容安全扫描未通过。"),
+            )
+        backend_root = workspace_root / "backend"
+        command = ["uv", "run", "python", "-m", "pytest", "tests/evals/test_agent_loop.py", "-m", "not agent_eval_live"]
+        try:
+            completed = subprocess.run(
+                command,
+                cwd=backend_root,
+                capture_output=True,
+                text=True,
+                timeout=120,
+                check=False,
+            )
+            summary = (completed.stdout + completed.stderr)[-1600:]
+            evidence = ValidationEvidence(
+                status="passed" if completed.returncode == 0 else "failed",
+                commands=["uv run python -m pytest tests/evals/test_agent_loop.py -m \"not agent_eval_live\""],
+                summary=summary or f"exit code {completed.returncode}",
+            )
+        except (OSError, subprocess.TimeoutExpired) as exc:
+            evidence = ValidationEvidence(status="failed", summary=f"验证无法执行: {exc}")
+        return store.update_learning_candidate_validation(candidate_id, evidence)
 
     def apply_distillation(self, payload: dict[str, Any], *, source: str = "auto") -> bool:
         changed = False
@@ -668,6 +877,11 @@ class MemoryService:
         return min(max(number, 0.0), 1.0)
 
     @staticmethod
+    def _unsafe_learning_text(text: str) -> bool:
+        lowered = text.lower()
+        return any(marker in lowered for marker in ("ignore previous", "忽略之前", "system prompt", "api_key", "password"))
+
+    @staticmethod
     def _can_distill(agent_config: AgentConfig) -> bool:
         return agent_config.provider in {"openai", "openai-like", "anthropic"} and bool(
             agent_config.api_key
@@ -682,21 +896,21 @@ class MemoryService:
             "agentSoul": current.get("agentSoul", {}),
         }
         return (
-            "你是 openEagle 的长期记忆整理器。请根据新的原始记忆事件更新记忆。\n"
-            "目标不是只挑最有价值的内容：原始事件已经保存；你的任务是把其中对未来对话有帮助的内容蒸馏进画像、笔记或 Agent 旁注。\n"
+            "你是 openEagle 的长期记忆候选整理器。请根据新的原始记忆事件提出可审阅的候选，不要直接改变记忆。\n"
+            "原始事件已经保存；只提取对未来对话有帮助、且足够稳定的画像或新笔记。\n"
             "不要保存明显的一次性寒暄、临时验证码、密钥、token、密码或完整敏感凭据。\n"
             "用户画像应是完整改写后的 markdown 文本；没有变化则省略 profile。\n"
-            "Soul 的 core 由用户手动维护，你只能更新 agentSideNotes。\n"
-            "notes 里可输出 add/update/archive 动作；update/archive 必须带已有 note id。\n\n"
+            "不要提议修改 Soul、系统提示词、代码或外部配置。notes 只能输出 add 动作。\n\n"
             "当前记忆:\n"
             f"{json.dumps(compact_state, ensure_ascii=False)}\n\n"
             "新原始事件:\n"
             f"{json.dumps(event, ensure_ascii=False)}\n\n"
             "仅返回 JSON:\n"
             '{ "profile": "可选，完整用户画像", '
-            '"agentSideNotes": "可选，完整 Agent 自动旁注", '
             '"notes": ['
-            '{"action":"add|update|archive","id":"可选","text":"笔记内容","tags":["标签"],"confidence":0.0,"reason":"归档原因"}'
+            '{"action":"add","text":"笔记内容","tags":["标签"],"confidence":0.0}'
+            '], "skills": ['
+            '{"name":"可选工作流名","description":"何时使用","prompt":"完整 SKILL.md 正文"}'
             "] }"
         )
 

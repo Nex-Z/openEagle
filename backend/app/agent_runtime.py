@@ -39,6 +39,7 @@ MAX_CONVERSATION_TURN_CHARS = 520
 MAX_PROGRESS_CHARS = 96
 MEMORY_TOOL_NAMES = {
     "get_memory_state",
+    "search_memory_history",
     "save_memory_note",
     "update_memory_note",
     "delete_memory_note",

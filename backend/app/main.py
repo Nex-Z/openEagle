@@ -28,6 +28,7 @@ from .im.bridge import (
 from .im.models import IMConversationBinding
 from .im.outbound import RemoteOutboundService
 from .memory import MemoryService, init_db as init_memory_db
+from .memory import store as memory_store
 from .models import (
     AudioTranscriptionPayload,
     AttachmentRef,
@@ -430,7 +431,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                         conversation_id,
                         name="memory.distill_event",
                         status="completed",
-                        summary="已从记忆快照蒸馏更新长期记忆。",
+                        summary="已从记忆快照生成待审学习候选。",
                         params={"eventId": event_id},
                     )
                     await emit_memory_state("server:memory_updated", request_id, conversation_id)
@@ -1458,6 +1459,10 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         request_id: str,
         attachments: list[AttachmentRef] | None = None,
     ) -> str:
+        memory_store.register_conversation_scope(
+            binding.conversation_id,
+            f"{binding.source.channel}:{binding.source.user_id}",
+        )
         return await stream_chat_reply(
             binding.conversation_id,
             request_id,
@@ -1946,6 +1951,36 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                     envelope.request_id,
                     envelope.conversation_id,
                 )
+                continue
+
+            if envelope.type == "client:learning_candidate_reject":
+                candidate_id = str(envelope.payload.get("candidateId") or "")
+                result = memory_service.reject_learning_candidate(candidate_id)
+                if result is not None:
+                    await emit_memory_state("server:memory_updated", envelope.request_id, envelope.conversation_id)
+                continue
+
+            if envelope.type == "client:learning_candidate_approve":
+                candidate_id = str(envelope.payload.get("candidateId") or "")
+                candidate = next(
+                    (item for item in memory_service.learning_candidates() if item.id == candidate_id),
+                    None,
+                )
+                if candidate is not None and candidate.kind in {"skill_create", "skill_patch"}:
+                    memory_service.validate_skill_candidate(candidate_id, workspace_root=workspace_root)
+                result = memory_service.approve_learning_candidate(
+                    candidate_id,
+                    workspace_root=workspace_root,
+                )
+                if result is None:
+                    await safe_send(
+                        "server:error",
+                        envelope.request_id,
+                        envelope.conversation_id,
+                        {"message": "候选不存在、尚未通过验证，或需要在 Skills 页面审批。"},
+                    )
+                else:
+                    await emit_memory_state("server:memory_updated", envelope.request_id, envelope.conversation_id)
                 continue
 
             if envelope.type == "client:token_usage_get":

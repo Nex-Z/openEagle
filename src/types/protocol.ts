@@ -298,6 +298,8 @@ export interface MemoryNote {
   status: MemoryNoteStatus;
   createdAt: string;
   updatedAt: string;
+  scopeKind?: "user" | "workspace";
+  scopeId?: string;
 }
 
 export interface AgentSoul {
@@ -334,6 +336,30 @@ export interface MemoryState {
   agentSoul: AgentSoul;
   audit: MemoryAudit[];
   events: MemoryEvent[];
+  learningCandidates?: LearningCandidate[];
+}
+
+export interface ValidationEvidence {
+  status: "passed" | "failed" | "not_run";
+  commands: string[];
+  summary: string;
+  verifiedAt?: string;
+}
+
+export interface LearningCandidate {
+  id: string;
+  kind: "memory_note" | "profile" | "skill_create" | "skill_patch";
+  status: "pending" | "approved" | "rejected" | "archived";
+  scopeKind: "user" | "workspace";
+  scopeId: string;
+  title: string;
+  reason: string;
+  proposal: Record<string, unknown>;
+  sourceEventIds: string[];
+  riskFlags: string[];
+  validation: ValidationEvidence;
+  createdAt: string;
+  updatedAt: string;
 }
 
 export interface SoloDisplayOption {
