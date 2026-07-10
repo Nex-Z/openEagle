@@ -338,6 +338,10 @@ function timestampMs(value?: string) {
   return Number.isFinite(ms) ? ms : undefined;
 }
 
+function isInternalMemoryTrace(trace: AgentExecutionTrace) {
+  return trace.name.trim().toLowerCase().startsWith("memory.");
+}
+
 function collectUniqueMessageTraces(message: ChatMessage) {
   const traceMap = new Map<string, AgentExecutionTrace>();
   for (const trace of message.traces ?? []) {
@@ -350,7 +354,21 @@ function collectUniqueMessageTraces(message: ChatMessage) {
     const existing = traceMap.get(block.trace.id);
     traceMap.set(block.trace.id, existing ? { ...block.trace, ...existing } : block.trace);
   }
-  return Array.from(traceMap.values());
+  return Array.from(traceMap.values()).filter((trace) => !isInternalMemoryTrace(trace));
+}
+
+function isInternalMemoryMessage(message: ChatMessage) {
+  const allTraces = [
+    ...(message.traces ?? []),
+    ...(message.blocks ?? [])
+      .filter((block): block is Extract<AssistantMessageBlock, { kind: "trace" }> => block.kind === "trace")
+      .map((block) => block.trace),
+  ];
+  return (
+    allTraces.length > 0 &&
+    allTraces.every(isInternalMemoryTrace) &&
+    (message.role === "tool" || !message.content.trim())
+  );
 }
 
 function isSoloHandoffTrace(trace: AgentExecutionTrace) {
@@ -1086,7 +1104,9 @@ function LiveAssistantContent(props: {
   onToggleTrace: (traceKey: string) => void;
 }) {
   const { message, expandedTraceIds, onToggleTrace } = props;
-  const blocks = message.blocks ?? [];
+  const blocks = (message.blocks ?? []).filter(
+    (block) => block.kind !== "trace" || !isInternalMemoryTrace(block.trace),
+  );
 
   if (blocks.length > 0) {
     return (
@@ -1132,10 +1152,10 @@ function LiveAssistantContent(props: {
       {message.content ? (
         <div className="assistant-text-panel">{renderMessageMarkdown(message.content)}</div>
       ) : null}
-      {message.traces && message.traces.length > 0 ? (
+      {collectUniqueMessageTraces(message).length > 0 ? (
         <TraceTimeline
           expandedTraceIds={expandedTraceIds}
-          items={message.traces.map((trace) => ({
+          items={collectUniqueMessageTraces(message).map((trace) => ({
             key: traceKeyFromMessage(message, trace),
             trace,
           }))}
@@ -1164,7 +1184,9 @@ function AssistantMessageContent(props: {
     onToggleProcessCollapsed,
     collapseProcess,
   } = props;
-  const blocks = message.blocks ?? [];
+  const blocks = (message.blocks ?? []).filter(
+    (block) => block.kind !== "trace" || !isInternalMemoryTrace(block.trace),
+  );
   const traces = collectUniqueMessageTraces(message);
   const isSoloHandoff = traces.some(isSoloHandoffTrace);
 
@@ -1437,7 +1459,9 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
   const visibleMessages = useMemo(
     () =>
       messages.filter(
-        (message) => !(message.mode === "solo" && (message.imagePath || message.role === "tool")),
+        (message) =>
+          !(message.mode === "solo" && (message.imagePath || message.role === "tool")) &&
+          !isInternalMemoryMessage(message),
       ),
     [messages],
   );

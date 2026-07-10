@@ -378,6 +378,10 @@ function upsertAssistantTrace(
   });
 }
 
+function isInternalMemoryTrace(trace: AgentExecutionTrace) {
+  return trace.name.trim().toLowerCase().startsWith("memory.");
+}
+
 function applyAssistantDelta(
   current: ChatMessage[],
   requestId: string,
@@ -1266,6 +1270,9 @@ export function useBackendConnection(
 
       if (envelope.type === "server:trace" && envelope.payload.trace) {
         const trace = envelope.payload.trace!;
+        if (isInternalMemoryTrace(trace)) {
+          return;
+        }
         if (envelope.requestId === activeSoloRequestIdRef.current) {
           appendEnvelopeMessage({
             requestId: envelope.requestId,
