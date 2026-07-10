@@ -1,5 +1,4 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import { convertFileSrc } from "../../lib/electron-bridge";
 import {
   ChevronDown,
@@ -627,65 +626,6 @@ function buildMessageListItems(messages: ChatMessage[], collapseProcess: boolean
   flushToolBuffer();
   flushSoloAssistantBuffer();
   return items;
-}
-
-function estimateMessageSize(message: ChatMessage) {
-  const contentLength =
-    message.content.length +
-    (message.blocks?.reduce(
-      (total, block) => total + (block.kind === "text" ? block.content.length : 34),
-      0,
-    ) ?? 0);
-  const traceCount =
-    (message.traces?.length ?? 0) +
-    (message.blocks?.filter((block) => block.kind === "trace").length ?? 0);
-  const attachmentCount = message.attachments?.length ?? 0;
-
-  if (message.role === "user") {
-    return Math.min(260, 56 + Math.ceil(contentLength / 90) * 24 + attachmentCount * 42);
-  }
-  if (message.role === "tool") {
-    return Math.min(320, 64 + traceCount * 42);
-  }
-  return Math.min(720, 110 + Math.ceil(contentLength / 88) * 24 + traceCount * 44 + attachmentCount * 46);
-}
-
-function estimateMessageListItemSize(item: MessageListItem | undefined) {
-  if (!item) {
-    return 160;
-  }
-  if (item.kind === "tool-group") {
-    const traceCount = item.messages.reduce((total, message) => total + (message.traces?.length ?? 0), 0);
-    return Math.min(420, 70 + traceCount * 38);
-  }
-  if (item.kind === "solo-process-group") {
-    return Math.min(360, 76 + item.messages.length * 36);
-  }
-  return estimateMessageSize(item.message) + (item.soloProcessMessages?.length ?? 0) * 36;
-}
-
-function messageListItemHasExpandedContent(
-  item: MessageListItem,
-  expandedTraceIds: Set<string>,
-  expandedProcessGroups: Set<string>,
-) {
-  if (item.kind === "tool-group") {
-    return (
-      expandedProcessGroups.has(item.id) ||
-      item.messages.some((message) =>
-        (message.traces ?? []).some((trace) => expandedTraceIds.has(traceKeyFromMessage(message, trace))),
-      )
-    );
-  }
-  if (item.kind === "solo-process-group") {
-    return expandedProcessGroups.has(item.id);
-  }
-  return (
-    expandedProcessGroups.has(`assistant-process-${item.message.id}`) ||
-    collectUniqueMessageTraces(item.message).some((trace) =>
-      expandedTraceIds.has(traceKeyFromMessage(item.message, trace)),
-    )
-  );
 }
 
 type TraceTimelineItem = {
@@ -1506,30 +1446,6 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
     [collapseProcess, visibleMessages],
   );
 
-  const estimateVirtualItemSize = useCallback(
-    (index: number) => estimateMessageListItemSize(messageItems[index]),
-    [messageItems],
-  );
-
-  const getVirtualItemKey = useCallback(
-    (index: number) => messageItems[index]?.id ?? index,
-    [messageItems],
-  );
-
-  const messageVirtualizer = useVirtualizer<HTMLDivElement, HTMLDivElement>({
-    count: messageItems.length,
-    getScrollElement: () => streamRef.current,
-    estimateSize: estimateVirtualItemSize,
-    getItemKey: getVirtualItemKey,
-    overscan: 8,
-    gap: 24,
-  });
-
-  useEffect(() => {
-    const frame = requestAnimationFrame(() => messageVirtualizer.measure());
-    return () => cancelAnimationFrame(frame);
-  }, [expandedProcessGroups, expandedTraceIds, messageVirtualizer]);
-
   useEffect(() => {
     const element = textareaRef.current;
     if (!element) {
@@ -1767,15 +1683,14 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
   useEffect(() => {
     const stream = streamRef.current;
     const latestMessage = visibleMessages[visibleMessages.length - 1];
-    const latestItemIndex = messageItems.length - 1;
     const forceScrollForSolo = latestMessage?.mode === "solo";
-    if (!stream || latestItemIndex < 0 || (!shouldStickToBottomRef.current && !forceScrollForSolo)) {
+    if (!stream || messageItems.length === 0 || (!shouldStickToBottomRef.current && !forceScrollForSolo)) {
       return;
     }
     requestAnimationFrame(() => {
-      messageVirtualizer.scrollToIndex(latestItemIndex, { align: "end", behavior: "auto" });
+      stream.scrollTo({ top: stream.scrollHeight, behavior: "auto" });
     });
-  }, [messageItems.length, messageVirtualizer, soloStatus.state, visibleMessages]);
+  }, [messageItems.length, soloStatus.state, visibleMessages]);
 
   const toggleTrace = useCallback((traceKey: string) => {
     setExpandedTraceIds((current) => {
@@ -1957,7 +1872,6 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
         settings.voiceInput.baseUrl.trim() &&
         settings.voiceInput.modelId.trim(),
     );
-  const virtualRows = messageVirtualizer.getVirtualItems();
 
   return (
     <section className="chat-workspace motion-safe:animate-[eagle-panel-up_260ms_ease-out_both]">
@@ -1989,60 +1903,36 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
             )}
           </div>
         ) : (
-          <div
-            className="message-virtualizer"
-            style={{ height: `${messageVirtualizer.getTotalSize()}px` }}
-          >
-            {virtualRows.map((virtualRow) => {
-              const item = messageItems[virtualRow.index];
-              if (!item) {
-                return null;
-              }
-              const hasExpandedContent = messageListItemHasExpandedContent(
-                item,
-                expandedTraceIds,
-                expandedProcessGroups,
-              );
-
-              return (
-                <div
-                  key={item.id}
-                  ref={messageVirtualizer.measureElement}
-                  className={`message-virtual-row ${hasExpandedContent ? "has-expanded-content" : ""}`}
-                  data-index={virtualRow.index}
-                  style={{
-                    transform: `translateY(${virtualRow.start}px)`,
-                    zIndex: hasExpandedContent ? messageItems.length - virtualRow.index + 1 : undefined,
-                  }}
-                >
-                  {item.kind === "tool-group" ? (
-                    <ToolMessageGroup
-                      messages={item.messages}
-                      expandedTraceIds={expandedTraceIds}
-                      onToggleTrace={toggleTrace}
-                      isCollapsed={!expandedProcessGroups.has(item.id)}
-                      onToggleCollapsed={() => toggleProcessGroup(item.id)}
-                    />
-                  ) : item.kind === "solo-process-group" ? (
-                    <SoloProcessMessageGroup
-                      messages={item.messages}
-                      isCollapsed={!expandedProcessGroups.has(item.id)}
-                      onToggleCollapsed={() => toggleProcessGroup(item.id)}
-                    />
-                  ) : (
-                    <MessageArticle
-                      collapseProcess={collapseProcess}
-                      expandedTraceIds={expandedTraceIds}
-                      isProcessCollapsed={!expandedProcessGroups.has(`assistant-process-${item.message.id}`)}
-                      message={item.message}
-                      onToggleProcessCollapsed={() => toggleProcessGroup(`assistant-process-${item.message.id}`)}
-                      onToggleTrace={toggleTrace}
-                      soloProcessMessages={item.soloProcessMessages ?? []}
-                    />
-                  )}
-                </div>
-              );
-            })}
+          <div className="message-list">
+            {messageItems.map((item) => (
+              <div key={item.id} className="message-list-row">
+                {item.kind === "tool-group" ? (
+                  <ToolMessageGroup
+                    messages={item.messages}
+                    expandedTraceIds={expandedTraceIds}
+                    onToggleTrace={toggleTrace}
+                    isCollapsed={!expandedProcessGroups.has(item.id)}
+                    onToggleCollapsed={() => toggleProcessGroup(item.id)}
+                  />
+                ) : item.kind === "solo-process-group" ? (
+                  <SoloProcessMessageGroup
+                    messages={item.messages}
+                    isCollapsed={!expandedProcessGroups.has(item.id)}
+                    onToggleCollapsed={() => toggleProcessGroup(item.id)}
+                  />
+                ) : (
+                  <MessageArticle
+                    collapseProcess={collapseProcess}
+                    expandedTraceIds={expandedTraceIds}
+                    isProcessCollapsed={!expandedProcessGroups.has(`assistant-process-${item.message.id}`)}
+                    message={item.message}
+                    onToggleProcessCollapsed={() => toggleProcessGroup(`assistant-process-${item.message.id}`)}
+                    onToggleTrace={toggleTrace}
+                    soloProcessMessages={item.soloProcessMessages ?? []}
+                  />
+                )}
+              </div>
+            ))}
           </div>
         )}
       </div>

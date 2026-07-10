@@ -660,6 +660,21 @@ a {
   flex-direction: column;
 }
 
+.message-list {
+  width: min(100%, 992px);
+  display: flex;
+  flex-direction: column;
+  gap: 24px;
+  margin: 0 auto;
+  min-width: 0;
+}
+
+.message-list-row {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
 .empty-message-state {
   min-height: 100%;
   display: grid;
