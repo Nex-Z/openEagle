@@ -20,6 +20,7 @@ from langgraph.prebuilt import ToolNode
 
 from .config import AgentConfig, ContextConfig
 from .context_cleanup import compact_messages_for_prompt_with_ai
+from .llm_retry import retry_llm_call
 from .models import AttachmentRef
 from .observability import (
     AsyncOpenAI,
@@ -495,7 +496,10 @@ class LangGraphToolAgent:
         if state.get("stream_model"):
             content, tool_calls = await self._stream_chat_completion(request)
         else:
-            response = await self.client.chat.completions.create(**request)
+            response = await retry_llm_call(
+                lambda: self.client.chat.completions.create(**request),
+                label="agent-model",
+            )
             await record_model_usage(
                 self.agent_config.vl_provider if self.vision else self.agent_config.provider,
                 self.model_id,
@@ -526,16 +530,19 @@ class LangGraphToolAgent:
         }
 
     async def _stream_chat_completion(self, request: dict[str, Any]) -> tuple[str, list[dict[str, Any]]]:
-        try:
-            stream = await self.client.chat.completions.create(
-                **request,
-                stream=True,
-                stream_options={"include_usage": True},
-            )
-        except Exception as exc:
-            if "stream_options" not in str(exc).lower():
-                raise
-            stream = await self.client.chat.completions.create(**request, stream=True)
+        async def _open_stream():
+            try:
+                return await self.client.chat.completions.create(
+                    **request,
+                    stream=True,
+                    stream_options={"include_usage": True},
+                )
+            except Exception as exc:
+                if "stream_options" not in str(exc).lower():
+                    raise
+                return await self.client.chat.completions.create(**request, stream=True)
+
+        stream = await retry_llm_call(_open_stream, label="agent-stream")
         content_parts: list[str] = []
         tool_call_chunks: dict[int, dict[str, Any]] = {}
         async for chunk in stream:
@@ -687,7 +694,10 @@ class LangGraphToolAgent:
         if state.get("stream_model"):
             content, _ = await self._stream_chat_completion(request)
         else:
-            response = await self.client.chat.completions.create(**request)
+            response = await retry_llm_call(
+                lambda: self.client.chat.completions.create(**request),
+                label="agent-final",
+            )
             await record_model_usage(
                 self.agent_config.vl_provider if self.vision else self.agent_config.provider,
                 self.model_id,

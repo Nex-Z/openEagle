@@ -11,6 +11,7 @@ from .config import AgentConfig, AppConfig
 from .confirmations import ToolConfirmationStore
 from .conversation_context import ConversationContextService
 from .langgraph_agent import run_text_model
+from .llm_retry import retry_llm_call
 from .models import AttachmentRef, StatusPayload, utc_now
 from .memory import MemoryService
 from .observability import (
@@ -948,11 +949,14 @@ class AgentRuntime:
             import anthropic
 
             client = anthropic.AsyncAnthropic(api_key=agent_config.api_key)
-            response = await client.messages.create(
-                model=agent_config.model_id or "claude-sonnet-4-20250514",
-                max_tokens=4096,
-                system="\n".join(build_direct_answer_instructions()),
-                messages=[{"role": "user", "content": prompt}],
+            response = await retry_llm_call(
+                lambda: client.messages.create(
+                    model=agent_config.model_id or "claude-sonnet-4-20250514",
+                    max_tokens=4096,
+                    system="\n".join(build_direct_answer_instructions()),
+                    messages=[{"role": "user", "content": prompt}],
+                ),
+                label="direct-answer",
             )
             await record_model_usage(
                 "anthropic",
