@@ -114,6 +114,7 @@ class ContextConfig(BaseModel):
         alias="conversationTurnLimit",
     )
     preserve_recent_messages: int = Field(default=8, alias="preserveRecentMessages")
+    preserve_first_messages: int = Field(default=2, ge=0, alias="preserveFirstMessages")
     im_idle_cleanup_minutes: int = Field(default=60, alias="imIdleCleanupMinutes")
     tool_message_mode: Literal["placeholder", "remove"] = Field(
         default="placeholder",

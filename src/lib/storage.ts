@@ -216,6 +216,7 @@ export const defaultSettings: AppSettings = {
     maxInputTokens: 24_000,
     conversationTurnLimit: 30,
     preserveRecentMessages: 8,
+    preserveFirstMessages: 2,
     imIdleCleanupMinutes: 60,
     toolMessageMode: "placeholder",
     aiSummaryEnabled: true,

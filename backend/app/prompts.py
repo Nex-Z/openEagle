@@ -4,6 +4,7 @@ import json
 from datetime import datetime
 
 from .config import McpConfig, SkillConfig, ToolConfig
+from .context_cleanup import estimate_text_tokens
 from .solo_actions import allowed_actions_text
 from .subagent_models import AgentTaskRecord
 
@@ -412,6 +413,48 @@ def solo_decision_instructions(system_platform: str = "当前系统") -> list[st
     ]
 
 
+def select_solo_history(
+    history: list[dict[str, object]],
+    *,
+    max_tokens: int,
+    enabled: bool,
+    head: int,
+    tail: int,
+) -> list[dict[str, object]]:
+    """按 token 预算选 solo 步骤历史；超预算保留首尾、中间插占位符。
+
+    enabled=False、预算内或 len≤head+tail 时原样返回全量。
+    超预算时返回 head + [占位符] + tail，占位符带省略步骤区间与系统提示，
+    告知 LLM 中间因上下文长度省略、关键发现见 findings、勿误判进度。
+    """
+    if not enabled or len(history) <= head + tail:
+        return list(history)
+    full_tokens = estimate_text_tokens(json.dumps(history, ensure_ascii=False))
+    if full_tokens <= max_tokens:
+        return list(history)
+    if tail > 0:
+        tail_slice = history[-tail:]
+        omitted = history[head:-tail]
+    else:
+        tail_slice = []
+        omitted = history[head:]
+    first_step = omitted[0].get("step") if omitted else None
+    last_step = omitted[-1].get("step") if omitted else None
+    last_total = history[-1].get("step") if history else None
+    placeholder = {
+        "omitted": True,
+        "step_range": f"{first_step}~{last_step}",
+        "omitted_step_count": len(omitted),
+        "note": (
+            f"因上下文长度限制，第 {first_step}~{last_step} 步（共 {len(omitted)} 步）已省略。"
+            "这些步骤的关键发现已累积在 findings 中，下方为最近 "
+            f"{tail} 步。任务已进行到第 {last_total} 步，"
+            "请基于 findings 与当前截图继续推进，不要误判为刚开始。"
+        ),
+    }
+    return [*history[:head], placeholder, *tail_slice]
+
+
 def build_solo_decision_prompt(
     task: str,
     history: list[dict[str, object]],
@@ -421,11 +464,18 @@ def build_solo_decision_prompt(
     kernel_state: dict[str, object] | None = None,
     capability_context: str | None = None,
     memory_context: str | None = None,
+    max_history_tokens: int = 24_000,
+    compaction_enabled: bool = True,
+    history_head: int = 2,
+    history_tail: int = 8,
 ) -> str:
-    if len(history) <= 8:
-        recent_history = history
-    else:
-        recent_history = history[:2] + history[-6:]
+    recent_history = select_solo_history(
+        history,
+        max_tokens=max_history_tokens,
+        enabled=compaction_enabled,
+        head=history_head,
+        tail=history_tail,
+    )
     history_text = json.dumps(recent_history, ensure_ascii=False)
     step_count = len(history)
     stability_items = []
@@ -534,11 +584,18 @@ def build_solo_repair_prompt(
     findings: list[str] | None = None,
     capability_context: str | None = None,
     memory_context: str | None = None,
+    max_history_tokens: int = 24_000,
+    compaction_enabled: bool = True,
+    history_head: int = 2,
+    history_tail: int = 8,
 ) -> str:
-    if len(history) <= 8:
-        recent_history = history
-    else:
-        recent_history = history[:2] + history[-6:]
+    recent_history = select_solo_history(
+        history,
+        max_tokens=max_history_tokens,
+        enabled=compaction_enabled,
+        head=history_head,
+        tail=history_tail,
+    )
     history_text = json.dumps(recent_history, ensure_ascii=False)
     raw_preview = raw_output.strip()
     if len(raw_preview) > 4000:

@@ -13,7 +13,7 @@ from uuid import uuid4
 
 from pydantic import BaseModel, Field, ValidationError
 
-from .config import AgentConfig
+from .config import AgentConfig, ContextConfig
 from .langgraph_agent import LangGraphToolAgent, image_user_content
 from .prompts import (
     build_solo_decision_prompt,
@@ -268,9 +268,11 @@ class SoloService:
         self,
         agent_config: AgentConfig,
         capability_runtime: SoloCapabilityRuntime | None = None,
+        context_config: ContextConfig | None = None,
     ) -> None:
         self._agent_config = agent_config
         self._capability_runtime = capability_runtime
+        self._context_config = context_config
         self._agent: LangGraphToolAgent | None = None
 
     def _build_agent(self) -> LangGraphToolAgent:
@@ -495,6 +497,7 @@ class SoloService:
         memory_context: str | None = None,
     ) -> SoloDecision:
         agent = self._build_agent()
+        context = self._context_config or ContextConfig()
         prompt = build_solo_decision_prompt(
             task,
             history,
@@ -506,6 +509,10 @@ class SoloService:
             if self._capability_runtime is not None
             else None,
             memory_context,
+            max_history_tokens=context.max_input_tokens,
+            compaction_enabled=context.enabled,
+            history_head=context.preserve_first_messages,
+            history_tail=context.preserve_recent_messages,
         )
         model_image = prepare_model_image(screenshot_path)
         model_image_path = Path(model_image["path"])
@@ -549,6 +556,10 @@ class SoloService:
                     else None
                 ),
                 memory_context=memory_context,
+                max_history_tokens=context.max_input_tokens,
+                compaction_enabled=context.enabled,
+                history_head=context.preserve_first_messages,
+                history_tail=context.preserve_recent_messages,
             )
             repair_started_at = time.perf_counter()
             repair_output = await self._run_agent(agent, repair_prompt, image_url)

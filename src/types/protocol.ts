@@ -192,6 +192,7 @@ export interface ContextSettings {
   maxInputTokens: number;
   conversationTurnLimit: number;
   preserveRecentMessages: number;
+  preserveFirstMessages: number;
   imIdleCleanupMinutes: number;
   toolMessageMode: ToolMessageMode;
   aiSummaryEnabled: boolean;

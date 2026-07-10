@@ -1524,7 +1524,7 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
                 result=trace.result,
                 kind=trace.kind,
             )
-        solo_service = SoloService(current_config.agent, solo_capabilities)
+        solo_service = SoloService(current_config.agent, solo_capabilities, context_config=current_config.context)
         solo_kernel = SoloAgentKernel.create(task)
         await emit_solo_plan(active_solo, solo_kernel)
         await emit_solo_status(active_solo)

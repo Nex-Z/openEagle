@@ -901,6 +901,22 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
                     />
                   </label>
                   <label className="form-field">
+                    <span>压缩时保留最初消息数</span>
+                    <input
+                      min={0}
+                      onChange={(event) =>
+                        updateContextSettings({
+                          preserveFirstMessages: readBoundedInteger(
+                            event.target.value,
+                            settings.context.preserveFirstMessages,
+                          ),
+                        })
+                      }
+                      type="number"
+                      value={settings.context.preserveFirstMessages}
+                    />
+                  </label>
+                  <label className="form-field">
                     <span>IM 静默整理分钟</span>
                     <input
                       min={0}
