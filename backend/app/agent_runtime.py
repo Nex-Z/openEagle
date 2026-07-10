@@ -37,6 +37,14 @@ MAX_RECENT_CONVERSATION_TURNS = 8
 MAX_CONVERSATION_CONTEXT_CHARS = 1_800
 MAX_CONVERSATION_TURN_CHARS = 520
 MAX_PROGRESS_CHARS = 96
+LEARNING_CORRECTION_PATTERN = re.compile(
+    r"(?:不对|错了|不是这样|应该|改成|以后不要|别再|请不要|不要再)",
+    re.IGNORECASE,
+)
+LEARNING_PREFERENCE_PATTERN = re.compile(
+    r"(?:我喜欢|我不喜欢|我偏好|我的习惯|希望你|回复.{0,8}(?:简洁|详细)|以后.{0,8}(?:回答|处理))",
+    re.IGNORECASE,
+)
 MEMORY_TOOL_NAMES = {
     "get_memory_state",
     "search_memory_history",
@@ -267,14 +275,18 @@ class AgentRuntime:
         await self._send_event("server:message", request_id, conversation_id, payload)
         if not conversation_id.startswith("im_"):
             self._attachment_store.pop_reply_attachments(conversation_id, request_id)
+        learning_trigger = self._learning_trigger(content)
+        memory_metadata = self._route_params(decision)
+        if learning_trigger:
+            memory_metadata["learningTrigger"] = learning_trigger
         await self._record_memory_turn(
             conversation_id=conversation_id,
             request_id=request_id,
             user_content=content,
             assistant_content=reply,
             route=decision.route,
-            metadata=self._route_params(decision),
-            distill=False,
+            metadata=memory_metadata,
+            distill=bool(learning_trigger),
         )
         await self._record_conversation_turn(
             conversation_id=conversation_id,
@@ -282,7 +294,7 @@ class AgentRuntime:
             user_content=content,
             assistant_content=reply,
             route=decision.route,
-            metadata=self._route_params(decision),
+            metadata=memory_metadata,
         )
         return reply
 
@@ -822,8 +834,8 @@ class AgentRuntime:
                         name="memory.distill_event",
                         status="completed",
                         started_at=utc_now(),
-                        summary="已从本轮对话蒸馏更新长期记忆。",
-                        params={"eventId": event_id},
+                        summary="已从用户纠正或偏好生成待审学习候选。",
+                        params={"eventId": event_id, "trigger": metadata.get("learningTrigger")},
                     )
                     await self._send_event(
                         "server:memory_updated",
@@ -835,6 +847,18 @@ class AgentRuntime:
                     return
 
         asyncio.create_task(_distill())
+
+    @staticmethod
+    def _learning_trigger(content: str) -> str | None:
+        """Only high-signal user feedback pays for an immediate review pass."""
+        normalized = content.strip()
+        if not normalized:
+            return None
+        if LEARNING_CORRECTION_PATTERN.search(normalized):
+            return "user_correction"
+        if LEARNING_PREFERENCE_PATTERN.search(normalized):
+            return "durable_preference"
+        return None
 
     async def _record_context_snapshot(
         self,

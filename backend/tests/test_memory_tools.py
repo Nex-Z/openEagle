@@ -90,6 +90,17 @@ class AgentRuntimeMemoryTest(unittest.TestCase):
     def tearDown(self) -> None:
         self._tmp.cleanup()
 
+    def test_learning_trigger_only_accepts_corrections_and_durable_preferences(self) -> None:
+        self.assertIsNone(AgentRuntime._learning_trigger("你好，帮我看看这个文件。"))
+        self.assertEqual(
+            AgentRuntime._learning_trigger("刚才不对，以后不要用英文回答。"),
+            "user_correction",
+        )
+        self.assertEqual(
+            AgentRuntime._learning_trigger("我喜欢简洁的中文回复。"),
+            "durable_preference",
+        )
+
     def test_explicit_memory_request_is_saved_without_router_or_file(self) -> None:
         events: list[tuple[str, str, str, dict[str, Any]]] = []
 
