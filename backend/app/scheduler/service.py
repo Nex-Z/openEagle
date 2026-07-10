@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -31,7 +32,13 @@ MemoryContextGetter = Callable[[str | None], str]
 
 
 def _log(message: str) -> None:
-    print(f"[SCHEDULER] {utc_now()} {message}", flush=True)
+    line = f"[SCHEDULER] {utc_now()} {message}"
+    try:
+        print(line, flush=True)
+    except UnicodeEncodeError:
+        # 兜底：Windows cp1252 等非 UTF-8 控制台无法编码中文时，直接写 UTF-8 字节
+        sys.stdout.buffer.write((line + "\n").encode("utf-8", "replace"))
+        sys.stdout.buffer.flush()
 
 
 class SchedulerService:

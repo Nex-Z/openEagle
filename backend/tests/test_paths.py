@@ -15,9 +15,11 @@ class WorkspaceRootTest(unittest.TestCase):
             with patch.dict(os.environ, {OPEN_EAGLE_WORKSPACE_ROOT_ENV: tmp}):
                 self.assertEqual(resolve_workspace_root(), Path(tmp).resolve())
 
-    def test_default_workspace_root_is_backend_parent(self) -> None:
-        with patch.dict(os.environ, {}, clear=True):
-            self.assertEqual(resolve_workspace_root(), Path(__file__).resolve().parents[2])
+    def test_default_workspace_root_is_user_home(self) -> None:
+        # 仅移除工作区根目录环境变量，保留 HOME/USERPROFILE 以便 Path.home() 正常解析
+        env = {k: v for k, v in os.environ.items() if k != OPEN_EAGLE_WORKSPACE_ROOT_ENV}
+        with patch.dict(os.environ, env, clear=True):
+            self.assertEqual(resolve_workspace_root(), Path.home())
 
 
 if __name__ == "__main__":
