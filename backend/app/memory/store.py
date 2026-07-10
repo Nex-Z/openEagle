@@ -156,8 +156,6 @@ def init_db(db_path: Path) -> None:
             CREATE INDEX IF NOT EXISTS idx_memory_audit_created_at ON memory_audit(created_at);
             CREATE INDEX IF NOT EXISTS idx_conversation_turns_lookup
                 ON conversation_turns(conversation_id, id);
-            CREATE INDEX IF NOT EXISTS idx_memory_notes_scope
-                ON memory_notes(scope_kind, scope_id, status, updated_at);
             CREATE INDEX IF NOT EXISTS idx_learning_candidates_status
                 ON learning_candidates(status, updated_at);
             """
@@ -168,6 +166,10 @@ def init_db(db_path: Path) -> None:
         _ensure_column(conn, "memory_events", "scope_id", "TEXT NOT NULL DEFAULT 'desktop:default'")
         _ensure_column(conn, "conversation_turns", "scope_kind", "TEXT NOT NULL DEFAULT 'user'")
         _ensure_column(conn, "conversation_turns", "scope_id", "TEXT NOT NULL DEFAULT 'desktop:default'")
+        conn.execute(
+            """CREATE INDEX IF NOT EXISTS idx_memory_notes_scope
+               ON memory_notes(scope_kind, scope_id, status, updated_at)"""
+        )
         now = utc_now()
         conn.execute(
             """
