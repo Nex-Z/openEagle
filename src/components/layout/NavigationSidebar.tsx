@@ -11,6 +11,7 @@ import {
   X,
 } from "lucide-react";
 import type { BackendState, ConversationSummary } from "../../types/protocol";
+import { ConfirmationDialog } from "../ConfirmationDialog";
 import type { SettingsSection } from "../settings/SettingsDrawer";
 
 interface NavigationSidebarProps {
@@ -74,6 +75,7 @@ function NavigationSidebarComponent(props: NavigationSidebarProps) {
   } = props;
   const [openMenuId, setOpenMenuId] = useState<string | null>(null);
   const [menuPosition, setMenuPosition] = useState<{ left: number; top: number } | null>(null);
+  const [pendingConversationDelete, setPendingConversationDelete] = useState<ConversationSummary | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
   const menuRef = useRef<HTMLDivElement | null>(null);
   const statusCopy = sidebarStatusCopy(backend);
@@ -265,7 +267,7 @@ function NavigationSidebarComponent(props: NavigationSidebarProps) {
                 className="floating-menu-item danger"
                 onClick={(event) => {
                   event.stopPropagation();
-                  onDeleteConversation(openConversation.id);
+                  setPendingConversationDelete(openConversation);
                   setOpenMenuId(null);
                   setMenuPosition(null);
                 }}
@@ -279,6 +281,18 @@ function NavigationSidebarComponent(props: NavigationSidebarProps) {
             document.body,
           )
         : null}
+      <ConfirmationDialog
+        description="删除后将移除该会话及其本地记录，无法恢复。"
+        onCancel={() => setPendingConversationDelete(null)}
+        onConfirm={() => {
+          if (pendingConversationDelete) {
+            onDeleteConversation(pendingConversationDelete.id);
+          }
+          setPendingConversationDelete(null);
+        }}
+        open={pendingConversationDelete !== null}
+        title={`删除会话“${pendingConversationDelete?.title || "未命名会话"}”？`}
+      />
     </>
   );
 }

@@ -3,6 +3,7 @@ import { convertFileSrc, invoke } from "../../lib/electron-bridge";
 import { ChevronDown, Feather, Mic, Monitor, Search, SlidersHorizontal, Sparkles, Wrench, X } from "lucide-react";
 import QRCode from "qrcode";
 import { ThemeToggle } from "../ThemeToggle";
+import { ConfirmationDialog } from "../ConfirmationDialog";
 import type {
   AppSettings,
   ImChannel,
@@ -66,6 +67,12 @@ interface SettingsDrawerProps {
   onChange: (settings: AppSettings) => void;
   onClose: () => void;
   onSectionChange: (section: SettingsSection) => void;
+}
+
+interface PendingDeletion {
+  title: string;
+  description: string;
+  onConfirm: () => void;
 }
 
 const sectionMeta: Array<{
@@ -511,6 +518,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
   const [editingTask, setEditingTask] = useState<ScheduledTask | null>(null);
   const [memoryDraft, setMemoryDraft] = useState<MemoryState>(memoryState);
   const [memoryDirty, setMemoryDirty] = useState(false);
+  const [pendingDeletion, setPendingDeletion] = useState<PendingDeletion | null>(null);
   const [historyTaskId, setHistoryTaskId] = useState<string | null>(null);
   const [collapsedImSections, setCollapsedImSections] = useState<Set<string>>(() => {
     const initial = new Set<string>();
@@ -656,6 +664,30 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
     if (onSaveMemoryState(memoryDraft)) {
       setMemoryDirty(false);
     }
+  };
+
+  const deleteMemoryNote = (noteId: string) => {
+    const nextMemory: MemoryState = {
+      ...memoryDraft,
+      notes: updateListItem(memoryDraft.notes, noteId, (item) => ({
+        ...item,
+        status: "archived",
+        updatedAt: new Date().toISOString(),
+      })),
+    };
+    setExpandedMemoryNoteId((current) => (current === noteId ? null : current));
+    setMemoryDraft(nextMemory);
+    if (onSaveMemoryState(nextMemory)) {
+      setMemoryDirty(false);
+    } else {
+      setMemoryDirty(true);
+    }
+  };
+
+  const confirmPendingDeletion = () => {
+    const deletion = pendingDeletion;
+    setPendingDeletion(null);
+    deletion?.onConfirm();
   };
 
   const visibleMemoryNotes = memoryDraft.notes.filter(
@@ -1893,9 +1925,14 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
                         enabled={tool.enabled}
                         expanded={expandedToolId === tool.id}
                         onDelete={() =>
-                          onChange({
-                            ...settings,
-                            tools: removeListItem(settings.tools, tool.id),
+                          setPendingDeletion({
+                            title: `删除工具“${tool.name || "未命名工具"}”？`,
+                            description: "删除后将无法在当前设置中继续使用该工具。",
+                            onConfirm: () =>
+                              onChange({
+                                ...settings,
+                                tools: removeListItem(settings.tools, tool.id),
+                              }),
                           })
                         }
                         onToggleEnabled={(value) =>
@@ -2174,9 +2211,14 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
                         enabled={server.enabled}
                         expanded={expandedMcpId === server.id}
                         onDelete={() =>
-                          onChange({
-                            ...settings,
-                            mcp: removeListItem(settings.mcp, server.id),
+                          setPendingDeletion({
+                            title: `删除 MCP Server“${server.name || "未命名服务"}”？`,
+                            description: "删除后该服务将不再连接到 openEagle。",
+                            onConfirm: () =>
+                              onChange({
+                                ...settings,
+                                mcp: removeListItem(settings.mcp, server.id),
+                              }),
                           })
                         }
                         onToggleEnabled={(value) =>
@@ -2307,9 +2349,14 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
                       enabled={skill.enabled}
                       expanded={expandedSkillId === skill.id}
                       onDelete={() =>
-                        onChange({
-                          ...settings,
-                          skills: removeListItem(settings.skills, skill.id),
+                        setPendingDeletion({
+                          title: `删除 Skill“${skill.name || "未命名 Skill"}”？`,
+                          description: "删除后该 Skill 将无法继续被 Agent 使用。",
+                          onConfirm: () =>
+                            onChange({
+                              ...settings,
+                              skills: removeListItem(settings.skills, skill.id),
+                            }),
                         })
                       }
                       onToggleEnabled={(value) =>
@@ -2508,19 +2555,13 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
                         key={note.id}
                         enabled={note.status === "active"}
                         expanded={expandedMemoryNoteId === note.id}
-                        onDelete={() => {
-                          setExpandedMemoryNoteId((current) =>
-                            current === note.id ? null : current,
-                          );
-                          updateMemoryDraft((memory) => ({
-                            ...memory,
-                            notes: updateListItem(memory.notes, note.id, (item) => ({
-                              ...item,
-                              status: "archived",
-                              updatedAt: new Date().toISOString(),
-                            })),
-                          }));
-                        }}
+                        onDelete={() =>
+                          setPendingDeletion({
+                            title: "删除这条用户笔记？",
+                            description: "删除后会立即生效，且不会再作为长期记忆使用。",
+                            onConfirm: () => deleteMemoryNote(note.id),
+                          })
+                        }
                         onToggleEnabled={(value) =>
                           updateMemoryDraft((memory) => ({
                             ...memory,
@@ -2687,7 +2728,13 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
                         }
                         enabled={task.enabled}
                         expanded={expandedTaskId === task.id}
-                        onDelete={() => onDeleteScheduledTask(task.id)}
+                        onDelete={() =>
+                          setPendingDeletion({
+                            title: `删除定时任务“${task.name || "未命名任务"}”？`,
+                            description: "删除后该任务不会再自动执行，相关执行记录仍会保留。",
+                            onConfirm: () => onDeleteScheduledTask(task.id),
+                          })
+                        }
                         onToggleEnabled={(value) =>
                           onUpdateScheduledTask({ ...task, enabled: value })
                         }
@@ -2776,6 +2823,13 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
           </div>
         </div>
       </aside>
+      <ConfirmationDialog
+        description={pendingDeletion?.description ?? ""}
+        onCancel={() => setPendingDeletion(null)}
+        onConfirm={confirmPendingDeletion}
+        open={pendingDeletion !== null}
+        title={pendingDeletion?.title ?? ""}
+      />
     </>
   );
 }
