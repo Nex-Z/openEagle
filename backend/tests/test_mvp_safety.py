@@ -27,6 +27,7 @@ from app.prompts import (
 )
 from app.providers.base import ReplyTrace
 from app.safety import (
+    BlockedActionError,
     assess_solo_action,
     assess_tool_action,
     classify_command_risk,
@@ -325,6 +326,26 @@ class ConfirmationStoreTest(unittest.TestCase):
 
             result = toolkit.read_text_file("image.png")
             self.assertIn("二进制文件", result)
+
+    def test_all_permissions_allow_external_file_paths(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as outside_tmp:
+            root = Path(tmp)
+            outside = Path(outside_tmp)
+            source = outside / "source.txt"
+            source.write_text("external content", encoding="utf-8")
+
+            restricted = build_default_tools(workspace_root=root)
+            with self.assertRaises(BlockedActionError):
+                restricted.get_file_info(str(source))
+
+            toolkit = build_default_tools(workspace_root=root, permission_mode="all")
+            self.assertIn(str(source), toolkit.get_file_info(str(source)))
+            self.assertEqual(toolkit.read_text_file(str(source)), "external content")
+
+            destination = outside / "written.txt"
+            result = toolkit.write_text_file(str(destination), "written externally")
+            self.assertIn("Successfully wrote", result)
+            self.assertEqual(destination.read_text(encoding="utf-8"), "written externally")
 
     def test_search_ignores_heavy_directories_and_caps_results(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

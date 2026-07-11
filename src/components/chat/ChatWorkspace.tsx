@@ -1352,7 +1352,7 @@ const MessageArticle = memo(function MessageArticle({
         </div>
       ) : null}
 
-      {message.role === "assistant" && message.tokenUsage?.totalTokens ? (
+      {message.role === "assistant" && message.isFinal && message.status === "done" && message.tokenUsage?.totalTokens ? (
         <div
           className="message-token-usage"
           title={`${message.tokenUsage.calls} 次模型调用`}
@@ -1927,7 +1927,14 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
         ) : (
           <div className="message-list">
             {messageItems.map((item) => (
-              <div key={item.id} className="message-list-row">
+              <div
+                key={item.id}
+                className={`message-list-row${
+                  item.kind === "message" && item.message.mode === "solo" && item.message.isFinal
+                    ? " is-solo-final"
+                    : ""
+                }`}
+              >
                 {item.kind === "tool-group" ? (
                   <ToolMessageGroup
                     messages={item.messages}

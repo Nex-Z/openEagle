@@ -30,6 +30,7 @@ export interface ChatMessage {
   label?: string;
   requestId?: string;
   status?: "pending" | "done" | "error";
+  isFinal?: boolean;
   traces?: AgentExecutionTrace[];
   trace?: AgentExecutionTrace;
   blocks?: AssistantMessageBlock[];

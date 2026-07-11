@@ -57,8 +57,13 @@ def run_workspace_command(
     tail: int = DEFAULT_COMMAND_TAIL,
     timeout_ms: int = DEFAULT_COMMAND_TIMEOUT_MS,
     env: dict[str, str] | None = None,
+    allow_external_paths: bool = False,
 ) -> WorkspaceCommandResult:
-    working_dir = resolve_workspace_path(workspace_root.resolve(), cwd)
+    working_dir = resolve_workspace_path(
+        workspace_root.resolve(),
+        cwd,
+        allow_external_paths=allow_external_paths,
+    )
     if not working_dir.exists() or not working_dir.is_dir():
         return WorkspaceCommandResult(f"Error: 无效执行目录: {working_dir}", None)
 
@@ -100,6 +105,7 @@ def execute_workspace_command(
     tail: int = DEFAULT_COMMAND_TAIL,
     timeout_ms: int = DEFAULT_COMMAND_TIMEOUT_MS,
     env: dict[str, str] | None = None,
+    allow_external_paths: bool = False,
 ) -> str:
     return run_workspace_command(
         workspace_root=workspace_root,
@@ -108,4 +114,5 @@ def execute_workspace_command(
         tail=tail,
         timeout_ms=timeout_ms,
         env=env,
+        allow_external_paths=allow_external_paths,
     ).output

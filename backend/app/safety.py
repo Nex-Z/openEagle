@@ -187,8 +187,15 @@ def normalize_key(token: str) -> str:
     return mapping.get(lowered, lowered)
 
 
-def resolve_workspace_path(workspace_root: Path, path: str = ".") -> Path:
+def resolve_workspace_path(
+    workspace_root: Path,
+    path: str = ".",
+    *,
+    allow_external_paths: bool = False,
+) -> Path:
     target = (workspace_root / path).resolve()
+    if allow_external_paths:
+        return target
     try:
         target.relative_to(workspace_root.resolve())
     except ValueError as exc:
@@ -224,6 +231,8 @@ def assess_command_action(
     name: str,
     params: dict[str, Any],
     workspace_root: Path,
+    *,
+    allow_external_paths: bool = False,
 ) -> RiskAssessment:
     command = str(params.get("command", "")).strip()
     command_risk = classify_command_risk(command)
@@ -232,11 +241,15 @@ def assess_command_action(
 
     cwd = str(params.get("cwd", "."))
     try:
-        target = resolve_workspace_path(workspace_root, cwd)
+        target = resolve_workspace_path(
+            workspace_root,
+            cwd,
+            allow_external_paths=allow_external_paths,
+        )
     except BlockedActionError as exc:
         return RiskAssessment("blocked", str(exc))
     if not target.exists() or not target.is_dir():
-        return RiskAssessment("blocked", "cwd 无效，必须是工作区内目录。")
+        return RiskAssessment("blocked", "cwd 无效，必须是可访问目录。")
 
     if name == "configured_tool" and command_risk.level == "confirm":
         return RiskAssessment("confirm", "自定义固定命令需要确认。")
@@ -249,7 +262,13 @@ def assess_command_action(
     return command_risk
 
 
-def assess_solo_action(action: str, action_args: dict[str, Any], workspace_root: Path) -> RiskAssessment:
+def assess_solo_action(
+    action: str,
+    action_args: dict[str, Any],
+    workspace_root: Path,
+    *,
+    allow_external_paths: bool = False,
+) -> RiskAssessment:
     if action == "open_url":
         url = str(action_args.get("url", "")).strip()
         parsed = urlparse(url)
@@ -272,7 +291,12 @@ def assess_solo_action(action: str, action_args: dict[str, Any], workspace_root:
         return RiskAssessment("safe", "普通按键动作，可自动执行。")
 
     if action == "execute_command":
-        return assess_command_action("execute_command", action_args, workspace_root)
+        return assess_command_action(
+            "execute_command",
+            action_args,
+            workspace_root,
+            allow_external_paths=allow_external_paths,
+        )
 
     return RiskAssessment("blocked", f"不支持的动作: {action}")
 
@@ -285,13 +309,23 @@ def is_repairable_solo_block(action: str, reason: str) -> bool:
     return action in {"press_keys", "open_url"} and "缺少" in reason
 
 
-def assess_tool_action(name: str, params: dict[str, Any], workspace_root: Path) -> RiskAssessment:
+def assess_tool_action(
+    name: str,
+    params: dict[str, Any],
+    workspace_root: Path,
+    *,
+    allow_external_paths: bool = False,
+) -> RiskAssessment:
     if name == "write_text_file":
         path = str(params.get("path", "")).strip()
         if not path:
             return RiskAssessment("blocked", "写文件缺少 path。")
         try:
-            resolve_workspace_path(workspace_root, path)
+            resolve_workspace_path(
+                workspace_root,
+                path,
+                allow_external_paths=allow_external_paths,
+            )
         except BlockedActionError as exc:
             return RiskAssessment("blocked", str(exc))
         return RiskAssessment("confirm", "将写入工作区文件。")
@@ -301,7 +335,11 @@ def assess_tool_action(name: str, params: dict[str, Any], workspace_root: Path) 
         if not path:
             return RiskAssessment("blocked", "创建目录缺少 path。")
         try:
-            target = resolve_workspace_path(workspace_root, path)
+            target = resolve_workspace_path(
+                workspace_root,
+                path,
+                allow_external_paths=allow_external_paths,
+            )
         except BlockedActionError as exc:
             return RiskAssessment("blocked", str(exc))
         if target == workspace_root.resolve():
@@ -314,8 +352,16 @@ def assess_tool_action(name: str, params: dict[str, Any], workspace_root: Path) 
         if not source_path or not destination_path:
             return RiskAssessment("blocked", "复制或移动缺少 source 或 destination。")
         try:
-            source = resolve_workspace_path(workspace_root, source_path)
-            destination = resolve_workspace_path(workspace_root, destination_path)
+            source = resolve_workspace_path(
+                workspace_root,
+                source_path,
+                allow_external_paths=allow_external_paths,
+            )
+            destination = resolve_workspace_path(
+                workspace_root,
+                destination_path,
+                allow_external_paths=allow_external_paths,
+            )
         except BlockedActionError as exc:
             return RiskAssessment("blocked", str(exc))
         root = workspace_root.resolve()
@@ -341,7 +387,11 @@ def assess_tool_action(name: str, params: dict[str, Any], workspace_root: Path) 
         if not path:
             return RiskAssessment("blocked", "删除路径缺少 path。")
         try:
-            target = resolve_workspace_path(workspace_root, path)
+            target = resolve_workspace_path(
+                workspace_root,
+                path,
+                allow_external_paths=allow_external_paths,
+            )
         except BlockedActionError as exc:
             return RiskAssessment("blocked", str(exc))
         if target == workspace_root.resolve():
@@ -364,7 +414,11 @@ def assess_tool_action(name: str, params: dict[str, Any], workspace_root: Path) 
         if expected_occurrences < 1:
             return RiskAssessment("blocked", "expected_occurrences 必须 >= 1。")
         try:
-            target = resolve_workspace_path(workspace_root, path)
+            target = resolve_workspace_path(
+                workspace_root,
+                path,
+                allow_external_paths=allow_external_paths,
+            )
         except BlockedActionError as exc:
             return RiskAssessment("blocked", str(exc))
         if not target.exists() or not target.is_file():
@@ -390,7 +444,11 @@ def assess_tool_action(name: str, params: dict[str, Any], workspace_root: Path) 
             if expected_occurrences < 1:
                 return RiskAssessment("blocked", f"第 {index} 个 edit 的 expected_occurrences 必须 >= 1。")
         try:
-            target = resolve_workspace_path(workspace_root, path)
+            target = resolve_workspace_path(
+                workspace_root,
+                path,
+                allow_external_paths=allow_external_paths,
+            )
         except BlockedActionError as exc:
             return RiskAssessment("blocked", str(exc))
         if not target.exists() or not target.is_file():
@@ -398,6 +456,11 @@ def assess_tool_action(name: str, params: dict[str, Any], workspace_root: Path) 
         return RiskAssessment("confirm", "将在工作区内应用多段文本编辑。")
 
     if name in {"run_command", "configured_tool"}:
-        return assess_command_action(name, params, workspace_root)
+        return assess_command_action(
+            name,
+            params,
+            workspace_root,
+            allow_external_paths=allow_external_paths,
+        )
 
     return RiskAssessment("safe", "只读或低风险工具。")

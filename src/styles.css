@@ -718,6 +718,10 @@ a {
   min-width: 0;
 }
 
+.message-list-row.is-solo-final {
+  margin-top: -16px;
+}
+
 .empty-message-state {
   min-height: 100%;
   display: grid;

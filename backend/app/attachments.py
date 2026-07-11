@@ -132,8 +132,14 @@ class AttachmentStore:
         request_id: str,
         path: str,
         display_name: str | None = None,
+        *,
+        allow_external_paths: bool = False,
     ) -> AttachmentRef:
-        target = resolve_workspace_path(self.workspace_root, path)
+        target = resolve_workspace_path(
+            self.workspace_root,
+            path,
+            allow_external_paths=allow_external_paths,
+        )
         if not target.exists() or not target.is_file():
             raise AttachmentError(f"文件不存在或不是文件: {path}")
         existing = self._reply_attachments.setdefault((conversation_id, request_id), [])

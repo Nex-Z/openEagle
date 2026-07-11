@@ -353,7 +353,12 @@ class SoloCapabilityRuntime:
                 params = self._configured_tool_params(action_args)
             except ValueError as exc:
                 return RiskAssessment("blocked", str(exc))
-            return assess_tool_action("configured_tool", params, self.workspace_root)
+            return assess_tool_action(
+                "configured_tool",
+                params,
+                self.workspace_root,
+                allow_external_paths=self.permission_mode == "all",
+            )
         if action == "call_mcp_tool":
             try:
                 self._mcp_lookup(action_args)
@@ -630,6 +635,7 @@ class SoloCapabilityRuntime:
                 reason="桌面执行能力调用",
                 params=params,
             ),
+            allow_external_paths=self.permission_mode == "all",
         )
 
     def _mcp_lookup(self, action_args: dict[str, Any]) -> tuple[str, str, BaseTool]:

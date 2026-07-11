@@ -291,6 +291,8 @@ function createChatMessage(params: {
   requestId?: string;
   mode?: ChatMessage["mode"];
   status?: ChatMessage["status"];
+  isFinal?: boolean;
+  tokenUsage?: TokenUsageSummary;
   imagePath?: string;
   attachments?: AttachmentRef[];
   label?: string;
@@ -304,6 +306,8 @@ function createChatMessage(params: {
     requestId: params.requestId,
     mode: params.mode,
     status: params.status,
+    isFinal: params.isFinal,
+    tokenUsage: params.tokenUsage,
     imagePath: params.imagePath,
     attachments: params.attachments,
     label: params.label,
@@ -1010,13 +1014,23 @@ export function useBackendConnection(
         const usage = envelope.payload.requestUsage;
         if (usage) {
           tokenUsageByRequestRef.current.set(envelope.requestId, usage);
-          patchMessages((current) =>
-            current.map((message) =>
-              message.role === "assistant" && message.requestId === envelope.requestId
-                ? { ...message, tokenUsage: usage }
-                : message,
-            ),
-          );
+          patchMessages((current) => {
+            let finalAssistantIndex = -1;
+            for (let index = current.length - 1; index >= 0; index -= 1) {
+              const message = current[index];
+              if (
+                message.role === "assistant" &&
+                message.requestId === envelope.requestId &&
+                message.isFinal
+              ) {
+                finalAssistantIndex = index;
+                break;
+              }
+            }
+            return current.map((message, index) =>
+              index === finalAssistantIndex ? { ...message, tokenUsage: usage } : message,
+            );
+          });
         }
         if (envelope.payload.dashboard) {
           setTokenUsageDashboard(envelope.payload.dashboard);
@@ -1194,6 +1208,7 @@ export function useBackendConnection(
               createdAt: message?.createdAt ?? envelope.timestamp,
               completedAt: envelope.timestamp,
               status: "done",
+              isFinal: envelope.payload.route !== "start_solo",
               attachments: envelope.payload.attachments ?? message?.attachments,
               traces: message?.traces ?? [],
               blocks,
@@ -1407,6 +1422,7 @@ export function useBackendConnection(
           step.screenState ||
           step.visual?.displayText ||
           "";
+        const isFinalStep = isSoloFinishAction(step.action);
         activeSoloRequestIdRef.current = envelope.requestId;
         setSoloStep(step);
         appendSoloTimeline(
@@ -1420,6 +1436,10 @@ export function useBackendConnection(
             requestId: envelope.requestId,
             mode: "solo",
             status: "done",
+            isFinal: isFinalStep,
+            tokenUsage: isFinalStep
+              ? tokenUsageByRequestRef.current.get(envelope.requestId)
+              : undefined,
           })),
         );
         appendEnvelopeMessage({
@@ -1471,7 +1491,7 @@ export function useBackendConnection(
             })),
           );
         }
-        if (isSoloFinishAction(step.action)) {
+        if (isFinalStep) {
           setSoloConfirmation(null);
           setSoloLastError(null);
           setSoloStatus((current) => {

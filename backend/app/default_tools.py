@@ -249,8 +249,16 @@ def execute_confirmed_tool(
     *,
     attachment_store: AttachmentStore | None = None,
     attachment_request_id: str | None = None,
+    allow_external_paths: bool = False,
 ) -> str:
     root = workspace_root.resolve()
+    def resolve_path(path: str) -> Path:
+        return resolve_workspace_path(
+            root,
+            path,
+            allow_external_paths=allow_external_paths,
+        )
+
     if pending.name == "attach_file_to_reply":
         if attachment_store is None:
             return "Error: 附件仓库未初始化。"
@@ -261,26 +269,27 @@ def execute_confirmed_tool(
             attachment_request_id or pending.request_id,
             path,
             display_name or None,
+            allow_external_paths=allow_external_paths,
         )
         return f"已登记回复附件: {attachment.name} ({attachment.size} bytes)"
 
     if pending.name == "write_text_file":
         path = str(pending.params.get("path", ""))
         content = str(pending.params.get("content", ""))
-        target = resolve_workspace_path(root, path)
+        target = resolve_path(path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_text(content, encoding="utf-8")
         return f"Successfully wrote UTF-8 file: {target}"
 
     if pending.name == "create_directory":
         path = str(pending.params.get("path", ""))
-        target = resolve_workspace_path(root, path)
+        target = resolve_path(path)
         target.mkdir(parents=True, exist_ok=True)
         return f"Successfully created directory: {target}"
 
     if pending.name == "copy_path":
-        source = resolve_workspace_path(root, str(pending.params.get("source", "")))
-        destination = resolve_workspace_path(root, str(pending.params.get("destination", "")))
+        source = resolve_path(str(pending.params.get("source", "")))
+        destination = resolve_path(str(pending.params.get("destination", "")))
         overwrite = bool(pending.params.get("overwrite", False))
         if destination.exists() and not overwrite:
             return f"Error: 目标已存在: {destination}"
@@ -297,8 +306,8 @@ def execute_confirmed_tool(
         return f"Successfully copied: {source} -> {destination}"
 
     if pending.name == "move_path":
-        source = resolve_workspace_path(root, str(pending.params.get("source", "")))
-        destination = resolve_workspace_path(root, str(pending.params.get("destination", "")))
+        source = resolve_path(str(pending.params.get("source", "")))
+        destination = resolve_path(str(pending.params.get("destination", "")))
         overwrite = bool(pending.params.get("overwrite", False))
         if destination.exists() and not overwrite:
             return f"Error: 目标已存在: {destination}"
@@ -312,7 +321,7 @@ def execute_confirmed_tool(
         return f"Successfully moved: {source} -> {destination}"
 
     if pending.name == "delete_path":
-        target = resolve_workspace_path(root, str(pending.params.get("path", "")))
+        target = resolve_path(str(pending.params.get("path", "")))
         recursive = bool(pending.params.get("recursive", False))
         if target.is_dir():
             if not recursive:
@@ -327,14 +336,14 @@ def execute_confirmed_tool(
         old_text = str(pending.params.get("old_text", ""))
         new_text = str(pending.params.get("new_text", ""))
         expected_occurrences = int(pending.params.get("expected_occurrences", 1))
-        target = resolve_workspace_path(root, path)
+        target = resolve_path(path)
         return _replace_text(target, old_text, new_text, expected_occurrences)
 
     if pending.name == "apply_text_edits":
         path = str(pending.params.get("path", ""))
         edits = pending.params.get("edits", [])
         expected_sha256 = str(pending.params.get("expected_sha256", "") or "")
-        target = resolve_workspace_path(root, path)
+        target = resolve_path(path)
         return _apply_text_edits(target, edits, expected_sha256 or None)
 
     if pending.name == "run_command":
@@ -352,6 +361,7 @@ def execute_confirmed_tool(
             tail=tail,
             timeout_ms=timeout_ms,
             env=env,
+            allow_external_paths=allow_external_paths,
         )
 
     if pending.params.get("toolId") and pending.params.get("command"):
@@ -361,6 +371,7 @@ def execute_confirmed_tool(
             cwd=str(pending.params.get("cwd", ".")),
             tail=int(pending.params.get("tail", DEFAULT_COMMAND_TAIL)),
             timeout_ms=int(pending.params.get("timeout_ms", DEFAULT_COMMAND_TIMEOUT_MS)),
+            allow_external_paths=allow_external_paths,
         )
 
     return f"Error: unsupported confirmed tool: {pending.name}"
@@ -488,7 +499,31 @@ class OpenEagleDefaultTools:
         return list(self._agent_tools)
 
     def _resolve_path(self, path: str = ".") -> Path:
-        return resolve_workspace_path(self.workspace_root, path)
+        return resolve_workspace_path(
+            self.workspace_root,
+            path,
+            allow_external_paths=self.permission_mode == "all",
+        )
+
+    def _is_ignored_path(self, path: Path) -> bool:
+        try:
+            path.resolve().relative_to(self.workspace_root)
+        except ValueError:
+            return False
+        return _is_ignored_path(path, self.workspace_root)
+
+    def _display_path(self, path: Path) -> str:
+        try:
+            return _relative_path(path, self.workspace_root)
+        except ValueError:
+            return str(path)
+
+    def _scan_root(self, base_dir: Path) -> Path:
+        try:
+            base_dir.resolve().relative_to(self.workspace_root)
+        except ValueError:
+            return base_dir
+        return self.workspace_root
 
     def _create_confirmation(self, name: str, reason: str, params: dict[str, object]) -> str:
         return create_confirmation_response(
@@ -507,7 +542,13 @@ class OpenEagleDefaultTools:
         contextual_assessment = assess_contextual_tool_action(name, params, self.task_context)
         if contextual_assessment is not None:
             return f"Error: {contextual_assessment.reason}"
-        assessment = assess_tool_action(name, params, self.workspace_root)
+        allow_external_paths = self.permission_mode == "all"
+        assessment = assess_tool_action(
+            name,
+            params,
+            self.workspace_root,
+            allow_external_paths=allow_external_paths,
+        )
         if assessment.level == "blocked" and not (assessment.overridable and self.permission_mode == "all"):
             return f"Error: {assessment.reason}"
         if assessment.level == "confirm" and self._should_confirm():
@@ -523,6 +564,9 @@ class OpenEagleDefaultTools:
                 reason=assessment.reason,
                 params=params,
             ),
+            attachment_store=self.attachment_store,
+            attachment_request_id=self.request_id,
+            allow_external_paths=allow_external_paths,
         )
 
     def get_current_time(self) -> str:
@@ -666,11 +710,11 @@ class OpenEagleDefaultTools:
 
         stat = target.stat()
         info = [
-            f"path: {_relative_path(target, self.workspace_root)}",
+            f"path: {self._display_path(target)}",
             f"type: {'directory' if target.is_dir() else 'file'}",
             f"sizeBytes: {stat.st_size}",
             f"modifiedAt: {stat.st_mtime}",
-            f"ignoredByDefault: {_is_ignored_path(target, self.workspace_root)}",
+            f"ignoredByDefault: {self._is_ignored_path(target)}",
         ]
         if target.is_file():
             if stat.st_size <= DEFAULT_SHA256_SIZE_THRESHOLD:
@@ -703,7 +747,7 @@ class OpenEagleDefaultTools:
 
         entries = []
         for item in sorted(target.iterdir(), key=lambda entry: (not entry.is_dir(), entry.name.lower())):
-            if _is_ignored_path(item, self.workspace_root):
+            if self._is_ignored_path(item):
                 continue
             suffix = "/" if item.is_dir() else ""
             entries.append(f"{item.name}{suffix}")
@@ -903,7 +947,7 @@ class OpenEagleDefaultTools:
             return f"Error: 路径不存在: {base_dir}"
         if not base_dir.is_dir():
             return f"Error: 目标不是目录: {base_dir}"
-        if _is_ignored_path(base_dir, self.workspace_root):
+        if self._is_ignored_path(base_dir):
             return "(ignored path)"
         if not keyword.strip():
             return "Error: keyword 不能为空。"
@@ -912,9 +956,10 @@ class OpenEagleDefaultTools:
         limit = max(1, min(int(max_results), DEFAULT_MAX_LIST_RESULTS))
         matches: list[str] = []
         truncated = False
-        for candidate in _iter_workspace_entries(base_dir, self.workspace_root):
+        scan_root = self._scan_root(base_dir)
+        for candidate in _iter_workspace_entries(base_dir, scan_root):
             if keyword_lower in candidate.name.lower():
-                matches.append(_relative_path(candidate, self.workspace_root))
+                matches.append(_relative_path(candidate, scan_root))
                 if len(matches) >= limit:
                     truncated = True
                     break
@@ -954,7 +999,7 @@ class OpenEagleDefaultTools:
             return f"Error: 路径不存在: {base_dir}"
         if not base_dir.is_dir():
             return f"Error: 目标不是目录: {base_dir}"
-        if _is_ignored_path(base_dir, self.workspace_root):
+        if self._is_ignored_path(base_dir):
             return "(ignored path)"
         if not query.strip():
             return "Error: query 不能为空。"
@@ -969,10 +1014,11 @@ class OpenEagleDefaultTools:
         truncated = False
         limit_reached = False
 
-        for candidate in _iter_workspace_files(base_dir, self.workspace_root):
+        scan_root = self._scan_root(base_dir)
+        for candidate in _iter_workspace_files(base_dir, scan_root):
             if limit_reached:
                 break
-            relative = _relative_path(candidate, self.workspace_root)
+            relative = _relative_path(candidate, scan_root)
             if include_patterns and not _matches_any_glob(relative, include_patterns):
                 continue
             if exclude_patterns and _matches_any_glob(relative, exclude_patterns):
@@ -1442,7 +1488,12 @@ def build_configured_tools(
                         "timeout_ms": timeout_ms,
                         "tail": tail,
                     }
-                    assessment = assess_tool_action("configured_tool", params, root)
+                    assessment = assess_tool_action(
+                        "configured_tool",
+                        params,
+                        root,
+                        allow_external_paths=permission_mode == "all",
+                    )
                     contextual_assessment = assess_contextual_tool_action(
                         "configured_tool",
                         params,
@@ -1472,6 +1523,7 @@ def build_configured_tools(
                             reason=assessment.reason,
                             params=params,
                         ),
+                        allow_external_paths=permission_mode == "all",
                     )
             else:
                 def run_configured_tool() -> str:
@@ -1483,7 +1535,12 @@ def build_configured_tools(
                         "timeout_ms": timeout_ms,
                         "tail": tail,
                     }
-                    assessment = assess_tool_action("configured_tool", params, root)
+                    assessment = assess_tool_action(
+                        "configured_tool",
+                        params,
+                        root,
+                        allow_external_paths=permission_mode == "all",
+                    )
                     contextual_assessment = assess_contextual_tool_action(
                         "configured_tool",
                         params,
@@ -1513,6 +1570,7 @@ def build_configured_tools(
                             reason=assessment.reason,
                             params=params,
                         ),
+                        allow_external_paths=permission_mode == "all",
                     )
 
             return run_configured_tool
