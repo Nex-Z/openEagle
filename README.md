@@ -136,7 +136,7 @@ When users ask for work to happen later or on a cadence, MainAgent creates a per
 
 openEagle now includes Hermes-inspired single-user long-term memory stored in `.open-eagle/memory.db`. Memory has four layers: user profile, user notes, Soul, and raw memory events. Raw events keep broader turn and compaction snapshots, while prompt injection uses a V2 retrieval layer: a bounded profile summary, a compact Soul summary, Agent side notes, and only active user notes relevant to the current request. Full memory remains available through built-in tools (`get_memory_state`, `save_memory_note`, `update_memory_note`, `delete_memory_note`, `save_user_profile`, `save_soul_core`, `save_agent_side_notes`), so "remember this" requests go through the memory database instead of creating project-root files. In Settings -> Memory, deleting a user note archives it and removes it from the active note list while preserving audit history.
 
-Conversation turns are persisted in `.open-eagle/memory.db` by conversation ID, so desktop and remote IM sessions can continue after reconnects or restarts. The latest 30 full turns are kept by default (`context.conversationTurnLimit` is configurable); older turns are merged into an archive summary. Once the estimated prompt token threshold is reached, the backend preserves system messages and the latest N messages, then processes only the middle of the conversation. Tool messages are removed or replaced with compact placeholders before any AI summary step. Remote IM sessions schedule this compaction during the configured idle period instead of discarding the old context.
+Conversation turns are persisted in `.open-eagle/memory.db` by conversation ID, so desktop sessions can continue after reconnects or restarts. The latest 30 full turns are kept by default (`context.conversationTurnLimit` is configurable); older turns are merged into an archive summary. Once the estimated prompt token threshold is reached, the backend preserves system messages and the latest N messages, then processes only the middle of the conversation. Tool messages are removed or replaced with compact placeholders before any AI summary step. For remote IM, an idle timeout starts an isolated internal session on the next message instead of summarizing an inactive conversation.
 
 Built-in worker kinds:
 
@@ -171,7 +171,7 @@ openEagle can accept tasks from Feishu, Telegram, or WeChat after you enable the
 - WeChat uses `wechat-clawbot`. Click "Scan to bind" in the WeChat card, scan the QR code with WeChat, then enable the entry after the `accountId` is saved. "Unbind" stops polling and removes the local ClawBot account credentials used by openEagle.
 - Empty whitelists reject all remote messages by default.
 - Plain remote text is handled by the main agent first. It can reply naturally, use tools, or dispatch desktop execution when the task needs GUI control.
-- After a remote session has been idle for `context.imIdleCleanupMinutes`, openEagle summarizes older context in the background while retaining recent full turns.
+- After a remote session has been idle for `context.imIdleCleanupMinutes`, its next message starts a new isolated internal session. The user remains in the same remote chat, but prior session context is not carried forward and no background summarization is run.
 - Use `/solo <task>` only when you want to explicitly bias the request toward desktop execution.
 
 Remote commands:
@@ -228,6 +228,7 @@ Key settings (accessible from the in-app Settings panel):
 | `wechat.allowedUserIds` / `wechat.allowedChatIds` | WeChat user/chat whitelist |
 | `context.maxInputTokens` | Estimated input token threshold for context cleanup |
 | `context.conversationTurnLimit` | Full conversation turns persisted per conversation (default: 30) |
+| `context.imIdleCleanupMinutes` | Idle minutes before the next remote IM message starts an isolated internal session (default: 60; `0` disables the split) |
 | `context.preserveRecentMessages` | Number of recent messages preserved exactly during cleanup |
 | `context.toolMessageMode` | Whether middle tool messages are compacted to placeholders or removed |
 | `context.aiSummaryEnabled` | Enables AI summaries for middle conversation context |

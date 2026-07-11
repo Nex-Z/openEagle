@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import asyncio
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
@@ -32,8 +31,6 @@ StartSolo = Callable[[IMConversationBinding, str, str], Awaitable[str]]
 SoloControl = Callable[[str, str, str], Awaitable[str]]
 ToolDecision = Callable[[str, str, str], Awaitable[str]]
 ReplyAttachments = Callable[[str, str], list[AttachmentRef]]
-CompactContext = Callable[[str], Awaitable[bool]]
-
 HELP_TEXT = """openEagle IM 命令：
 /solo <任务> - 明确让 main agent 优先调度桌面执行
 /pause - 暂停桌面执行
@@ -58,7 +55,6 @@ class IMBridge:
         tool_decision: ToolDecision,
         attachment_store: AttachmentStore | None = None,
         reply_attachments: ReplyAttachments | None = None,
-        compact_context: CompactContext | None = None,
     ) -> None:
         self._send_client = send_client
         self._handle_chat = handle_chat
@@ -67,7 +63,6 @@ class IMBridge:
         self._tool_decision = tool_decision
         self._attachment_store = attachment_store
         self._reply_attachments = reply_attachments
-        self._compact_context = compact_context
         self._feishu_adapter: FeishuAdapter | None = None
         self._feishu_signature: tuple[Any, ...] | None = None
         self._telegram_adapter: TelegramAdapter | None = None
@@ -75,8 +70,8 @@ class IMBridge:
         self._wechat_adapter: WechatAdapter | None = None
         self._wechat_signature: tuple[Any, ...] | None = None
         self._bindings: dict[str, IMConversationBinding] = {}
+        self._active_bindings: dict[str, IMConversationBinding] = {}
         self._last_activity_at: dict[str, datetime] = {}
-        self._idle_compaction_tasks: dict[str, asyncio.Task[None]] = {}
         self._forwarded_agent_progress: dict[str, str] = {}
 
     async def update_config(self, config: AppConfig) -> None:
@@ -151,12 +146,6 @@ class IMBridge:
         await self._wechat_adapter.start()
 
     async def stop(self) -> None:
-        idle_tasks = list(self._idle_compaction_tasks.values())
-        self._idle_compaction_tasks.clear()
-        for task in idle_tasks:
-            task.cancel()
-        if idle_tasks:
-            await asyncio.gather(*idle_tasks, return_exceptions=True)
         if self._feishu_adapter is not None:
             await self._feishu_adapter.stop()
             self._feishu_adapter = None
@@ -266,10 +255,10 @@ class IMBridge:
     async def _handle_event(self, event: IMEvent) -> None:
         app_config = await self._current_config()
         config = resolve_channel_config(app_config, event.source.channel)
-        binding = build_conversation_binding(event.source)
-        self._bindings[binding.conversation_id] = binding
+        source_binding = build_conversation_binding(event.source)
 
         if not is_source_allowed(config, event.source):
+            self._bindings[source_binding.conversation_id] = source_binding
             await self._emit_status(
                 IMStatus(
                     provider=event.source.channel,
@@ -280,20 +269,29 @@ class IMBridge:
                 )
             )
             await self.send_text(
-                binding.conversation_id,
+                source_binding.conversation_id,
                 "openEagle 当前未允许这个 IM 来源，请在设置里加入用户 ID 或会话 ID。",
             )
             return
 
-        idle_cleanup = should_cleanup_for_idle(
-            self._last_activity_at.get(binding.conversation_id),
+        source_id = source_binding.conversation_id
+        binding = self._active_bindings.get(source_id)
+        should_start_new_session = binding is None or should_cleanup_for_idle(
+            self._last_activity_at.get(source_id),
             app_config.context,
         )
-        self._cancel_idle_compaction(binding.conversation_id)
-        if idle_cleanup and self._compact_context is not None:
-            await self._compact_context(binding.conversation_id)
+        if should_start_new_session:
+            if binding is not None:
+                self._bindings.pop(binding.conversation_id, None)
+            binding = IMConversationBinding(
+                conversation_id=f"{source_id}_s{uuid.uuid4().hex}",
+                title=source_binding.title,
+                source=source_binding.source,
+            )
+            self._active_bindings[source_id] = binding
+        self._bindings[binding.conversation_id] = binding
         activity_at = datetime.now(UTC)
-        self._last_activity_at[binding.conversation_id] = activity_at
+        self._last_activity_at[source_id] = activity_at
 
         request_id = f"im-{uuid.uuid4()}"
         command = parse_im_command(event.text, allow_empty_task=bool(event.attachments))
@@ -368,71 +366,9 @@ class IMBridge:
                         else [item.model_dump(by_alias=True, exclude_none=True) for item in reply_attachments],
                     },
                 )
-        self._schedule_idle_compaction(
-            binding.conversation_id,
-            activity_at,
-            app_config.context.im_idle_cleanup_minutes,
-            enabled=app_config.context.enabled,
-        )
-
     async def _current_config(self) -> AppConfig:
         # Patched by main.py after construction to avoid a circular import.
         raise RuntimeError("IMBridge current config callback is not configured")
-
-    def _cancel_idle_compaction(self, conversation_id: str) -> None:
-        task = self._idle_compaction_tasks.pop(conversation_id, None)
-        if task is not None:
-            task.cancel()
-
-    def _schedule_idle_compaction(
-        self,
-        conversation_id: str,
-        activity_at: datetime,
-        idle_minutes: int,
-        *,
-        enabled: bool,
-    ) -> None:
-        self._cancel_idle_compaction(conversation_id)
-        if not enabled or idle_minutes <= 0 or self._compact_context is None:
-            return
-        task = asyncio.create_task(
-            self._compact_after_idle(
-                conversation_id,
-                activity_at,
-                idle_minutes,
-            )
-        )
-        self._idle_compaction_tasks[conversation_id] = task
-        task.add_done_callback(
-            lambda completed, key=conversation_id: self._idle_compaction_tasks.pop(
-                key,
-                None,
-            )
-            if self._idle_compaction_tasks.get(key) is completed
-            else None
-        )
-
-    async def _compact_after_idle(
-        self,
-        conversation_id: str,
-        activity_at: datetime,
-        idle_minutes: int,
-    ) -> None:
-        try:
-            await asyncio.sleep(max(0, idle_minutes) * 60)
-            if self._last_activity_at.get(conversation_id) != activity_at:
-                return
-            config = await self._current_config()
-            if not should_cleanup_for_idle(
-                activity_at,
-                config.context,
-                now=datetime.now(UTC),
-            ):
-                return
-            if self._compact_context is not None:
-                await self._compact_context(conversation_id)
-        except asyncio.CancelledError:
-            return
 
     async def _prepare_event_attachments(
         self,

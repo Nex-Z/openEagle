@@ -135,7 +135,7 @@ MainAgent 的内部决策步骤采用原则驱动，而不是关键词驱动：�
 
 openEagle 现在内置 Hermes 风格的单用户长期记忆，数据保存在 `.open-eagle/memory.db`。记忆分为用户画像、用户笔记、Soul 和原始记忆事件：原始事件尽量保留回合与压缩快照，prompt 注入走 V2 检索层，只放有界用户画像摘要、压缩后的 Soul 摘要、Agent 旁注，以及与当前请求相关的活跃用户笔记。完整记忆仍可通过系统默认工具（`get_memory_state`、`save_memory_note`、`update_memory_note`、`delete_memory_note`、`save_user_profile`、`save_soul_core`、`save_agent_side_notes`）按需读取和维护，所以“记住/记录一下”类请求会写入 memory 数据库，而不是在项目根目录创建文件。设置页的 Memory 区域只展示活跃用户笔记，删除笔记会归档并从列表隐藏，同时保留审计记录。
 
-会话轮次会按 conversation ID 持久化到 `.open-eagle/memory.db`，因此桌面客户端或远程 IM 在断联、重连和重启后都能继续原上下文。默认完整保留最近 30 轮，可通过 `context.conversationTurnLimit` 调整；更早轮次会合并为归档摘要。达到 token 阈值后，后端会保留 system 和最近 N 条消息，只处理中间消息；工具消息先占位或移除，避免把大段工具输出交给摘要模型。远程 IM 会话会在达到静默时长后后台整理旧上下文，不再把下一轮强制视为新窗口。
+会话轮次会按 conversation ID 持久化到 `.open-eagle/memory.db`，因此桌面客户端在断联、重连和重启后都能继续原上下文。默认完整保留最近 30 轮，可通过 `context.conversationTurnLimit` 调整；更早轮次会合并为归档摘要。达到 token 阈值后，后端会保留 system 和最近 N 条消息，只处理中间消息；工具消息先占位或移除，避免把大段工具输出交给摘要模型。远程 IM 在静默超时后的下一条消息会启用隔离的新内部会话，不会为不活跃会话做后台摘要。
 
 内置 worker 类型：
 
@@ -170,7 +170,7 @@ openEagle 现在内置 Hermes 风格的单用户长期记忆，数据保存在 `
 - 微信使用 `wechat-clawbot`。在微信卡片中点击“扫码绑定”，用微信扫码后会自动保存 `accountId`，再启用微信入口即可开始长轮询。点击“解绑”会停止轮询，并清理 openEagle 专用的本地 ClawBot 账号凭据。
 - 白名单为空时默认拦截所有远程消息。
 - 远程普通文本会先交给 main agent。main agent 可以自然回复、调用工具，或在任务需要 GUI 操作时调度桌面执行。
-- 远程会话静默达到 `context.imIdleCleanupMinutes` 后，会在后台摘要较早上下文，同时保留最近完整轮次。
+- 远程会话静默达到 `context.imIdleCleanupMinutes` 后，下一条消息会启用新的隔离内部会话。用户仍在原 IM 聊天窗口中操作，但不会带入上一会话上下文，也不会触发后台摘要。
 - 只有明确希望优先走桌面执行时，才使用 `/solo <任务>`。
 
 远程命令：
@@ -227,6 +227,7 @@ openEagle 支持灵活的模型路由——main agent 文本对话和 Vision-Lan
 | `wechat.allowedUserIds` / `wechat.allowedChatIds`     | 微信用户/会话白名单                               |
 | `context.maxInputTokens`                              | 触发上下文整理的估算输入 token 阈值               |
 | `context.conversationTurnLimit`                       | 每个会话持久保留的完整轮数（默认 30）             |
+| `context.imIdleCleanupMinutes`                        | 远程 IM 静默后、下一条消息启用隔离内部会话的分钟数（默认 60；`0` 关闭切分） |
 | `context.preserveRecentMessages`                      | 上下文整理时完整保留的最近消息数                  |
 | `context.toolMessageMode`                             | 中段工具消息处理方式：占位或移除                  |
 | `context.aiSummaryEnabled`                            | 是否使用文本模型摘要中段上下文                    |

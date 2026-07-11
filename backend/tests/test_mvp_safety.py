@@ -36,6 +36,7 @@ from app.solo_executor import SoloExecutor
 from app.solo_kernel import SoloAgentKernel, action_signature
 from app.solo_capabilities import (
     SOLO_CONFIRMATION_PREFIX,
+    SoloDefaultCapabilities,
     SoloCapabilityRuntime,
     _split_stdio_endpoint,
     parse_confirmation_request,
@@ -341,6 +342,27 @@ class ConfirmationStoreTest(unittest.TestCase):
             self.assertIn("src/note.txt:1", text)
             self.assertNotIn("node_modules", text)
 
+    def test_search_files_honors_limit_and_solo_capability_contract(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            for index in range(3):
+                (root / f"match-{index}.txt").write_text("", encoding="utf-8")
+            toolkit = build_default_tools(workspace_root=root)
+
+            limited = toolkit.search_files("match", max_results=2)
+            self.assertEqual(limited.count("match-"), 2)
+            self.assertIn("truncated at max_results=2", limited)
+
+            solo_capabilities = SoloDefaultCapabilities(toolkit)
+            search_files_tool = next(
+                tool for tool in solo_capabilities.agent_tools if tool.name == "search_files"
+            )
+            solo_limited = search_files_tool.invoke(
+                {"keyword": "match", "max_results": 1}
+            )
+            self.assertEqual(solo_limited.count("match-"), 1)
+            self.assertIn("truncated at max_results=1", solo_limited)
+
     def test_replace_text_requires_exact_occurrence_count(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -515,6 +537,7 @@ class SoloCapabilityRuntimeTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "note.txt").write_text("alpha needle omega", encoding="utf-8")
+            (root / "note-copy.txt").write_text("needle", encoding="utf-8")
             toolkit = SoloToolkit(
                 SoloExecutor(default_tools=build_default_tools(workspace_root=root))
             )
@@ -528,6 +551,16 @@ class SoloCapabilityRuntimeTest(unittest.TestCase):
 
             search = toolkit.execute("search_text", {"keyword": "needle", "path": "."})
             self.assertIn("note.txt", search["output"])
+
+            limited_files = toolkit.execute(
+                "search_files", {"keyword": "note", "max_results": 1}
+            )
+            self.assertIn("truncated at max_results=1", limited_files["output"])
+
+            limited_text = toolkit.execute(
+                "search_text", {"keyword": "needle", "max_results": 1}
+            )
+            self.assertIn("truncated at max_results=1", limited_text["output"])
 
     def test_capability_catalog_loads_configured_tools_and_skills(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

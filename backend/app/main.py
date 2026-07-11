@@ -1857,7 +1857,6 @@ async def websocket_endpoint(websocket: WebSocket) -> None:
         tool_decision=handle_tool_decision_from_im,
         attachment_store=attachment_store,
         reply_attachments=attachment_store.pop_reply_attachments,
-        compact_context=conversation_context_service.compact_for_idle,
     )
     bind_config_getter(im_bridge, runtime_state.get_config)
     set_scheduled_task_origin_resolver(im_bridge.delivery_target)

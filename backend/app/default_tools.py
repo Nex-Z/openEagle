@@ -882,12 +882,18 @@ class OpenEagleDefaultTools:
             },
         )
 
-    def search_files(self, keyword: str, path: str = ".") -> str:
+    def search_files(
+        self,
+        keyword: str,
+        path: str = ".",
+        max_results: int = DEFAULT_MAX_LIST_RESULTS,
+    ) -> str:
         """在工作区内按文件名搜索。
 
         Args:
             keyword: 要匹配的关键词，大小写不敏感。
             path: 搜索起始目录，相对工作区根目录。
+            max_results: 最多返回多少条匹配路径。
 
         Returns:
             str: 匹配到的相对路径列表。
@@ -903,19 +909,20 @@ class OpenEagleDefaultTools:
             return "Error: keyword 不能为空。"
 
         keyword_lower = keyword.lower()
+        limit = max(1, min(int(max_results), DEFAULT_MAX_LIST_RESULTS))
         matches: list[str] = []
         truncated = False
         for candidate in _iter_workspace_entries(base_dir, self.workspace_root):
             if keyword_lower in candidate.name.lower():
                 matches.append(_relative_path(candidate, self.workspace_root))
-                if len(matches) >= DEFAULT_MAX_LIST_RESULTS:
+                if len(matches) >= limit:
                     truncated = True
                     break
         if not matches:
             return "(no matches)"
         result = "\n".join(matches)
         if truncated:
-            result += f"\n...[truncated at max_results={DEFAULT_MAX_LIST_RESULTS}]"
+            result += f"\n...[truncated at max_results={limit}]"
         return result
 
     def search_text(

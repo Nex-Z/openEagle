@@ -325,17 +325,25 @@ class SoloExecutor:
             if action == "search_files":
                 keyword = str(action_args.get("keyword", "")).strip()
                 path = str(action_args.get("path", ".")).strip()
+                raw_max_results = action_args.get("max_results")
                 if not keyword:
                     raise ValueError("search_files requires keyword")
-                result = self._default_tools.search_files(keyword, path)
+                search_kwargs: dict[str, Any] = {"path": path}
+                if raw_max_results is not None:
+                    search_kwargs["max_results"] = int(raw_max_results)
+                result = self._default_tools.search_files(keyword, **search_kwargs)
                 return {"ok": True, "action": action, "output": result}
 
             if action == "search_text":
                 keyword = str(action_args.get("keyword", "")).strip()
                 path = str(action_args.get("path", ".")).strip()
+                raw_max_results = action_args.get("max_results")
                 if not keyword:
                     raise ValueError("search_text requires keyword")
-                result = self._default_tools.search_text(keyword, path)
+                search_kwargs = {"path": path}
+                if raw_max_results is not None:
+                    search_kwargs["max_results"] = int(raw_max_results)
+                result = self._default_tools.search_text(keyword, **search_kwargs)
                 return {"ok": True, "action": action, "output": result}
 
         if action == "execute_command":

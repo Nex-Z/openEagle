@@ -951,7 +951,7 @@ function SettingsDrawerContent(props: SettingsDrawerProps) {
                     />
                   </label>
                   <label className="form-field">
-                    <span>IM 静默整理分钟</span>
+                    <span>IM 静默新会话分钟</span>
                     <input
                       min={0}
                       onChange={(event) =>
