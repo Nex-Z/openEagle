@@ -1205,14 +1205,12 @@ function AssistantMessageContent(props: {
   );
   const progressBlocks = textBlocks.filter((block) => block.purpose === "progress");
   const finalBlocks = textBlocks.filter((block) => block.purpose !== "progress");
-  const processBlocks = isSoloHandoff
-    ? textBlocks.filter((block) => Boolean(block.content))
-    : progressBlocks;
-  const visibleFinalBlocks = isSoloHandoff ? [] : finalBlocks;
+  const processBlocks = progressBlocks;
+  const visibleFinalBlocks = finalBlocks;
   const shouldShowProcess =
     processBlocks.length > 0 || soloProcessMessages.length > 0 || traces.length > 0;
   const fallbackFinalContent =
-    !isSoloHandoff && finalBlocks.length === 0 && message.content && progressBlocks.length === 0
+    finalBlocks.length === 0 && message.content && progressBlocks.length === 0
       ? message.content
       : "";
 
