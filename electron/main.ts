@@ -1,3 +1,6 @@
+import { tmpdir } from "node:os";
+import { ipcMain } from "electron";
+import { attachFixtureBackend } from "./fixture-backend";
 import { app, BrowserWindow, protocol, screen, globalShortcut } from "electron";
 import path from "node:path";
 import fs from "node:fs";
@@ -16,6 +19,7 @@ import { loadAppSettings, saveAppSettings } from "./conversations";
 import { migrateTauriSettings } from "./migrate-tauri-settings";
 
 const isDev = !app.isPackaged;
+const fixtureMode = isDev && process.env.OPEN_EAGLE_V2_FIXTURE === "1";
 
 // 禁用 GPU 硬件加速，避免部分 Windows 设备上 GPU 进程崩溃
 // 注意：命令行开关需在 electron-dev.cjs / 启动脚本中传入，此处仅作打包后的兜底
@@ -27,7 +31,12 @@ if (process.platform === "win32") {
   app.setAppUserModelId("com.openeagle.desktop");
 }
 
+if (fixtureMode) app.setPath("userData", fs.mkdtempSync(path.join(tmpdir(), "openeagle-v2-app-")));
+
 let mainWindow: BrowserWindow | null = null;
+let stopFixture: (() => Promise<void>) | undefined;
+let fixtureQuitReady = false;
+let fixtureQuitting = false;
 
 interface QuickAssistantStartupSettings {
   enabled?: boolean;
@@ -75,9 +84,10 @@ function createMainWindow() {
     show: false, // show after backend ready
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
+      additionalArguments: fixtureMode ? ["--openeagle-v2-fixture"] : [],
       contextIsolation: true,
       nodeIntegration: false,
-      webSecurity: false, // needed for asset:// protocol
+      webSecurity: fixtureMode, // legacy asset behavior is retained outside fixture mode
     },
   });
 
@@ -160,8 +170,19 @@ function registerAssetProtocol() {
 }
 
 app.whenReady().then(async () => {
-  registerAssetProtocol();
+  if (!fixtureMode) registerAssetProtocol();
   registerIpcHandlers(isDev);
+  if (fixtureMode) {
+    ipcMain.removeHandler("get_backend_state");
+    ipcMain.handle("get_backend_state", event => {
+      if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("Invalid fixture sender");
+      return {phase:"ready",port:1,message:"V2 TEST MODE · fake broker"};
+    });
+    const win = createMainWindow();
+    stopFixture = attachFixtureBackend(win);
+    win.once("ready-to-show", () => { if (process.env.OPENEAGLE_FIXTURE_HEADLESS !== "1") win.show(); });
+    return;
+  }
   registerQuickAssistantIpc(isDev, () => mainWindow);
 
   initLogPath(isDev);
@@ -220,7 +241,15 @@ app.on("window-all-closed", () => {
   app.quit();
 });
 
-app.on("before-quit", () => {
+app.on("before-quit", (event) => {
+  if (fixtureMode && !fixtureQuitReady) {
+    event.preventDefault();
+    if (!fixtureQuitting) {
+      fixtureQuitting = true;
+      void (stopFixture?.() ?? Promise.resolve()).finally(() => { fixtureQuitReady = true; app.quit(); });
+    }
+    return;
+  }
   globalShortcut.unregisterAll();
   hideSoloOverlay();
   hideQuickAssistant(true);

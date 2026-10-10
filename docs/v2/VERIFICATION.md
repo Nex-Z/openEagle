@@ -84,3 +84,12 @@ P1 immediate cancellation: check the signal before invoking the engine and attac
 P2 overlapping workspace coordination: ResourceLocks now conflicts canonical workspace roots in both ancestor/descendant directions. Windows comparison is case insensitive and component bounded; sibling prefixes and separate drives remain independent. Regression covers queued cancellation, atomic multiple-key acquisition, reverse nesting, duplicate release and POSIX nesting. This remains in-process coordination, not filesystem isolation; adapters must provide canonical roots, and FIFO fairness is not guaranteed.
 
 Local Node 24.8.0 / installed Chrome: compiled agent-core and ran all 54 tests, 49 passed, zero failed, five Linux-only skipped. Independent read-only review found no blocking issue. No UI integration is claimed by this patch; no real model calls or user credentials used. No push performed.
+
+
+## Default-off Electron UI fixture verification
+
+Published f38021d run 38071293459 completed successfully on Linux and Windows. The subsequent UI patch is local pending review/push authorization.
+
+Core build, React and Electron typechecks pass. Local full fixture regression: 58 tests, 53 passed, zero failed, five Linux-only skipped. Follow-up cleanup-failure regression verifies one cleanup attempt and an honest failed terminal event. Four protocol-session tests plus the default WebSocket/fixture socket-close test pass.
+
+Real hidden Electron 42.2.0 UI test (`scripts/verify-v2-fixture.cjs`) passed: correlated start/progress/confirmation/trace/result, approval after conversation switch with result preserved in original conversation, cancellation, asset protocol rejection, and execution directory removal after both pending-confirmation window close and MessagePort disconnect. No page errors or forced-cleanup timeout observed. Dedicated app userData profiles remain in temporary storage for inspection. Independent review verified fixes for its five findings and reported no remaining blocker. See UI_FIXTURE.md for reproduction and limits. No real model, keys, desktop actions or old checkout mutations.

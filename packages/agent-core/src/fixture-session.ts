@@ -1,0 +1,135 @@
+import { randomUUID } from 'node:crypto';
+import { AgentRuntime, CapabilityRegistry, type TaskHandle } from './runtime.js';
+import type { AgentEngine, AuthorizationRequest } from './contracts.js';
+
+// Selective adaptation of the existing protocol envelope and request-bound
+// confirmation broker. No BackendApplication/settings/service composition root.
+export interface SessionEnvelope {
+  type: string; requestId: string; conversationId: string;
+  payload: Record<string, unknown>; timestamp: string;
+}
+export function parseSessionEnvelope(value: unknown): SessionEnvelope {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('invalid envelope');
+  const e = value as SessionEnvelope;
+  if (typeof e.type !== 'string' || !/^[a-zA-Z0-9:_-]{1,100}$/.test(e.type)
+    || typeof e.requestId !== 'string' || !/^[a-zA-Z0-9_-]{1,150}$/.test(e.requestId)
+    || typeof e.conversationId !== 'string' || !/^[a-zA-Z0-9_-]{1,150}$/.test(e.conversationId)
+    || typeof e.timestamp !== 'string' || !Number.isFinite(Date.parse(e.timestamp))
+    || !e.payload || typeof e.payload !== 'object' || Array.isArray(e.payload)
+    || JSON.stringify(e).length > 128_000) throw new Error('invalid envelope');
+  return structuredClone(e);
+}
+export interface SessionExecution {
+  workspace: string; registry: CapabilityRegistry; engine: AgentEngine;
+  cleanup(): Promise<void>;
+}
+type Entry = { input: string; handle?: TaskHandle; finished: Promise<void>; cancelRequested: boolean };
+type Pending = { conversationId: string; requestId: string; finish(allow: boolean): void };
+
+export class FixtureSession {
+  private readonly entries = new Map<string, Entry>();
+  private readonly active = new Map<string, string>();
+  private readonly confirmations = new Map<string, Pending>();
+  private closed = false;
+  constructor(private readonly options: {
+    send(envelope: SessionEnvelope): void;
+    create(envelope: SessionEnvelope): Promise<SessionExecution>;
+    maxRequests?: number;
+  }) {}
+  private emit(e: SessionEnvelope, type: string, payload: Record<string, unknown>) {
+    if (!this.closed) this.options.send({ type, payload, requestId: e.requestId, conversationId: e.conversationId, timestamp: new Date().toISOString() });
+  }
+  receive(value: unknown): void {
+    if (this.closed) throw new Error('session closed');
+    const e = parseSessionEnvelope(value);
+    const key = JSON.stringify([e.conversationId, e.requestId]);
+    if (e.type === 'client:tool_confirmation') {
+      const p = this.confirmations.get(String(e.payload.confirmationId));
+      if (p && p.conversationId === e.conversationId && (e.payload.decision === 'allow' || e.payload.decision === 'reject')) p.finish(e.payload.decision === 'allow');
+      return;
+    }
+    if (e.type === 'client:cancel_task') {
+      const target = this.entries.get(JSON.stringify([e.conversationId, e.payload.targetRequestId]));
+      if (target) { target.cancelRequested = true; target.handle?.cancel(); }
+      return;
+    }
+    // Existing UI initialization requests never initialize services or save secrets.
+    if (['client:memory_get','client:update_settings','client:token_usage_get','client:scheduled_tasks_get'].includes(e.type)) return;
+    if (e.type !== 'client:send_message') { this.emit(e, 'server:error', { message: 'Fixture mode does not support this operation' }); return; }
+    if (typeof e.payload.content !== 'string' || !e.payload.content.trim() || e.payload.content.length > 16_000) throw new Error('invalid content');
+    const input = JSON.stringify(e.payload);
+    const existing = this.entries.get(key);
+    if (existing) {
+      if (existing.input !== input) this.emit(e,'server:error',{ message:'request ID reused with different input' });
+      return; // retries never execute or produce another terminal event
+    }
+    if (this.active.has(e.conversationId)) { this.emit(e,'server:error',{ message:'conversation already has an active fixture task' }); return; }
+    if (this.entries.size >= (this.options.maxRequests ?? 128)) throw new Error('fixture session capacity reached; reopen session');
+    const entry: Entry = { input, finished: Promise.resolve(), cancelRequested: false };
+    this.entries.set(key, entry); this.active.set(e.conversationId, key);
+    entry.finished = this.run(e, entry).finally(() => this.active.delete(e.conversationId));
+    // Transport errors must not leave unobserved task promises.
+    void entry.finished.catch(() => { entry.handle?.cancel(); });
+  }
+  private authorize(e: SessionEnvelope, request: Readonly<AuthorizationRequest>, signal: AbortSignal): Promise<boolean> {
+    const id = `confirm-${randomUUID()}`;
+    return new Promise<boolean>((resolve) => {
+      let settled = false;
+      const finish = (allow: boolean) => {
+        if (settled) return; settled = true;
+        clearTimeout(timer); signal.removeEventListener('abort', abort); this.confirmations.delete(id); resolve(allow);
+      };
+      const abort = () => finish(false);
+      const timer = setTimeout(abort, Math.max(1, request.expiresAt - Date.now()));
+      this.confirmations.set(id, { conversationId: e.conversationId, requestId: e.requestId, finish });
+      if (signal.aborted || this.closed) { finish(false); return; }
+      signal.addEventListener('abort', abort, { once: true });
+      try { this.emit(e, 'server:tool_confirmation_required', { confirmation: {
+        confirmationId: id, riskLevel: 'confirm', kind: 'tool', name: request.capability,
+        reason: 'TEST MODE: approve one simulated desktop action; no real desktop input.',
+        params: request.args, createdAt: new Date().toISOString(),
+      } }); } catch { finish(false); }
+    });
+  }
+  private async run(e: SessionEnvelope, entry: Entry): Promise<void> {
+    let execution: SessionExecution | undefined;
+    let runtimeOwnsCleanup = false;
+    let cleanupStarted = false;
+    const cleanup = async () => {
+      if (cleanupStarted || !execution) return;
+      cleanupStarted = true;
+      await execution.cleanup();
+    };
+    try {
+      this.emit(e, 'server:status', { stage: 'thinking', fixture: true });
+      this.emit(e, 'server:agent_progress', { content: 'TEST MODE · scripted engine / fake desktop broker' });
+      execution = await this.options.create(e);
+      if (entry.cancelRequested || this.closed) {
+        await cleanup(); execution = undefined;
+        this.emit(e,'server:message',{ content:'Fixture cancelled; cleanup complete.', route:'answer_directly', status:'cancelled', fixture:true });
+        return;
+      }
+      const runtime = new AgentRuntime({ registry: execution.registry, cleanup,
+        authorize: (request, signal) => this.authorize(e, request, signal),
+        onRecord: record => this.emit(e,'server:trace',{ trace: { id: record.id, kind:'tool', name:record.capability,
+          status: record.status === 'succeeded' ? 'completed' : 'error', summary:record.status,
+          startedAt:record.startedAt, completedAt:record.finishedAt, result:JSON.stringify(record.output?.value ?? record.error ?? record.status) } }),
+      });
+      entry.handle = runtime.start({ workspace:execution.workspace, goal:e.payload.content as string },execution.engine);
+      runtimeOwnsCleanup = true;
+      if (entry.cancelRequested || this.closed) entry.handle.cancel();
+      const result = await entry.handle.result;
+      this.emit(e,'server:message',{ content:result.status === 'completed' ? result.answer : result.status === 'failed' ? `Fixture failed: ${result.error ?? 'unknown failure'}` : `Fixture ${result.status}; cleanup complete.`, route:'answer_directly', status:result.status, fixture:true });
+    } catch (error) {
+      if (execution && !runtimeOwnsCleanup) await cleanup().catch(() => {});
+      this.emit(e,'server:message',{ content:`Fixture failed: ${String(error)}`,route:'answer_directly',status:'failed',fixture:true });
+    }
+  }
+  async idle(): Promise<void> { await Promise.allSettled([...this.entries.values()].map(e => e.finished)); }
+  async close(): Promise<void> {
+    this.closed = true;
+    for (const entry of this.entries.values()) { entry.cancelRequested = true; entry.handle?.cancel(); }
+    for (const pending of [...this.confirmations.values()]) pending.finish(false);
+    await this.idle();
+  }
+}

@@ -26,7 +26,8 @@
     "package:linux": "pnpm backend:sidecar && pnpm electron:build:linux",
     "v2:typecheck": "pnpm --filter @open-eagle/agent-core typecheck",
     "v2:test": "pnpm --filter @open-eagle/agent-core test",
-    "v2:demo": "pnpm --filter @open-eagle/agent-core demo"
+    "v2:demo": "pnpm --filter @open-eagle/agent-core demo",
+    "v2:test:ui": "node scripts/verify-v2-fixture.cjs"
   },
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.6",

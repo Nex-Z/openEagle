@@ -343,6 +343,8 @@ export default function App() {
     backend,
     messages,
     canSend,
+    fixtureBusy,
+    cancelFixture,
     sendMessage,
     transcribeAudio,
     statusLine,
@@ -809,6 +811,10 @@ export default function App() {
 
   return (
     <>
+      {window.electronAPI?.fixtureMode && <div role="status" className="fixture-banner">
+        <strong>V2 测试模式</strong><span>脚本引擎 · 模拟桌面 · 独立临时资料目录</span>
+        <button disabled={!fixtureBusy} onClick={cancelFixture}>取消测试任务</button>
+      </div>}
       <AppShell
         inspectorCollapsed={inspectorCollapsed}
         sidebarWidth={sidebarWidth}

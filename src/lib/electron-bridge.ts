@@ -4,7 +4,11 @@
 
  */
 
+export type BackendPortEvent = {kind:"open"} | {kind:"close";reason?:string} | {kind:"error";message:string} | {kind:"message";data:string};
+
 export interface ElectronAPI {
+  fixtureMode?: boolean;
+  backendPort?: { close():void; onEvent(callback:(event:BackendPortEvent)=>void):()=>void; send(data:string):boolean; state():"closed"|"connecting"|"open" };
   invoke: <T = unknown>(channel: string, args?: Record<string, unknown>) => Promise<T>;
   on: (channel: string, callback: (...args: unknown[]) => void) => () => void;
   emit: (channel: string, ...args: unknown[]) => void;

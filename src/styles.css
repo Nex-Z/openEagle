@@ -5516,3 +5516,9 @@ body.solo-overlay-page #app {
 .sidebar-settings-button:focus-visible {
   background: var(--glass-bg);
 }
+
+/* The opt-in fixture notice consumes layout space rather than covering the composer. */
+.fixture-banner { height: 40px; padding: 6px 16px; display: flex; gap: 16px; align-items: center; background: #fff0c2; color: #362900; font-size: 13px; }
+.fixture-banner button { padding: 3px 10px; border: 1px solid #927b35; border-radius: 5px; cursor: pointer; }
+.fixture-banner button:disabled { opacity: .45; cursor: default; }
+.fixture-banner + .app-shell { height: calc(100vh - 40px); min-height: 0; }

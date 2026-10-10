@@ -1,3 +1,4 @@
+import { createBackendSocket, type BackendSocket } from "../lib/backend-socket";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { invoke, listen, type UnlistenFn } from "../lib/electron-bridge";
 import { executionStateLabel, executionStatusLabel } from "../lib/runLabels";
@@ -489,7 +490,10 @@ export function useBackendConnection(
   const [memoryState, setMemoryState] = useState<MemoryState>(emptyMemoryState);
   const [tokenUsageDashboard, setTokenUsageDashboard] =
     useState<TokenUsageDashboard>(emptyTokenUsageDashboard);
-  const socketRef = useRef<WebSocket | null>(null);
+  const socketRef = useRef<BackendSocket | null>(null);
+  const fixtureRequestRef = useRef<{requestId:string;conversationId:string} | null>(null);
+  const fixtureConfirmationRef = useRef<{requestId:string;conversationId:string;confirmationId:string} | null>(null);
+  const [fixtureBusy, setFixtureBusy] = useState(false);
   const reconnectTimerRef = useRef<number | null>(null);
   const retryCountRef = useRef(0);
   const activePortRef = useRef<number | null>(null);
@@ -538,7 +542,7 @@ export function useBackendConnection(
     targetConversation: ConversationSummary | undefined,
     updater: (messages: ChatMessage[]) => ChatMessage[],
   ) => {
-    if (targetConversationId === conversationId) {
+    if (targetConversationId === (window.electronAPI?.fixtureMode ? syncedConversationIdRef.current : conversationId)) {
       setMessages(updater);
       return;
     }
@@ -846,7 +850,7 @@ export function useBackendConnection(
     setStatusLine("正在连接后端服务");
     setStatusDetail(null);
 
-    const socket = new WebSocket(`ws://127.0.0.1:${targetPort}/ws`);
+    const socket = createBackendSocket(targetPort);
     socketRef.current = socket;
 
     socket.addEventListener("open", () => {
@@ -865,6 +869,7 @@ export function useBackendConnection(
     });
 
     socket.addEventListener("close", () => {
+      fixtureRequestRef.current = null; fixtureConfirmationRef.current = null; setFixtureBusy(false); setToolConfirmation(null);
       if (socketRef.current === socket) {
         socketRef.current = null;
       }
@@ -1145,6 +1150,9 @@ export function useBackendConnection(
         return;
       }
 
+      if ((envelope.type === "server:message" || envelope.type === "server:error") && fixtureRequestRef.current?.requestId === envelope.requestId) {
+        fixtureRequestRef.current = null; fixtureConfirmationRef.current = null; setFixtureBusy(false); setToolConfirmation(null);
+      }
       if (envelope.type === "server:message") {
         flushPendingMessageDeltas(envelope.requestId, true);
         patchMessages((current) =>
@@ -1319,6 +1327,10 @@ export function useBackendConnection(
         envelope.payload.confirmation
       ) {
         const confirmation = envelope.payload.confirmation as ToolConfirmationPayload;
+        if (window.electronAPI?.fixtureMode) {
+          if (fixtureRequestRef.current?.requestId !== envelope.requestId || fixtureRequestRef.current.conversationId !== envelope.conversationId) return;
+          fixtureConfirmationRef.current = {requestId:envelope.requestId,conversationId:envelope.conversationId,confirmationId:confirmation.confirmationId};
+        }
         setToolConfirmation(confirmation);
         setStatusLine("等待工具确认");
         setStatusDetail(`${confirmation.name}: ${confirmation.reason}`);
@@ -1891,6 +1903,7 @@ export function useBackendConnection(
   }, []);
 
   const sendMessage = useCallback((content: string, attachments: AttachmentRef[] = []) => {
+    if (window.electronAPI?.fixtureMode && fixtureRequestRef.current) return {ok:false};
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       setStatusLine("后端服务未就绪");
@@ -1900,6 +1913,7 @@ export function useBackendConnection(
 
     const now = new Date().toISOString();
     const requestId = createId("req");
+    if (window.electronAPI?.fixtureMode) { fixtureRequestRef.current = {requestId,conversationId}; setFixtureBusy(true); }
 
     setMessages((current) => [
       ...current,
@@ -2004,6 +2018,8 @@ export function useBackendConnection(
     if (!socket || socket.readyState !== WebSocket.OPEN || !toolConfirmation) {
       return false;
     }
+    const bound = fixtureConfirmationRef.current;
+    if (window.electronAPI?.fixtureMode && (!bound || bound.requestId !== fixtureRequestRef.current?.requestId || bound.confirmationId !== toolConfirmation.confirmationId)) return false;
     const now = new Date().toISOString();
     const envelope: Envelope<{
       confirmationId: string;
@@ -2011,7 +2027,7 @@ export function useBackendConnection(
     }> = {
       type: "client:tool_confirmation",
       requestId: createId("tool-confirm"),
-      conversationId,
+      conversationId: window.electronAPI?.fixtureMode ? bound!.conversationId : conversationId,
       payload: {
         confirmationId: toolConfirmation.confirmationId,
         decision,
@@ -2132,7 +2148,13 @@ export function useBackendConnection(
   return {
     backend,
     messages,
-    canSend: backend.phase === "connected",
+    canSend: backend.phase === "connected" && !fixtureBusy,
+    fixtureBusy,
+    cancelFixture: () => {
+      const active = fixtureRequestRef.current;
+      if (!active || socketRef.current?.readyState !== WebSocket.OPEN) return;
+      socketRef.current.send(JSON.stringify({type:"client:cancel_task",requestId:createId("cancel"),conversationId:active.conversationId,payload:{targetRequestId:active.requestId},timestamp:new Date().toISOString()}));
+    },
     sendMessage,
     transcribeAudio,
     statusDetail,
