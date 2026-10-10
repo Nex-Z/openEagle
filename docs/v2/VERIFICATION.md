@@ -63,3 +63,13 @@ Check failed: . socket() failed: Operation not permitted (1)
 未完成：Windows 安全文件句柄/完整 reparse-point 边界、Job Object 进程生命周期、Windows browser→file→CLI 闭环、真实模型、UIA/macOS Accessibility、Electron UI 接入/安装包。未读取模型凭据、用户浏览器 profile 或真实网站账号，未付费调用。没有用弱化的可信工作区模式冒充现有 Linux 保证；需先审阅 native helper 或明确 opt-in 能力层级设计。
 
 独立审查后追加验证：browser suite 11 tests / 10 passed / 0 failed / 1 skipped；构造器强制字面 loopback fixture、能力声明限制、会话 task ID 绑定回归通过。模型/审批等待期间取消的通用 adapter disposal hook 尚未实现，宿主必须逐任务创建会话并在 task.result finally 关闭；详见 README 生命周期约束。
+
+## 可信 Windows 与指标整合更新（取代前述不可用/无cleanup状态）
+
+用户明确接受普通账号可信工作区模式后，新增独立opt-in factory；旧Linux gate保留。完整suite一次实测51项：46 passed、0 failed、5 Linux-only skipped；审查后新增指标覆盖回归并定向重跑7项全部通过。随后补审批逐动作确认/argv复制断言再运行相关suite，见最终提交说明。Agent build和React/Electron tsc均通过。
+
+真实Windows混合demo通过，浏览器审批等待取消cleanup测试通过。独立审查发现并修复：主进程退出未确认时工作区隔离、父子目录绕过隔离、batch oracle覆盖率混淆、失败trace丢失、cleanup runtime并发复用、合法..name误拒绝。未强制模拟无法杀死的OS主进程，因此quarantine兜底为静态复核，不宣称该故障注入实测。
+
+指标报告：4样本（3正常混合任务+1刻意拒绝），总成功/无补救成功均3/4；首次语义checkpoint 12/13，coverage100%仅指预定义四种checkpoint；p50 871.18ms、探索性p95 1138.61ms、range16.73–1138.61ms。含失败的调用/成功任务=25/3，模型调用0，费用unknown。失败任务runtime completed而taskOracle fail，展示两者区别。每run原始结果和单调事件已保存；不是旧新对比或真实LLM质量指标。
+
+最终unit复核：40 tests，35 passed，0 failed，5 Linux-only skipped；已补逐动作审批和argv变更断言。真实browser suite含混合demo为12项通过（完整suite运行中），之后同逻辑混合demo报告又完成3次。

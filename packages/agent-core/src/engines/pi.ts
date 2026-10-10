@@ -32,6 +32,8 @@ export class PiEngine implements AgentEngine {
   async run(session: EngineSession): Promise<string> {
     session.signal.throwIfAborted();
     let turns = 0;
+    let requestNumber = 0;
+    let activeSpan: string | undefined;
     let limitReached = false;
     const tools: AgentTool[] = session.tools.map((tool) => ({
       name: tool.name,
@@ -61,7 +63,7 @@ export class PiEngine implements AgentEngine {
         model: this.options.model,
         convertToLlm: (messages) => messages,
         toolExecution: 'sequential',
-        prepareRequest: () => { session.signal.throwIfAborted(); },
+        prepareRequest: () => { session.signal.throwIfAborted(); activeSpan=`model-${++requestNumber}`; session.metric?.({kind:'model-call',stepId:activeSpan,attemptId:activeSpan}); session.metric?.({kind:'span-start',phase:'model',spanId:activeSpan,stepId:activeSpan,attemptId:activeSpan}); },
         finishTurn: ({ message }) => {
           session.signal.throwIfAborted();
           turns += 1;
@@ -71,7 +73,14 @@ export class PiEngine implements AgentEngine {
           }
         },
       },
-      () => {},
+      event => {
+        if(event.type==='message_end' && event.message.role==='assistant' && activeSpan){
+          session.metric?.({kind:'span-end',phase:'model',spanId:activeSpan,stepId:activeSpan,attemptId:activeSpan});
+          const u=event.message.usage;
+          if(u) session.metric?.({kind:'usage',stepId:activeSpan,attemptId:activeSpan,usage:{input:u.input,output:u.output,cacheRead:u.cacheRead,cacheWrite:u.cacheWrite}});
+          activeSpan=undefined;
+        }
+      },
       session.signal,
       this.options.streamFn,
     );

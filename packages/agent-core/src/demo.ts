@@ -1,3 +1,5 @@
+import { performance } from 'node:perf_hooks';
+import { MetricsCollector } from './metrics.js';
 import { createServer } from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
@@ -9,10 +11,14 @@ import { ScriptedEngine } from './engines/scripted.js';
 import { createBrowserCapabilities } from './adapters/browser.js';
 import { createFileCapabilities } from './adapters/files.js';
 import { createCliCapability } from './adapters/cli.js';
+import { createWindowsTrustedFileCapabilities, createWindowsTrustedCliCapability } from './adapters/windows-trusted.js';
 import type { ActionRecord, Json, TaskContext } from './contracts.js';
 
 /** 本地可重置验收：规划是脚本，浏览器、文件、进程和独立验收均为真实执行。 */
-export async function runDemo(options: {chromiumExecutable?: string} = {}) {
+export async function runDemo(options: {chromiumExecutable?: string; windowsMode?: 'trusted-workspace'; metricsCollector?: MetricsCollector} = {}) {
+  if (process.platform === 'win32' && options.windowsMode !== 'trusted-workspace') throw new Error('Windows demo 需要显式 trusted-workspace');
+  const windowsTrusted = options.windowsMode === 'trusted-workspace' && process.platform === 'win32';
+  const metrics=options.metricsCollector ?? new MetricsCollector(); const started=performance.now();
   const nonce = randomUUID();
   const receipt = `receipt-${nonce}`;
   let submitted = false;
@@ -38,14 +44,14 @@ export async function runDemo(options: {chromiumExecutable?: string} = {}) {
   const browser = createBrowserCapabilities({allowedOrigins:[origin],executablePath:options.chromiumExecutable});
   const hashScript = "const fs=require('node:fs');const c=require('node:crypto');process.stdout.write(c.createHash('sha256').update(fs.readFileSync('receipt.txt')).digest('hex'))";
   const registry = new CapabilityRegistry();
-  [...createFileCapabilities(),...browser.capabilities,createCliCapability({profiles:{hash_receipt:{executable:process.execPath,validateArgs:argv=>argv.length===2 && argv[0]==='-e' && argv[1]===hashScript}}})].forEach(cap=>registry.register(cap));
+  [...(windowsTrusted ? createWindowsTrustedFileCapabilities({mode:'trusted-workspace'}) : createFileCapabilities()),...browser.capabilities,(windowsTrusted ? createWindowsTrustedCliCapability : createCliCapability)({mode:'trusted-workspace',profiles:{hash_receipt:{executable:process.execPath,validateArgs:argv=>argv.length===2 && argv[0]==='-e' && argv[1]===hashScript}}})].forEach(cap=>registry.register(cap));
   let observedContext: Readonly<TaskContext> | undefined;
   const checked = (record: ActionRecord): Record<string,Json> => {
     if (record.status !== 'succeeded' || !record.output) throw new Error(`${record.capability}: ${record.status} ${record.error ?? ''}`);
     return record.output.value as Record<string,Json>;
   };
   try {
-    const runtime = new AgentRuntime({registry,authorize:async request => {
+    const runtime = new AgentRuntime({registry,onMetric:metrics.collect,cleanup:()=>browser.close(),authorize:async request => {
       // 仅批准本次临时夹具的固定动作；生产宿主必须实现自己的可信批准界面。
       if (request.capability === 'browser_navigate') return request.target === `${origin}/`;
       if (request.capability === 'browser_fill') return request.args !== null && typeof request.args === 'object' && !Array.isArray(request.args) && request.args.value === nonce;
@@ -58,7 +64,7 @@ export async function runDemo(options: {chromiumExecutable?: string} = {}) {
       checked(await session.invoke('browser_navigate',{url:`${origin}/`}));
       const observation=checked(await session.invoke('browser_read',{}));
       const discoveredNonce=String(observation.text).match(/[a-f0-9-]{36}/)?.[0];
-      if (!discoveredNonce) throw new Error('页面未提供编号');
+      if (!discoveredNonce || discoveredNonce !== nonce) throw new Error('页面未提供编号');
       const elements=observation.elements as Record<string,Json>[];
       const input=elements.find(e=>e.tag==='input'); const button=elements.find(e=>e.tag==='button');
       if (!input || !button) throw new Error('缺少已观察表单元素');
@@ -79,7 +85,7 @@ export async function runDemo(options: {chromiumExecutable?: string} = {}) {
     const cli = result.records.find(record=>record.capability==='cli_run');
     const output = cli?.output?.value as Record<string,Json> | undefined;
     if (!submitted || actual !== receipt || output?.stdout !== expectedHash || result.status !== 'completed' || result.records.some(record=>record.status !== 'succeeded')) throw new Error(`独立验收失败: ${JSON.stringify(result)}`);
-    return {planner:'scripted (非真实模型验收)',adapters:'真实 Chromium / 文件 / CLI',platform:process.platform,submitted,receipt,sha256:expectedHash,sharedEvidenceCount:observedContext?.facts.length ?? 0,result};
+    return {metrics:metrics.summary({taskId:result.taskId,runtimeStatus:result.status,taskOracle:'pass',checkpoints:['browser-nonce','server-receipt','file-bytes','cli-hash'].map(id=>({id,oracle:'pass' as const,firstAttempt:'pass' as const})),wallMs:performance.now()-started,recoveryObservationComplete:true,modelMode:'scripted'}),trace:metrics.events,planner:'scripted (非真实模型验收)',adapters:'真实 Chromium / 文件 / CLI',platform:process.platform,submitted,receipt,sha256:expectedHash,sharedEvidenceCount:observedContext?.facts.length ?? 0,result};
   } finally {
     await browser.close();
     await new Promise<void>(resolve=>server.close(()=>resolve()));
@@ -87,5 +93,5 @@ export async function runDemo(options: {chromiumExecutable?: string} = {}) {
   }
 }
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
-  runDemo({chromiumExecutable:process.env.OPENEAGLE_CHROMIUM}).then(result=>console.log(JSON.stringify(result,null,2))).catch(error=>{console.error(error);process.exitCode=1;});
+  runDemo({chromiumExecutable:process.env.OPENEAGLE_CHROMIUM, ...(process.env.OPENEAGLE_WINDOWS_TRUSTED === '1' ? {windowsMode:'trusted-workspace' as const} : {})}).then(result=>console.log(JSON.stringify(result,null,2))).catch(error=>{console.error(error);process.exitCode=1;});
 }

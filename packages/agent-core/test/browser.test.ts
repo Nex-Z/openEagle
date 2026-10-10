@@ -1,3 +1,6 @@
+import { AgentRuntime, CapabilityRegistry } from '../src/runtime.js';
+import { ScriptedEngine } from '../src/engines/scripted.js';
+import { tmpdir } from 'node:os';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
 import { existsSync } from 'node:fs';
@@ -246,4 +249,23 @@ test('构造只接受字面 loopback fixture，能力声明限制且会话不跨
     await session.capabilities[0]!.prepare({ url: 'http://127.0.0.1:12345' }, task);
     await assert.rejects(session.capabilities[1]!.prepare({}, { ...task, id: 'another-task' }), /不能跨任务复用/);
   } finally { await session.close(); }
+});
+
+test('宿主cleanup覆盖审批等待期间取消并关闭后台页面', async () => {
+  let ticks=0;
+  const server=createServer((request,response)=>{if(request.url==='/tick'){ticks++;response.end('ok');}else{response.setHeader('content-type','text/html');response.end('<body><input><script>setInterval(()=>fetch("/tick").catch(()=>{}),20)</script></body>');}});
+  const origin=await listen(server),session=createBrowserCapabilities({executablePath,allowedOrigins:[origin]});
+  let waiting!:()=>void;const ready=new Promise<void>(r=>waiting=r);
+  const runtime=new AgentRuntime({registry:session.capabilities.reduce((r,c)=>r.register(c),new CapabilityRegistry()),cleanup:()=>session.close(),authorize:async request=>{if(request.capability==='browser_navigate')return true;waiting();return new Promise(()=>{});}});
+  try{
+    const task=runtime.start({goal:'fixture cancellation',workspace:tmpdir()},new ScriptedEngine(async s=>{
+      await s.invoke('browser_navigate',{url:origin});const read=await s.invoke('browser_read',{});
+      const input=((read.output!.value as Record<string,Json>).elements as Record<string,Json>[]).find(e=>e.tag==='input')!;
+      await s.invoke('browser_fill',{ref:input.ref!,value:'fixture'});return '';
+    }));
+    await ready;task.cancel();assert.equal((await task.result).status,'cancelled');
+    await new Promise(r=>setTimeout(r,50));const after=ticks;await new Promise(r=>setTimeout(r,100));assert.equal(ticks,after);
+    await assert.rejects(session.capabilities[1]!.prepare({}, {id:'x',goal:'x',workspace:tmpdir(),facts:[]}));
+    assert.throws(()=>runtime.start({goal:'reuse',workspace:tmpdir()},new ScriptedEngine(async()=>'')),/仅允许一个任务/);
+  }finally{await session.close();await stop(server);}
 });

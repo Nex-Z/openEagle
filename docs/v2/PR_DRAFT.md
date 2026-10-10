@@ -1,33 +1,23 @@
-# feat: 新增可替换 Pi 引擎的通用 Agent headless 首版
+# feat: 整合通用 Agent headless 契约与 Windows 可信工作区验收
 
-新增独立 `@open-eagle/agent-core`，将模型工具循环与权限、执行记录、结果验证、取消和资源锁分离。同一任务可通过统一能力目录组合工具；Pi 是可替换引擎，不负责授予权限。原 Electron/React 与 Python 后端保留，当前 UI 默认链路未切换。
+文件、命令与桌面操作在既有Python/本地Node迁移中已经存在。本PR新增的是可替换引擎契约、统一准备/审批/执行/验证记录与跨工具验收，不将迁移包装成全新工具。原Electron/React/Python链路保留，UI尚未切换。
 
-## 已实现
+## 实际变化
 
-- 默认拒绝副作用动作；审批绑定动作、参数、目标和观察指纹，执行前复核。
-- 结构化执行记录、独立验证与成功证据、取消/超时/预算、进程内共享资源锁。
-- 真实 Pi agent-core 循环适配，以及受控本地浏览器、Linux 文件和固定 CLI profile 适配器。
-- 真实 Chrome 验收发现并修复跨源重定向泄漏；所有 HTTP 3xx 均拒绝，POST 不自动重试。
-- Windows files/CLI 明确不可用，增加直接 prepare 拒绝回归；新增 Windows headless CI。
+- Pi置于AgentEngine接口后；权限、锁、记录、验证、预算和取消由自有runtime管理。
+- 选择性复用旧Node shared.ts路径/目录快照，来源hash与修订记录在REUSE_AUDIT.md。Windows单独opt-in可信工作区factory，Linux行为未改。
+- 固定exe/argv取代本切片任意shell；保留普通账号权限和确认，不承诺恶意代码OS沙箱。自有PID树尽力停止、未确认主进程隔离相交工作区，后代状态明确unverified。
+- 浏览器仅受控字面loopback fixture；修复HTTP重定向越界，全部3xx拒绝，绑定task ID。runtime cleanup覆盖等待模型/审批时取消，单任务session生命周期明确。
+- 新增单调phase事件、model/tool/approval分别计时、调用与usage字段、独立oracle/首次无补救成功率和小样本报告；没有真实费用来源时unknown。
 
-## 验证
+## 验证与边界
 
-- 云端交接基线：31 项 runtime/Pi/Linux filesCLI 测试通过；此为 Linux 结果，不代表 Windows 文件/CLI 通过。
-- Windows Node 24.8.0 / 命令级 pnpm 10.7.0，官方 registry 冻结锁文件安装成功。
-- Agent、React、Electron TypeScript 检查通过。
-- Windows unit：27 passed / 0 failed / 5 skipped；Pi 使用真实包循环加模拟模型传输，没有真实模型或付费调用。
-- Windows Chrome 154.0.8037.99：真实临时 profile、本地 fixture，10 passed / 0 failed / 1 skipped；混合 browser/file/CLI demo 跳过。
-- `git diff --check` 通过。远端 CI 尚未运行；详细记录见 `docs/v2/VERIFICATION.md`。
+- Windows Node24.8/pnpm10.7；真实Chrome154临时profile→文件→CLI→独立服务端/字节/hash断言通过，ScriptedEngine规划。
+- 真实Pi包循环+模拟模型transport测试通过；不是付费模型或真实LLM准确率验证。
+- 相关完整headless suite与定向复核、Agent/React/Electron类型检查通过，精确次数见VERIFICATION.md。Linux-only测试在Windows跳过，不算通过。
+- 4个报告fixture含1个刻意拒绝目标：3/4任务oracle成功且无补救；13个可判定语义checkpoint中12个首次通过。报告保留失败和调用开销；小样本不作生产成功率或旧新提升结论。
+- 浏览器响应缓冲无硬字节上限，不是通用网站支持或OS网络沙箱；DOM指纹不是敌对页面事务隔离。Windows路径不是所有reparse tag检测，存在并发竞态；taskkill不是Job containment，quarantine仅进程内有效；cleanup等待无硬期限。
+- UI尚未接入、Windows UIA/mac Accessibility未实现；既有桌面broker应复用而非重写。最小featureflag/Envelope/确认/取消接线方案在REUSE_AUDIT.md，未复制整个未提交Node迁移。
+- 依赖ignore-scripts安装仅支持已验证headless路径，Electron/native二进制安装与打包未验证。没有读取密钥/日常profile、付费调用或操作真实系统设置。
 
-## 限制与后续
-
-- 这是 headless core，尚未接入 Electron UI、审批界面或安装包。Windows UIA、macOS Accessibility 未实现。
-- Windows files/CLI 与完整 browser→file→CLI 闭环未完成；没有弱化 Linux 保证，也没有启用可信工作区替代模式。
-- 浏览器仅用于受控本地 fixture；拒绝所有重定向，响应经 fetch 缓冲且无网络响应体硬上限，不支持通用登录站点/流式网站，不是 OS 网络沙箱。
-- DOM/同源脚本仍不可信；审批指纹不是对抗任意页面脚本的事务隔离，页面后台同源副作用不保证逐项审批。
-- 依赖安装使用 `--ignore-scripts`：支持已验证的 TypeScript/headless 路径，但 Electron 二进制和 native 依赖安装脚本未执行，不能据此宣称桌面启动或打包可用。
-- 没有读取用户浏览器 profile、模型密钥或真实网站账户，未修改真实系统设置。
-
-保持 Draft，等待 Windows 权限模式与后续集成设计审阅；不合并。
-
-独立审查补充：构造器强制字面 loopback origin，能力声明 fixture-only，会话绑定 task ID。loopback 不证明服务为 fixture，宿主仍须只传自己创建的端口。模型/审批空闲时取消尚无通用 adapter disposal hook，宿主必须每任务建立独立 session，并在 task.result 的 finally 中关闭，未实现完整 UI 生命周期。
+保持Draft，等待父审阅发布；不合并。

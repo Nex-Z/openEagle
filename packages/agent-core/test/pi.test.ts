@@ -191,3 +191,15 @@ test('工具执行期间取消会阻止后续模型请求', async () => {
   }, controller.signal)), /执行期间取消/);
   assert.equal(requests, 1);
 });
+
+test('真实 Pi 假传输指标记录模型调用、独立model span和usage而不记录内容',async()=>{
+  const events: import('../src/metrics.js').MetricInput[]=[];
+  const s=session(async()=>record());s.metric=e=>events.push(e);
+  const engine=new PiEngine({model:fakeModel,streamFn:()=>streamMessage(response([{type:'text',text:'fixture'}]))});
+  await engine.run(s);
+  assert.equal(events.filter(e=>e.kind==='model-call').length,1);
+  assert.equal(events.filter(e=>e.kind==='span-start'&&e.phase==='model').length,1);
+  assert.equal(events.filter(e=>e.kind==='span-end'&&e.phase==='model').length,1);
+  assert.equal(events.filter(e=>e.kind==='usage').length,1);
+  assert(!JSON.stringify(events).includes('fixture'));
+});

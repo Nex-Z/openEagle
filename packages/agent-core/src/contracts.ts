@@ -1,3 +1,4 @@
+import type { MetricInput } from './metrics.js';
 /** 平台无关契约。工具输出是未可信数据，不具有授权能力。 */
 export type Json = null | boolean | number | string | Json[] | { [key: string]: Json };
 export type Effect = 'read' | 'write' | 'execute' | 'external-submit' | 'destructive' | 'sensitive-setting';
@@ -41,6 +42,7 @@ export interface AuthorizationRequest {
 export type Authorizer = (request: Readonly<AuthorizationRequest>, signal: AbortSignal) => Promise<boolean>;
 export interface EngineTool { name: string; description: string; inputSchema: Record<string, unknown> }
 export interface EngineSession {
+  metric?: (event: MetricInput) => void;
   context: Readonly<TaskContext>;
   tools: readonly EngineTool[];
   signal: AbortSignal;

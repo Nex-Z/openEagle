@@ -1,0 +1,293 @@
+{
+  "environment": {
+    "platform": "win32",
+    "node": "v24.8.0",
+    "model": "none-scripted",
+    "purpose": "controlled fixtures including deliberate denial; not population success estimate"
+  },
+  "schemaVersion": 1,
+  "samples": 4,
+  "successRate": 0.75,
+  "taskOracleUnknown": 0,
+  "cleanSuccessRate": 0.75,
+  "cleanSuccessUnknown": 0,
+  "stepFirstCorrectRate": 0.9230769230769231,
+  "firstAttemptCoverage": 1,
+  "oracleCoverage": 1,
+  "checkpointUnknown": 0,
+  "latencyMs": {
+    "p50": 871.1846,
+    "p95": 1138.6064,
+    "min": 16.72530000000006,
+    "max": 1138.6064,
+    "interpretation": "exploratory small fixture sample, not a stable performance estimate"
+  },
+  "callsPerSuccessIncludingFailures": {
+    "tools": 8.333333333333334,
+    "model": 0
+  },
+  "costPerSuccess": "unknown",
+  "recoveryCost": "unknown",
+  "comparison": "old baseline and real model not measured",
+  "runs": [
+    {
+      "schemaVersion": 1,
+      "taskId": "f1414aa9-3ba7-4f3c-8f65-a1bf7abde472",
+      "runtimeStatus": "completed",
+      "taskOracle": "pass",
+      "checkpoints": [
+        {
+          "id": "browser-nonce",
+          "oracle": "pass",
+          "firstAttempt": "pass"
+        },
+        {
+          "id": "server-receipt",
+          "oracle": "pass",
+          "firstAttempt": "pass"
+        },
+        {
+          "id": "file-bytes",
+          "oracle": "pass",
+          "firstAttempt": "pass"
+        },
+        {
+          "id": "cli-hash",
+          "oracle": "pass",
+          "firstAttempt": "pass"
+        }
+      ],
+      "wallMs": 1138.6064,
+      "recoveryObservationComplete": true,
+      "modelMode": "scripted",
+      "phaseResourceMs": {
+        "prepare": 35.42750000000035,
+        "lock": 0.12120000000010123,
+        "approval": 0.27530000000012933,
+        "tool": 869.3422,
+        "verify": 23.182100000000105,
+        "cleanup": 188.52219999999988
+      },
+      "phaseSemantics": "resource-time; overlapping spans may exceed wall time",
+      "incompleteSpans": 0,
+      "adapterStatusCounts": {
+        "succeeded": 8
+      },
+      "calls": {
+        "tools": 8,
+        "model": 0
+      },
+      "recovery": {
+        "retry": 0,
+        "fallback": 0,
+        "replan": 0,
+        "repeatedObservation": 0,
+        "invalidAction": 0,
+        "humanTakeover": 0
+      },
+      "cleanSuccess": true,
+      "checkpointFirstCorrect": 4,
+      "checkpointJudged": 4,
+      "checkpointUnknown": 0,
+      "firstAttemptCoverage": 1,
+      "oracleCoverage": 1,
+      "usage": {
+        "status": "not-applicable"
+      },
+      "cost": {
+        "status": "unknown",
+        "reason": "no explicit versioned pricing source"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "taskId": "f619bf62-ba4c-4cc3-9705-a65ff5bf80b9",
+      "runtimeStatus": "completed",
+      "taskOracle": "pass",
+      "checkpoints": [
+        {
+          "id": "browser-nonce",
+          "oracle": "pass",
+          "firstAttempt": "pass"
+        },
+        {
+          "id": "server-receipt",
+          "oracle": "pass",
+          "firstAttempt": "pass"
+        },
+        {
+          "id": "file-bytes",
+          "oracle": "pass",
+          "firstAttempt": "pass"
+        },
+        {
+          "id": "cli-hash",
+          "oracle": "pass",
+          "firstAttempt": "pass"
+        }
+      ],
+      "wallMs": 890.0711000000001,
+      "recoveryObservationComplete": true,
+      "modelMode": "scripted",
+      "phaseResourceMs": {
+        "prepare": 32.12559999999962,
+        "lock": 0.08049999999980173,
+        "approval": 0.19929999999999382,
+        "tool": 643.1065000000008,
+        "verify": 8.361399999999776,
+        "cleanup": 199.1790000000001
+      },
+      "phaseSemantics": "resource-time; overlapping spans may exceed wall time",
+      "incompleteSpans": 0,
+      "adapterStatusCounts": {
+        "succeeded": 8
+      },
+      "calls": {
+        "tools": 8,
+        "model": 0
+      },
+      "recovery": {
+        "retry": 0,
+        "fallback": 0,
+        "replan": 0,
+        "repeatedObservation": 0,
+        "invalidAction": 0,
+        "humanTakeover": 0
+      },
+      "cleanSuccess": true,
+      "checkpointFirstCorrect": 4,
+      "checkpointJudged": 4,
+      "checkpointUnknown": 0,
+      "firstAttemptCoverage": 1,
+      "oracleCoverage": 1,
+      "usage": {
+        "status": "not-applicable"
+      },
+      "cost": {
+        "status": "unknown",
+        "reason": "no explicit versioned pricing source"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "taskId": "2719b3f7-49b8-4bb3-9301-18765576a48e",
+      "runtimeStatus": "completed",
+      "taskOracle": "pass",
+      "checkpoints": [
+        {
+          "id": "browser-nonce",
+          "oracle": "pass",
+          "firstAttempt": "pass"
+        },
+        {
+          "id": "server-receipt",
+          "oracle": "pass",
+          "firstAttempt": "pass"
+        },
+        {
+          "id": "file-bytes",
+          "oracle": "pass",
+          "firstAttempt": "pass"
+        },
+        {
+          "id": "cli-hash",
+          "oracle": "pass",
+          "firstAttempt": "pass"
+        }
+      ],
+      "wallMs": 852.2981,
+      "recoveryObservationComplete": true,
+      "modelMode": "scripted",
+      "phaseResourceMs": {
+        "prepare": 35.50969999999961,
+        "lock": 0.0781000000001768,
+        "approval": 0.14789999999993597,
+        "tool": 588.2777000000001,
+        "verify": 8.512600000000475,
+        "cleanup": 209.7473
+      },
+      "phaseSemantics": "resource-time; overlapping spans may exceed wall time",
+      "incompleteSpans": 0,
+      "adapterStatusCounts": {
+        "succeeded": 8
+      },
+      "calls": {
+        "tools": 8,
+        "model": 0
+      },
+      "recovery": {
+        "retry": 0,
+        "fallback": 0,
+        "replan": 0,
+        "repeatedObservation": 0,
+        "invalidAction": 0,
+        "humanTakeover": 0
+      },
+      "cleanSuccess": true,
+      "checkpointFirstCorrect": 4,
+      "checkpointJudged": 4,
+      "checkpointUnknown": 0,
+      "firstAttemptCoverage": 1,
+      "oracleCoverage": 1,
+      "usage": {
+        "status": "not-applicable"
+      },
+      "cost": {
+        "status": "unknown",
+        "reason": "no explicit versioned pricing source"
+      }
+    },
+    {
+      "schemaVersion": 1,
+      "taskId": "d6a9f986-0497-42ec-b8b1-8848302d4b16",
+      "runtimeStatus": "completed",
+      "taskOracle": "fail",
+      "checkpoints": [
+        {
+          "id": "file-exists",
+          "oracle": "fail",
+          "firstAttempt": "fail"
+        }
+      ],
+      "wallMs": 16.72530000000006,
+      "recoveryObservationComplete": true,
+      "modelMode": "scripted",
+      "phaseResourceMs": {
+        "prepare": 15.432199999999739,
+        "lock": 0.01790000000028158,
+        "approval": 0.0363999999999578,
+        "cleanup": 0.008200000000215368
+      },
+      "phaseSemantics": "resource-time; overlapping spans may exceed wall time",
+      "incompleteSpans": 0,
+      "adapterStatusCounts": {
+        "denied": 1
+      },
+      "calls": {
+        "tools": 1,
+        "model": 0
+      },
+      "recovery": {
+        "retry": 0,
+        "fallback": 0,
+        "replan": 0,
+        "repeatedObservation": 0,
+        "invalidAction": 0,
+        "humanTakeover": 0
+      },
+      "cleanSuccess": false,
+      "checkpointFirstCorrect": 0,
+      "checkpointJudged": 1,
+      "checkpointUnknown": 0,
+      "firstAttemptCoverage": 1,
+      "oracleCoverage": 1,
+      "usage": {
+        "status": "not-applicable"
+      },
+      "cost": {
+        "status": "unknown",
+        "reason": "no explicit versioned pricing source"
+      }
+    }
+  ]
+}

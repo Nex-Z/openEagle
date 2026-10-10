@@ -6,3 +6,5 @@ export * from './adapters/files.js';
 export * from './adapters/cli.js';
 export * from './adapters/browser.js';
 export * from './adapters/native-desktop.js';
+export * from './adapters/windows-trusted.js';
+export * from './metrics.js';

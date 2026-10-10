@@ -1,3 +1,5 @@
+import { performance } from 'node:perf_hooks';
+import type { MetricEvent, MetricInput, Phase } from './metrics.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { realpath } from 'node:fs/promises';
 import type { ActionRecord, AgentEngine, Authorizer, Capability, Json, PreparedAction, TaskContext } from './contracts.js';
@@ -71,6 +73,9 @@ export class CapabilityRegistry {
 }
 export interface RuntimeOptions {
   registry: CapabilityRegistry;
+  onMetric?: (event: MetricEvent) => void;
+  /** 每任务宿主管理的 adapter 清理；等待完成后才交付结果。 */
+  cleanup?: () => Promise<void>;
   authorize?: Authorizer;
   locks?: ResourceLocks;
   actionTimeoutMs?: number;
@@ -82,15 +87,26 @@ export interface TaskResult { taskId: string; engine: string; status: 'completed
 export interface TaskHandle { id: string; result: Promise<TaskResult>; cancel(): void }
 
 export class AgentRuntime {
+  private cleanupTaskStarted = false;
   constructor(private readonly options: RuntimeOptions) {
     for (const value of [options.actionTimeoutMs ?? 30_000, options.taskTimeoutMs ?? 120_000, options.maxActions ?? 40]) {
       if (!Number.isSafeInteger(value) || value <= 0 || value > 2_147_483_647) throw new Error('超时和动作预算必须是有效正整数');
     }
   }
+  private metric(taskId:string, event:MetricInput):void { try { this.options.onMetric?.({...event,taskId,monotonicMs:performance.now()}); } catch { /* telemetry never changes execution */ } }
+  private async span<T>(taskId:string,stepId:string,phase:Phase,operation:()=>Promise<T>):Promise<T> {
+    const spanId=randomUUID(); this.metric(taskId,{kind:'span-start',spanId,phase,stepId,attemptId:stepId});
+    try{return await operation();}finally{this.metric(taskId,{kind:'span-end',spanId,phase,stepId,attemptId:stepId});}
+  }
   start(input: {goal: string; workspace: string}, engine: AgentEngine): TaskHandle {
+    if(this.options.cleanup && this.cleanupTaskStarted) throw new Error('带session cleanup的runtime仅允许一个任务；请每任务创建runtime');
+    this.cleanupTaskStarted = true;
     const id = randomUUID();
     const controller = new AbortController();
-    return { id, cancel: () => controller.abort(new Error('用户取消任务')), result: this.run(id, input, engine, controller) };
+    return { id, cancel: () => controller.abort(new Error('用户取消任务')), result: this.run(id, input, engine, controller).then(async result => {
+      try { await this.span(id,id,'cleanup',async()=>{await this.options.cleanup?.();}); return result; }
+      catch (error) { return { ...result, status: 'failed' as const, error: `adapter cleanup failed: ${String(error)}` }; }
+    }) };
   }
   private async run(id: string, input: {goal: string; workspace: string}, engine: AgentEngine, controller: AbortController): Promise<TaskResult> {
     const records: ActionRecord[] = [];
@@ -104,6 +120,7 @@ export class AgentRuntime {
       const sessionContext = Object.freeze({id, goal: context.goal, workspace: context.workspace, get facts() { return snapshot(context.facts); }});
       const answer = await abortable(engine.run({
         context: sessionContext,
+        metric: event => this.metric(id,event),
         tools: snapshot(this.options.registry.list().filter(c => c.availability.supported).map(({name,description,inputSchema}) => ({name,description,inputSchema}))),
         signal: controller.signal,
         invoke: (name, args) => {
@@ -140,6 +157,9 @@ export class AgentRuntime {
     const deadline = Date.now() + (this.options.actionTimeoutMs ?? 30_000);
     const timer = setTimeout(() => { timedOut = true; controller.abort(new Error('动作超时')); }, this.options.actionTimeoutMs ?? 30_000);
     const record: ActionRecord = {id:randomUUID(), taskId:context.id, capability:name, args:null, startedAt:new Date().toISOString(), finishedAt:'', status:'failed'};
+    this.metric(context.id,{kind:'tool-call',stepId:record.id,attemptId:record.id,adapter:name.split('_')[0]});
+    this.metric(context.id,{kind:'handoff',stepId:record.id,attemptId:record.id,adapter:name.split('_')[0],status:'requested'});
+    const timed = <T>(phase:Phase,work:()=>Promise<T>)=>this.span(context.id,record.id,phase,work);
     let release: (() => void) | undefined;
     try {
       if (JSON.stringify(args).length > 65_536) throw new Error('动作参数过大');
@@ -148,9 +168,9 @@ export class AgentRuntime {
       const capability = this.options.registry.get(name);
       if (!capability) throw new Error(`未知能力: ${name}`);
       if (!capability.availability.supported) throw new Error(capability.availability.reason ?? '能力未实现');
-      let prepared = await capability.prepare(record.args, snapshot(context), signal);
-      release = await (this.options.locks ?? sharedLocks).acquire(prepared.resources, signal);
-      const locked = await capability.prepare(record.args, snapshot(context), signal);
+      let prepared = await timed('prepare',()=>capability.prepare(record.args,snapshot(context),signal));
+      release = await timed('lock',()=>(this.options.locks ?? sharedLocks).acquire(prepared.resources,signal));
+      const locked = await timed('prepare',()=>capability.prepare(record.args,snapshot(context),signal));
       if (canonical(prepared.resources) !== canonical(locked.resources)) throw new Error('资源目标已变化，请重新观察');
       prepared = locked;
       record.target = prepared.target;
@@ -159,18 +179,18 @@ export class AgentRuntime {
       record.authorizationHash = hash;
       signal.throwIfAborted();
       if (prepared.effects.some(effect => effect !== 'read')) {
-        const allowed = await abortable(Promise.resolve(this.options.authorize?.(snapshot({actionId:record.id, taskId:context.id, capability:name, args:record.args, target:prepared.target, effects:prepared.effects, digest:hash, expiresAt:deadline}), signal)), signal);
+        const allowed = await timed('approval',()=>abortable(Promise.resolve(this.options.authorize?.(snapshot({actionId:record.id, taskId:context.id, capability:name, args:record.args, target:prepared.target, effects:prepared.effects, digest:hash, expiresAt:deadline}), signal)), signal));
         signal.throwIfAborted();
         if (allowed !== true) { record.status = 'denied'; return record; }
-        const fresh = await capability.prepare(record.args, snapshot(context), signal);
+        const fresh = await timed('prepare',()=>capability.prepare(record.args,snapshot(context),signal));
         if (digest(name, record.args, fresh) !== hash) throw new Error('批准后动作目标或风险变化，请重新确认');
         prepared = fresh;
       }
       signal.throwIfAborted();
-      const output = await prepared.execute(signal);
+      const output = await timed('tool',()=>prepared.execute(signal));
       record.output = snapshot(output);
       signal.throwIfAborted();
-      const verified = await prepared.verify(output, signal);
+      const verified = await timed('verify',()=>prepared.verify(output,signal));
       signal.throwIfAborted();
       record.status = verified ? 'succeeded' : 'unverified';
       return record;
@@ -180,6 +200,7 @@ export class AgentRuntime {
       return record;
     } finally {
       // 不使用 Promise.race 提前释放锁；执行器必须完成取消清理后才返回。
+      this.metric(context.id,{kind:'handoff',stepId:record.id,attemptId:record.id,adapter:name.split('_')[0],status:record.status});
       release?.(); clearTimeout(timer); record.finishedAt = new Date().toISOString();
     }
   }

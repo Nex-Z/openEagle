@@ -1,3 +1,5 @@
+> 当前 Windows 可信工作区 opt-in 已实测；文中早期 Linux-only 和缺少 cleanup 的记录由末尾更新取代。UI 仍未接入。
+
 # openEagle v2：通用 Agent 的首个 headless 切片
 
 ## 当前交付边界
@@ -125,3 +127,29 @@ Windows 文件与 CLI 仍默认且明确不可用，增加了直接 prepare 也�
 构造器只接受规范 origin 且 hostname 为 `127.0.0.1` 或 `[::1]`；拒绝 DNS 名称及外部来源。loopback 也可能是真实本地服务，宿主必须仅传入自己建立的 fixture 端口。能力描述同步披露此限制，会话首次 prepare 绑定 task ID，拒绝跨任务复用。
 
 每任务必须创建独立 browser session，并在 `await task.result` 的 `finally` 中 `await session.close()`。动作运行时取消会关闭会话，但模型/审批等待时 runtime 不自动持有并关闭 adapter；宿主不清理时，已打开页面的同源后台脚本可能继续运行。当前 headless API 尚无通用 adapter disposal hook，不能宣称任意时刻取消即完成浏览器资源回收。原生 UI 接入前须补齐生命周期集成回归。
+
+## Windows opt-in 与复用整合更新
+
+已有文件/命令/桌面工具不是本轮发明；参见 [REUSE_AUDIT.md](REUSE_AUDIT.md)。Linux factory 保持原行为。Windows 通过单独导出显式选择：
+
+```ts
+createWindowsTrustedFileCapabilities({mode: 'trusted-workspace'});
+createWindowsTrustedCliCapability({mode: 'trusted-workspace', profiles: approvedProfiles});
+new AgentRuntime({registry, authorize, onMetric: collector.collect, cleanup: () => browser.close()});
+```
+
+只用于用户批准的可信本地目录、普通用户权限；不会提权。文件拒绝ADS/保留名/设备路径/尾点空格和已识别junction，复用原Node目录快照再加文件身份/hash复核。Node的lstat不是完整reparse-tag扫描，无法抵御恶意并发替换或别名竞态；不是OS沙箱。
+
+CLI只运行宿主固定exe和窄argv，shell:false、windowsHide、最小env、输出/超时有界。取消时taskkill仅针对自有存活PID树，结果如实标descendants-unverified；主进程退出仍未确认则该进程内隔离相交工作区，确认exit后解除。进程重启不保留隔离；正常主进程结束后的逃逸后代不保证清除。退出码0仅是进程检查，不等于任务语义成功。
+
+cleanup现在由runtime在结果交付前等待，覆盖模型/审批等待期间取消。带cleanup的runtime只允许一个任务，宿主每任务创建独立registry/session；cleanup失败结果failed，cleanup不响应时会等待，不能用超时race假装已释放资源。
+
+Windows混合验收：设置 `OPENEAGLE_CHROMIUM`，并仅为本地demo显式设置 `OPENEAGLE_WINDOWS_TRUSTED=1`，运行 `corepack pnpm@10.7.0 v2:demo`。真实浏览器/文件/CLI已闭环，规划是ScriptedEngine，非真实LLM。
+
+## 最小可观测性与验收
+
+`MetricsCollector`输出不含prompt/参数/内容的JSONL事件：task/step/attempt ID、单调时钟、phase span、调用计数、handoff状态、provider返回的usage。model/prepare/lock/approval/tool/verify/cleanup分开；并发span相加是resource-time，不能用walltime相减推导。费用无版本化价格来源时unknown。重试/回退/重规划/重复观察/无效动作/人工接管由显式metric事件标注；不能自动推断所有恢复，未完整观察时cleanSuccess unknown。正常确认和必要观察不算补救。
+
+runtimeStatus、adapterStatusCounts、taskOracle分开；独立语义checkpoint的最终oracle覆盖率与首次尝试可判定覆盖率分开，unknown不算正确。现有fixture预定义nonce、服务端回执、文件字节、CLI摘要四个checkpoint，不要求未来任务遵循唯一工具序列。
+
+运行 `corepack pnpm@10.7.0 --filter @open-eagle/agent-core report:fixtures` 生成JSON。已提交WINDOWS_FIXTURE_REPORT.json及脱敏TRACE.jsonl。样本为3个随机nonce混合任务+1个刻意拒绝写入任务，失败开销保留；这是报告管线验收，不是总体能力成功率。旧版、真实模型、相同条件的性能对比均未测，不宣称提升。

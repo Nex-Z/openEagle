@@ -38,6 +38,6 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm --filter @open-eagle/agent-core exec playwright install chromium
       - run: pnpm v2:typecheck
-      # Windows 文件/CLI 与混合 demo 保持不支持；跳过不等于通过。
+      # Windows 显式可信工作区测试；旧 Linux-only 测试跳过不等于通过。
       - run: pnpm --filter @open-eagle/agent-core test:unit
       - run: pnpm --filter @open-eagle/agent-core test:browser
