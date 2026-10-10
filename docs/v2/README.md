@@ -119,3 +119,9 @@ corepack pnpm@10.7.0 --filter @open-eagle/agent-core test:browser
 当前网络策略明确拒绝所有 HTTP 3xx 响应（包括同源重定向）。真实浏览器验收发现 `route.continue()` 后的重定向可能绕过来源检查，因此改为 `route.fetch({maxRedirects:0,maxRetries:0})` 并拒绝 3xx，再传递非重定向响应。不会重试表单提交。此策略不适用于依赖登录跳转、重定向或流式响应的网站；fetch 会缓冲响应，DOM 字符上限不是网络响应体上限。仅用于受控本地 fixture，不是通用网络沙箱。
 
 Windows 文件与 CLI 仍默认且明确不可用，增加了直接 prepare 也拒绝执行的回归。没有用 realpath/lstat 或 taskkill 的 best-effort 行为替代 Linux 现有保证。安全路径句柄与 Job Object 实现需单独设计；不把 cwd 检查称为 OS 沙箱。真实 Windows browser→file→CLI 混合闭环仍未完成。
+
+### 浏览器宿主生命周期约束
+
+构造器只接受规范 origin 且 hostname 为 `127.0.0.1` 或 `[::1]`；拒绝 DNS 名称及外部来源。loopback 也可能是真实本地服务，宿主必须仅传入自己建立的 fixture 端口。能力描述同步披露此限制，会话首次 prepare 绑定 task ID，拒绝跨任务复用。
+
+每任务必须创建独立 browser session，并在 `await task.result` 的 `finally` 中 `await session.close()`。动作运行时取消会关闭会话，但模型/审批等待时 runtime 不自动持有并关闭 adapter；宿主不清理时，已打开页面的同源后台脚本可能继续运行。当前 headless API 尚无通用 adapter disposal hook，不能宣称任意时刻取消即完成浏览器资源回收。原生 UI 接入前须补齐生命周期集成回归。

@@ -235,3 +235,15 @@ test('HTTP 重定向不转发已批准的 POST 内容，也不访问同源下一
     assert.deepEqual(received, ['approved-post']);
   } finally { await session.close(); await sameOrigin.close(); await stop(server); await stop(outside); }
 });
+
+test('构造只接受字面 loopback fixture，能力声明限制且会话不跨任务复用', async () => {
+  for (const origin of ['https://example.com', 'http://localhost:8080', 'http://192.168.1.1']) {
+    assert.throws(() => createBrowserCapabilities({ allowedOrigins: [origin] }), /fixture/);
+  }
+  const session = createBrowserCapabilities({ allowedOrigins: ['http://127.0.0.1:12345', 'http://[::1]:12345'] });
+  try {
+    assert(session.capabilities.every(c => c.description.includes('受控本地 fixture')));
+    await session.capabilities[0]!.prepare({ url: 'http://127.0.0.1:12345' }, task);
+    await assert.rejects(session.capabilities[1]!.prepare({}, { ...task, id: 'another-task' }), /不能跨任务复用/);
+  } finally { await session.close(); }
+});

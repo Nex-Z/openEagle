@@ -28,6 +28,7 @@ export function createBrowserCapabilities(options: BrowserOptions = {}): {
     if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password || url.origin !== origin) {
       throw new Error('allowedOrigins 必须为完整 HTTP(S) 来源');
     }
+    if (!['127.0.0.1', '[::1]'].includes(url.hostname)) throw new Error('仅支持受控本地 fixture 的字面 loopback 来源');
     return origin;
   }));
   const timeout = Math.max(100, Math.min(options.timeoutMs ?? 10_000, 60_000));
@@ -37,6 +38,7 @@ export function createBrowserCapabilities(options: BrowserOptions = {}): {
   let context: BrowserContext | undefined;
   let page: Page | undefined;
   let origin: string | undefined;
+  let taskId: string | undefined;
   let closed = false;
   let closing: Promise<void> | undefined;
   let launching: Promise<Page> | undefined;
@@ -185,10 +187,12 @@ export function createBrowserCapabilities(options: BrowserOptions = {}): {
   }
   function capability(name: string, description: string, properties: Record<string, unknown>, required: string[],
     prepare: (args: Args) => PreparedAction | Promise<PreparedAction>): Capability {
-    return { name: `browser_${name}`, description,
+    return { name: `browser_${name}`, description: `仅限宿主创建的受控本地 fixture，非网络沙箱。${description}`,
       inputSchema: { type: 'object', properties, required, additionalProperties: false },
       availability: { supported: true },
-      async prepare(args, _context, signal = new AbortController().signal) {
+      async prepare(args, context, signal = new AbortController().signal) {
+        if (taskId !== undefined && taskId !== context.id) throw new Error('浏览器会话不能跨任务复用');
+        taskId = context.id;
         if (closed) throw new Error('浏览器会话已关闭');
         return run(signal, async () => prepare(object(args)), false);
       } };

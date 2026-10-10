@@ -61,3 +61,5 @@ Check failed: . socket() failed: Operation not permitted (1)
 - 新增 Windows headless CI job；远端 CI 尚未运行。`git diff --check` 通过。
 
 未完成：Windows 安全文件句柄/完整 reparse-point 边界、Job Object 进程生命周期、Windows browser→file→CLI 闭环、真实模型、UIA/macOS Accessibility、Electron UI 接入/安装包。未读取模型凭据、用户浏览器 profile 或真实网站账号，未付费调用。没有用弱化的可信工作区模式冒充现有 Linux 保证；需先审阅 native helper 或明确 opt-in 能力层级设计。
+
+独立审查后追加验证：browser suite 11 tests / 10 passed / 0 failed / 1 skipped；构造器强制字面 loopback fixture、能力声明限制、会话 task ID 绑定回归通过。模型/审批等待期间取消的通用 adapter disposal hook 尚未实现，宿主必须逐任务创建会话并在 task.result finally 关闭；详见 README 生命周期约束。
