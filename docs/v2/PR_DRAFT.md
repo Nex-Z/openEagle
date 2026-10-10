@@ -15,7 +15,7 @@
 - Windows Node24.8/pnpm10.7；真实Chrome154临时profile→文件→CLI→独立服务端/字节/hash断言通过，ScriptedEngine规划。
 - 真实Pi包循环+模拟模型transport测试通过；不是付费模型或真实LLM准确率验证。
 - 相关完整headless suite与定向复核、Agent/React/Electron类型检查通过，精确次数见VERIFICATION.md。Linux-only测试在Windows跳过，不算通过。
-- 4个报告fixture含1个刻意拒绝目标：3/4任务oracle成功且无补救；13个可判定语义checkpoint中12个首次通过。报告保留失败和调用开销；小样本不作生产成功率或旧新提升结论。
+- 指标管线样本分组：3个正常混合任务均通过独立oracle且无补救；1个刻意拒绝写入样本符合安全预期，但业务目标未完成。失败样本的调用开销保留在报告中。合并3/4仅用于检查统计管线，不是产品成功率；小样本不用于性能提升或旧新对比结论。
 - 浏览器响应缓冲无硬字节上限，不是通用网站支持或OS网络沙箱；DOM指纹不是敌对页面事务隔离。Windows路径不是所有reparse tag检测，存在并发竞态；taskkill不是Job containment，quarantine仅进程内有效；cleanup等待无硬期限。
 - UI尚未接入、Windows UIA/mac Accessibility未实现；既有桌面broker应复用而非重写。最小featureflag/Envelope/确认/取消接线方案在REUSE_AUDIT.md，未复制整个未提交Node迁移。
 - 依赖ignore-scripts安装仅支持已验证headless路径，Electron/native二进制安装与打包未验证。没有读取密钥/日常profile、付费调用或操作真实系统设置。
