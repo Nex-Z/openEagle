@@ -1,7 +1,7 @@
 name: Agent Core v2
 on:
   pull_request:
-    paths: ['packages/agent-core/**', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.github/workflows/agent-core.yml']
+    paths: ['packages/agent-core/**', 'electron/**', 'src/**', 'scripts/verify-v2-*.cjs', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.github/workflows/agent-core.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -21,6 +21,8 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm --filter @open-eagle/agent-core exec playwright install --with-deps chromium
       - run: pnpm v2:typecheck
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm exec tsc -p tsconfig.electron.json --noEmit
       - run: pnpm v2:test
 
   headless-windows:
@@ -38,6 +40,8 @@ jobs:
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm --filter @open-eagle/agent-core exec playwright install chromium
       - run: pnpm v2:typecheck
+      - run: pnpm exec tsc --noEmit
+      - run: pnpm exec tsc -p tsconfig.electron.json --noEmit
       # Windows 显式可信工作区测试；旧 Linux-only 测试跳过不等于通过。
       - run: pnpm --filter @open-eagle/agent-core test:unit
       - run: pnpm --filter @open-eagle/agent-core test:browser

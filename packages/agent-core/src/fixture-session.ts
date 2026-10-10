@@ -22,6 +22,7 @@ export function parseSessionEnvelope(value: unknown): SessionEnvelope {
 export interface SessionExecution {
   workspace: string; registry: CapabilityRegistry; engine: AgentEngine;
   cleanup(): Promise<void>;
+  report?(): Record<string,unknown>;
 }
 type Entry = { input: string; handle?: TaskHandle; finished: Promise<void>; cancelRequested: boolean };
 type Pending = { conversationId: string; requestId: string; finish(allow: boolean): void };
@@ -33,7 +34,8 @@ export class FixtureSession {
   private closed = false;
   constructor(private readonly options: {
     send(envelope: SessionEnvelope): void;
-    create(envelope: SessionEnvelope): Promise<SessionExecution>;
+    create(envelope: SessionEnvelope, onText:(text:string)=>void): Promise<SessionExecution>;
+    mode?: "fixture" | "pi";
     maxRequests?: number;
   }) {}
   private emit(e: SessionEnvelope, type: string, payload: Record<string, unknown>) {
@@ -101,12 +103,12 @@ export class FixtureSession {
       await execution.cleanup();
     };
     try {
-      this.emit(e, 'server:status', { stage: 'thinking', fixture: true });
-      this.emit(e, 'server:agent_progress', { content: 'TEST MODE · scripted engine / fake desktop broker' });
-      execution = await this.options.create(e);
+      this.emit(e, 'server:status', { stage: 'thinking', fixture: this.options.mode !== 'pi' });
+      this.emit(e, 'server:agent_progress', { content: this.options.mode === 'pi' ? 'Pi 实验会话：仅临时示例只读工具；费用未知。' : 'TEST MODE · scripted engine / fake desktop broker' });
+      execution = await this.options.create(e,text=>{if(text&&!entry.cancelRequested)this.emit(e,'server:message_delta',{content:text});});
       if (entry.cancelRequested || this.closed) {
         await cleanup(); execution = undefined;
-        this.emit(e,'server:message',{ content:'Fixture cancelled; cleanup complete.', route:'answer_directly', status:'cancelled', fixture:true });
+        this.emit(e,'server:message',{ content:'Fixture cancelled; cleanup complete.', route:'answer_directly', status:'cancelled', fixture:this.options.mode !== 'pi' });
         return;
       }
       const runtime = new AgentRuntime({ registry: execution.registry, cleanup,
@@ -119,10 +121,10 @@ export class FixtureSession {
       runtimeOwnsCleanup = true;
       if (entry.cancelRequested || this.closed) entry.handle.cancel();
       const result = await entry.handle.result;
-      this.emit(e,'server:message',{ content:result.status === 'completed' ? result.answer : result.status === 'failed' ? `Fixture failed: ${result.error ?? 'unknown failure'}` : `Fixture ${result.status}; cleanup complete.`, route:'answer_directly', status:result.status, fixture:true });
+      this.emit(e,'server:message',{ ...(execution.report ? {modelStats:execution.report()} : {}), content:result.status === 'completed' ? result.answer : result.status === 'failed' ? (this.options.mode === 'pi' ? `Pi 请求失败：${safeModelError(result.error)}` : `Fixture failed: ${result.error ?? 'unknown failure'}`) : `Fixture ${result.status}; cleanup complete.`, route:'answer_directly', status:result.status, fixture:this.options.mode !== 'pi' });
     } catch (error) {
       if (execution && !runtimeOwnsCleanup) await cleanup().catch(() => {});
-      this.emit(e,'server:message',{ content:`Fixture failed: ${String(error)}`,route:'answer_directly',status:'failed',fixture:true });
+      this.emit(e,'server:message',{ content:this.options.mode === 'pi' ? `Pi 请求失败：${safeModelError(error)}` : `Fixture failed: ${String(error)}`,route:'answer_directly',status:'failed',fixture:this.options.mode !== 'pi' });
     }
   }
   async idle(): Promise<void> { await Promise.allSettled([...this.entries.values()].map(e => e.finished)); }
@@ -132,4 +134,9 @@ export class FixtureSession {
     for (const pending of [...this.confirmations.values()]) pending.finish(false);
     await this.idle();
   }
+}
+
+function safeModelError(error:unknown):string {
+  const text=String(error);
+  return ['MODEL_SESSION_NOT_CONFIGURED','MODEL_SESSION_BUSY','MODEL_CALL_BUDGET_EXHAUSTED','MODEL_INPUT_LIMIT','MODEL_OUTPUT_LIMIT','MODEL_INCOMPLETE_STREAM','MODEL_TIMEOUT','MODEL_CANCELLED','MODEL_PROVIDER_FAILED'].find(code=>text.includes(code)) ?? 'MODEL_RUNTIME_FAILED';
 }

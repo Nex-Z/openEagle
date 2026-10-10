@@ -8,6 +8,8 @@ export type BackendPortEvent = {kind:"open"} | {kind:"close";reason?:string} | {
 
 export interface ElectronAPI {
   fixtureMode?: boolean;
+  v2Mode?: boolean; piMode?: boolean; piOffline?: boolean;
+  modelSession?: {configure(payload:unknown):Promise<Record<string,unknown>>;status(conversationId:string):Promise<Record<string,unknown>>;clear(conversationId:string):Promise<Record<string,unknown>>};
   backendPort?: { close():void; onEvent(callback:(event:BackendPortEvent)=>void):()=>void; send(data:string):boolean; state():"closed"|"connecting"|"open" };
   invoke: <T = unknown>(channel: string, args?: Record<string, unknown>) => Promise<T>;
   on: (channel: string, callback: (...args: unknown[]) => void) => () => void;

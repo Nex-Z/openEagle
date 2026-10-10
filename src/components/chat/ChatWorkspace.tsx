@@ -36,6 +36,7 @@ import type {
 interface ChatWorkspaceProps {
   messages: ChatMessage[];
   canSend: boolean;
+  disabledReason?: string;
   onSend: (content: string, attachments?: AttachmentRef[]) => void;
   onTranscribeAudio: (params: {
     audioBase64: string;
@@ -1370,6 +1371,7 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
   const {
     messages,
     canSend,
+    disabledReason,
     onSend,
     onTranscribeAudio,
     onSoloPause,
@@ -1911,8 +1913,8 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
                 <div className="empty-message-icon is-loading">
                   <LoaderCircle size={24} />
                 </div>
-                <h2>正在连接本地后端</h2>
-                <p>openEagle 正在启动或连接本地服务，连接完成后就可以发送任务。</p>
+                <h2>{disabledReason ?? "正在连接本地后端"}</h2>
+                <p>{disabledReason ? "在上方配置本会话的模型与调用限制；密钥仅留在当前会话内存。" : "openEagle 正在启动或连接本地服务，连接完成后就可以发送任务。"}</p>
               </>
             ) : (
               <>
@@ -2070,7 +2072,7 @@ function ChatWorkspaceComponent(props: ChatWorkspaceProps) {
               placeholder={
                 canSend
                   ? "输入想聊的内容或要完成的任务..."
-                  : "等待后端启动完成..."
+                  : (disabledReason ?? "等待后端启动完成...")
               }
               rows={1}
               value={draft}

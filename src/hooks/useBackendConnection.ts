@@ -542,7 +542,7 @@ export function useBackendConnection(
     targetConversation: ConversationSummary | undefined,
     updater: (messages: ChatMessage[]) => ChatMessage[],
   ) => {
-    if (targetConversationId === (window.electronAPI?.fixtureMode ? syncedConversationIdRef.current : conversationId)) {
+    if (targetConversationId === ((window.electronAPI?.v2Mode || window.electronAPI?.fixtureMode) ? syncedConversationIdRef.current : conversationId)) {
       setMessages(updater);
       return;
     }
@@ -607,6 +607,7 @@ export function useBackendConnection(
   };
 
   const syncSettings = () => {
+    if (window.electronAPI?.v2Mode) return;
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       return;
@@ -1327,7 +1328,7 @@ export function useBackendConnection(
         envelope.payload.confirmation
       ) {
         const confirmation = envelope.payload.confirmation as ToolConfirmationPayload;
-        if (window.electronAPI?.fixtureMode) {
+        if ((window.electronAPI?.v2Mode || window.electronAPI?.fixtureMode)) {
           if (fixtureRequestRef.current?.requestId !== envelope.requestId || fixtureRequestRef.current.conversationId !== envelope.conversationId) return;
           fixtureConfirmationRef.current = {requestId:envelope.requestId,conversationId:envelope.conversationId,confirmationId:confirmation.confirmationId};
         }
@@ -1903,7 +1904,7 @@ export function useBackendConnection(
   }, []);
 
   const sendMessage = useCallback((content: string, attachments: AttachmentRef[] = []) => {
-    if (window.electronAPI?.fixtureMode && fixtureRequestRef.current) return {ok:false};
+    if ((window.electronAPI?.v2Mode || window.electronAPI?.fixtureMode) && fixtureRequestRef.current) return {ok:false};
     const socket = socketRef.current;
     if (!socket || socket.readyState !== WebSocket.OPEN) {
       setStatusLine("后端服务未就绪");
@@ -1913,7 +1914,7 @@ export function useBackendConnection(
 
     const now = new Date().toISOString();
     const requestId = createId("req");
-    if (window.electronAPI?.fixtureMode) { fixtureRequestRef.current = {requestId,conversationId}; setFixtureBusy(true); }
+    if ((window.electronAPI?.v2Mode || window.electronAPI?.fixtureMode)) { fixtureRequestRef.current = {requestId,conversationId}; setFixtureBusy(true); }
 
     setMessages((current) => [
       ...current,
@@ -2019,7 +2020,7 @@ export function useBackendConnection(
       return false;
     }
     const bound = fixtureConfirmationRef.current;
-    if (window.electronAPI?.fixtureMode && (!bound || bound.requestId !== fixtureRequestRef.current?.requestId || bound.confirmationId !== toolConfirmation.confirmationId)) return false;
+    if ((window.electronAPI?.v2Mode || window.electronAPI?.fixtureMode) && (!bound || bound.requestId !== fixtureRequestRef.current?.requestId || bound.confirmationId !== toolConfirmation.confirmationId)) return false;
     const now = new Date().toISOString();
     const envelope: Envelope<{
       confirmationId: string;
@@ -2027,7 +2028,7 @@ export function useBackendConnection(
     }> = {
       type: "client:tool_confirmation",
       requestId: createId("tool-confirm"),
-      conversationId: window.electronAPI?.fixtureMode ? bound!.conversationId : conversationId,
+      conversationId: (window.electronAPI?.v2Mode || window.electronAPI?.fixtureMode) ? bound!.conversationId : conversationId,
       payload: {
         confirmationId: toolConfirmation.confirmationId,
         decision,

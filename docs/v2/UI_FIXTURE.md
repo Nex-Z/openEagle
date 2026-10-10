@@ -32,4 +32,4 @@ With Vite and compiled outputs ready, run `corepack pnpm@10.7.0 v2:test:ui`. If 
 
 Validated locally with Electron 42.2.0 from the existing cache, checked against the installed package's SHA256 (`6e034b748ad5ed9445bd3da4b7d0792ed49556774a541217b507c156b00dd69a`). All three UI assertions groups passed; no renderer exception or forced-cleanup timeout was observed. Independent review found and verified fixes for asset access, disconnected-port cleanup, socket close propagation, app-exit cleanup and confirmation attribution. UI screenshot capture of a hidden window was unreliable; functional checks use DOM and actual protocol events.
 
-This UI patch is locally reviewed and not yet pushed. The earlier published P1/P2/CI fixes at f38021dbfaf316dae587ef91923cf855327bb52e passed both platforms in run 38071293459.
+This fixture UI was published at 8b13077a233511cb4ed73ea8568fbeab4d739c14; both platforms passed in run 38072515137. The separate default-off Pi session now has its own [Chinese setup and verification guide](./PI_SESSION.md).

@@ -27,3 +27,8 @@ See UI_FIXTURE.md for scope and exclusions. Old dirty checkout remained read-onl
 - `packages/agent-backend/src/application/confirmation-broker.ts` SHA256 `24a751e936e95849bda4c6d9d7063327a0a99ba0f748af3b767e9874cffbb907`
 
 Preload guards/framing, socket facade and desktop client are selectively copied/adapted; confirmation behavior/envelope shape are adapted to core contracts. No whole-backend or dirty-tree copy. Desktop client cleanup removes abort listeners on timeout/cancellation. The narrow fixture main relay does not claim the full old transport durability/heartbeat/authority feature set.
+
+
+## Pi 会话增量复用
+
+选择性参考旧 `packages/agent-backend/src/application/pi-model.ts` 的明确 provider/API 映射，在新 `model-config.ts` 中保留三种受支持组合；不导入旧 BackendApplication、设置、key、模型目录或隐式认证。复用已有 PiEngine 与统一 runtime 的 prepare/execute/verify，不创建第二套权限执行器。新 `ModelSessions` 仅持有会话内凭据、预算及有界文本历史；专用 IPC 与普通 Envelope 分离。完整边界和下一步接口见 [PI_SESSION.md](./PI_SESSION.md)。

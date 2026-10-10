@@ -73,7 +73,7 @@ class ElectronBackendSocket {
 }
 
 export function createBackendSocket(port: number | null): BackendSocket {
-  if (window.electronAPI?.fixtureMode) {
+  if ((window.electronAPI?.v2Mode || window.electronAPI?.fixtureMode)) {
     const transport = window.electronAPI.backendPort;
     if (!transport) throw new Error("Fixture MessagePort unavailable");
     return new ElectronBackendSocket(transport) as unknown as BackendSocket;

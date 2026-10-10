@@ -21,6 +21,7 @@ test('session start/progress/confirmation/trace/result correlate; retries and de
   assert.equal(executed,1);assert.equal(cleaned,1);
   assert.deepEqual(events.map(e=>e.type),['server:status','server:agent_progress','server:tool_confirmation_required','server:trace','server:message']);
   assert.ok(events.every(e=>e.requestId==='r1'&&e.conversationId==='c1'));
+  for(const event of events)assert.deepEqual(JSON.parse(JSON.stringify(event)),event,'wire payload must contain only JSON values');
   assert.equal(events.at(-1)!.payload.status,'completed');await session.close();assert.equal(cleaned,1);
 });
 test('confirmation wait cancellation cleans before exactly one terminal event; stale decision cannot execute',async()=>{

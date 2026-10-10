@@ -93,3 +93,15 @@ Published f38021d run 38071293459 completed successfully on Linux and Windows. T
 Core build, React and Electron typechecks pass. Local full fixture regression: 58 tests, 53 passed, zero failed, five Linux-only skipped. Follow-up cleanup-failure regression verifies one cleanup attempt and an honest failed terminal event. Four protocol-session tests plus the default WebSocket/fixture socket-close test pass.
 
 Real hidden Electron 42.2.0 UI test (`scripts/verify-v2-fixture.cjs`) passed: correlated start/progress/confirmation/trace/result, approval after conversation switch with result preserved in original conversation, cancellation, asset protocol rejection, and execution directory removal after both pending-confirmation window close and MessagePort disconnect. No page errors or forced-cleanup timeout observed. Dedicated app userData profiles remain in temporary storage for inspection. Independent review verified fixes for its five findings and reported no remaining blocker. See UI_FIXTURE.md for reproduction and limits. No real model, keys, desktop actions or old checkout mutations.
+
+
+## Pi 实验会话：本机离线验收
+
+- 新 `model-session.test.ts` 15/15：三种已安装 SDK 的假 fetch SSE 解析、调用/输出/时间预算、零重试、错误/EOF/取消、跨 chunk/轮次脱敏、真实 Pi + 只读工具、会话历史与凭据隔离、链接拒绝、unknown 费用。
+- 全量 Windows 回归 74 项：69 通过，5 项 Linux 专用明确 skip；浏览器使用已有 Chrome，仅 literal-loopback fixture。初次运行误用了浏览器环境变量，修正为 `OPENEAGLE_CHROMIUM` 后全量通过。
+- core、React、Electron 三层 TypeScript 检查通过。
+- 实际隐藏 Electron 42.2.0 的 `verify-v2-pi-session.cjs` 通过：配置后密码框清空、流式文本和已验证 workspace_read、调用 2/2、费用 unknown、新会话隔离、清除禁用、旧 configure 回调不能启用新会话，以及退出删除工作区、fresh profile/log/storage 无假 key 明文。
+- 独立审查发现跨轮密钥拼接风险，修复为每任务持续 redactor，加入两轮工具调用回归；复核无阻塞。
+- 本次没有真实 provider 网络/付费调用、旧用户数据访问或真实桌面操作。真实供应商和费用验收仍待用户明确选择。
+
+- 最终 fixture UI 回归发现可选 modelStats 的 undefined 值被 preload 严格 JSON 校验拒绝；改为有值才发送，并加入协议 JSON 往返断言。相关 19/19 通过；原 fixture 的跨会话确认/结果、取消、关窗和 port 断连三组实际 Electron 验收全部通过。

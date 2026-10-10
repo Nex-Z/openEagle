@@ -178,6 +178,8 @@ ipcRenderer.on("backend://port", (event, metadata: unknown) => {
 });
 
 const fixtureMode = process.argv.includes("--openeagle-v2-fixture");
+const piMode = process.argv.includes("--openeagle-v2-pi");
+const v2Mode = fixtureMode || piMode;
 
 const ALLOWED_INVOKE_CHANNELS = [
   "get_backend_state",
@@ -234,7 +236,7 @@ const ALLOWED_SEND_CHANNELS = [
 
 contextBridge.exposeInMainWorld("electronAPI", {
   invoke: (channel: string, args?: Record<string, unknown>) => {
-    if (fixtureMode && !["get_backend_state", "write_frontend_log", "load_conversation_index", "load_conversation_file", "save_conversation_file", "save_conversation_index", "delete_conversation_file", "load_app_settings", "save_app_settings"].includes(channel)) return Promise.reject(new Error("Operation disabled in fixture mode"));
+    if (v2Mode && !["get_backend_state", "write_frontend_log", "load_conversation_index", "load_conversation_file", "save_conversation_file", "save_conversation_index", "delete_conversation_file", "load_app_settings", "save_app_settings"].includes(channel)) return Promise.reject(new Error("Operation disabled in fixture mode"));
     if (!ALLOWED_INVOKE_CHANNELS.includes(channel)) {
       return Promise.reject(new Error(`Blocked IPC invoke: ${channel}`));
     }
@@ -270,7 +272,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
   },
 
   convertFileSrc: (filePath: string) => {
-    if (fixtureMode) throw new Error("Local assets disabled in fixture mode");
+    if (v2Mode) throw new Error("Local assets disabled in fixture mode");
     // Encode file path for use as asset:// protocol URL
     const normalized = filePath.replace(/\\/g, "/");
     return `asset:///${encodeURI(normalized)}`;
@@ -310,6 +312,12 @@ contextBridge.exposeInMainWorld("electronAPI", {
     state: () => backendPortState,
   },
 
-  fixtureMode,
+  fixtureMode, v2Mode, piMode,
+  piOffline: process.argv.includes("--openeagle-v2-offline"),
+  modelSession: {
+    configure: (payload: unknown) => piMode ? ipcRenderer.invoke("v2:model:configure",payload) : Promise.reject(new Error("MODEL_MODE_DISABLED")),
+    status: (conversationId: string) => piMode ? ipcRenderer.invoke("v2:model:status",{conversationId}) : Promise.resolve({configured:false}),
+    clear: (conversationId: string) => piMode ? ipcRenderer.invoke("v2:model:clear",{conversationId}) : Promise.reject(new Error("MODEL_MODE_DISABLED")),
+  },
   isElectron: true,
 });

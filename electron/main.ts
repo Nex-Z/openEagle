@@ -19,7 +19,8 @@ import { loadAppSettings, saveAppSettings } from "./conversations";
 import { migrateTauriSettings } from "./migrate-tauri-settings";
 
 const isDev = !app.isPackaged;
-const fixtureMode = isDev && process.env.OPEN_EAGLE_V2_FIXTURE === "1";
+const piMode = isDev && process.env.OPEN_EAGLE_V2_PI === "1";
+const v2Mode = piMode || (isDev && process.env.OPEN_EAGLE_V2_FIXTURE === "1");
 
 // 禁用 GPU 硬件加速，避免部分 Windows 设备上 GPU 进程崩溃
 // 注意：命令行开关需在 electron-dev.cjs / 启动脚本中传入，此处仅作打包后的兜底
@@ -31,7 +32,7 @@ if (process.platform === "win32") {
   app.setAppUserModelId("com.openeagle.desktop");
 }
 
-if (fixtureMode) app.setPath("userData", fs.mkdtempSync(path.join(tmpdir(), "openeagle-v2-app-")));
+if (v2Mode) app.setPath("userData", fs.mkdtempSync(path.join(tmpdir(), "openeagle-v2-app-")));
 
 let mainWindow: BrowserWindow | null = null;
 let stopFixture: (() => Promise<void>) | undefined;
@@ -84,10 +85,10 @@ function createMainWindow() {
     show: false, // show after backend ready
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
-      additionalArguments: fixtureMode ? ["--openeagle-v2-fixture"] : [],
+      additionalArguments: v2Mode ? [piMode ? "--openeagle-v2-pi" : "--openeagle-v2-fixture", ...(process.env.OPEN_EAGLE_V2_PI_TEST === "1" ? ["--openeagle-v2-offline"] : [])] : [],
       contextIsolation: true,
       nodeIntegration: false,
-      webSecurity: fixtureMode, // legacy asset behavior is retained outside fixture mode
+      webSecurity: v2Mode, // legacy asset behavior is retained outside fixture mode
     },
   });
 
@@ -170,16 +171,16 @@ function registerAssetProtocol() {
 }
 
 app.whenReady().then(async () => {
-  if (!fixtureMode) registerAssetProtocol();
+  if (!v2Mode) registerAssetProtocol();
   registerIpcHandlers(isDev);
-  if (fixtureMode) {
+  if (v2Mode) {
     ipcMain.removeHandler("get_backend_state");
     ipcMain.handle("get_backend_state", event => {
       if (event.sender !== mainWindow?.webContents || event.senderFrame !== mainWindow.webContents.mainFrame) throw new Error("Invalid fixture sender");
-      return {phase:"ready",port:1,message:"V2 TEST MODE · fake broker"};
+      return {phase:"ready",port:1,message:piMode?"V2 Pi experimental session":"V2 TEST MODE · fake broker"};
     });
     const win = createMainWindow();
-    stopFixture = attachFixtureBackend(win);
+    stopFixture = attachFixtureBackend(win,{mode:piMode?"pi":"fixture",offline:piMode&&process.env.OPEN_EAGLE_V2_PI_TEST === "1"});
     win.once("ready-to-show", () => { if (process.env.OPENEAGLE_FIXTURE_HEADLESS !== "1") win.show(); });
     return;
   }
@@ -242,7 +243,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", (event) => {
-  if (fixtureMode && !fixtureQuitReady) {
+  if (v2Mode && !fixtureQuitReady) {
     event.preventDefault();
     if (!fixtureQuitting) {
       fixtureQuitting = true;

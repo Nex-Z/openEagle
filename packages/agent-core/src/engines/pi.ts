@@ -8,6 +8,8 @@ export interface PiEngineOptions {
   model: Model<Api>;
   streamFn: StreamFn;
   maxTurns?: number;
+  /** Host-owned bounded text history; no renderer-supplied tool/system messages. */
+  history?: ReadonlyArray<{role:'user'|'assistant';content:string}>;
 }
 
 const systemPrompt = '你是通用个人助手，帮助用户处理日常事务、研究、文件和工作。'
@@ -56,7 +58,10 @@ export class PiEngine implements AgentEngine {
     const messages = await runAgentLoop(
       [{ role: 'user', content: session.context.goal, timestamp: Date.now() }],
       {
-        messages: [{ role: 'system', content: systemPrompt, timestamp: Date.now() }],
+        messages: [{ role: 'system', content: systemPrompt, timestamp: Date.now() },
+          ...(this.options.history??[]).map(item=>item.role==='user'
+            ? {role:'user' as const,content:item.content,timestamp:Date.now()}
+            : {role:'assistant' as const,content:[{type:'text' as const,text:item.content}],timestamp:Date.now(),api:this.options.model.api,provider:this.options.model.provider,model:this.options.model.id,stopReason:'stop' as const,usage:{input:0,output:0,cacheRead:0,cacheWrite:0,totalTokens:0,cost:{input:0,output:0,cacheRead:0,cacheWrite:0,total:0}}})],
         tools,
       },
       {

@@ -1,23 +1,39 @@
-import { MessageChannelMain, utilityProcess, type BrowserWindow } from 'electron';
+import { ipcMain, MessageChannelMain, utilityProcess, type BrowserWindow } from 'electron';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 
 // Matches the selectively reused preload framing. No direct desktop capability
 // channel is granted to this fixture utility process.
-export function attachFixtureBackend(win: BrowserWindow): () => Promise<void> {
+export function attachFixtureBackend(win: BrowserWindow, options: {mode?:'fixture'|'pi';offline?:boolean} = {}): () => Promise<void> {
   let stopCurrent: (()=>Promise<void>) | undefined;
   const shutdowns = new Set<Promise<void>>();
+  let control: ((kind:string,payload:Record<string,unknown>)=>Promise<unknown>) | undefined;
+  if(options.mode==='pi') for(const operation of ['configure','status','clear']) {
+    ipcMain.handle(`v2:model:${operation}`,async(event,payload:unknown)=>{
+      if(event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||!control) throw new Error('MODEL_CHANNEL_UNAVAILABLE');
+      if(!payload||typeof payload!=='object'||Array.isArray(payload)||JSON.stringify(payload).length>10000)throw new Error('MODEL_CONFIGURATION_REJECTED');
+      return control(`model:${operation}`,payload as Record<string,unknown>);
+    });
+  }
   win.webContents.on('did-finish-load',()=>{
     stopCurrent?.();
     const child=utilityProcess.fork(path.resolve(__dirname,'../packages/agent-core/dist/src/fixture-host.js'),[],{
-      serviceName:'OpenEagle V2 fixture',stdio:'pipe',env:{SystemRoot:process.env.SystemRoot ?? '',TEMP:process.env.TEMP ?? '',TMP:process.env.TMP ?? ''},
+      serviceName:'OpenEagle V2 fixture',stdio:'pipe',env:{OPEN_EAGLE_V2_MODE:options.mode??'fixture',OPEN_EAGLE_V2_PI_TEST:options.offline?'1':'0',SystemRoot:process.env.SystemRoot ?? '',TEMP:process.env.TEMP ?? '',TMP:process.env.TMP ?? ''},
     });
     const {port1,port2}=new MessageChannelMain();
     const connectionId=randomUUID();let inbound=0,outbound=0,stopped=false,exited=false;
     let stoppedPromise: Promise<void> | undefined;
+    const pending=new Map<string,{resolve:(value:unknown)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
+    control=(kind,payload)=>new Promise((resolve,reject)=>{
+      if(stopped||pending.size>=16){reject(new Error('MODEL_CHANNEL_UNAVAILABLE'));return;}
+      const id=randomUUID();const timer=setTimeout(()=>{pending.delete(id);reject(new Error('MODEL_CHANNEL_TIMEOUT'));},5000);
+      pending.set(id,{resolve,reject,timer});
+      try{child.postMessage({...payload,kind,id});}catch{pending.delete(id);clearTimeout(timer);reject(new Error('MODEL_CHANNEL_UNAVAILABLE'));}
+    });
     const frame=(kind:string,fields:Record<string,unknown>={})=>({channel:'open-eagle.data',protocolVersion:1,connectionId,kind,...fields});
     const stop=():Promise<void>=>{
       if(stoppedPromise)return stoppedPromise;stopped=true;
+      for(const item of pending.values()){clearTimeout(item.timer);item.reject(new Error("MODEL_CHANNEL_CLOSED"));}pending.clear();
       stoppedPromise = new Promise<void>(resolve=>{
         if(exited){resolve();return;}
         const timer=setTimeout(()=>{console.error('Fixture cleanup timeout; forced utility termination');child.kill();resolve();},3000);
@@ -33,12 +49,17 @@ export function attachFixtureBackend(win: BrowserWindow): () => Promise<void> {
     stopCurrent=stop;
     child.on('message',(message:unknown)=>{
       if(stopped||!message||typeof message!=='object')return;
-      const data=message as {kind?:string;envelope?:unknown};
+      const data=message as {kind?:string;envelope?:unknown;id?:string;ok?:boolean;status?:unknown};
+      if(data.kind==='model:reply'){
+        const item=pending.get(data.id??'');if(!item)return;pending.delete(data.id!);clearTimeout(item.timer);
+        if(data.ok)item.resolve(data.status);else item.reject(new Error('MODEL_CONFIGURATION_REJECTED'));return;
+      }
       if(data.kind==='ready'){port1.postMessage(frame('hello'));return;}
       if(data.kind==='envelope'){port1.postMessage(frame('envelope',{seq:++outbound,envelope:data.envelope}));return;}
       if(data.kind==='protocol-error')stop();
     });
-    child.stderr?.on('data',chunk=>console.error('Fixture utility:',String(chunk).slice(0,4096)));
+    if(options.mode!=='pi')child.stderr?.on('data',chunk=>console.error('Fixture utility:',String(chunk).slice(0,4096)));
+    else child.stderr?.resume(); // Never forward provider diagnostics into application logs.
     child.once('exit',()=>{exited=true;void stop();});
     port1.on('close',stop);
     port1.on('message',event=>{
