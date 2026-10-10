@@ -1,0 +1,28 @@
+{
+  "name": "@open-eagle/agent-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=22.19.0"
+  },
+  "exports": "./dist/src/index.js",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "pnpm build && node --test dist/test/*.test.js",
+    "demo": "pnpm build && node dist/src/demo.js",
+    "test:unit": "pnpm build && node --test dist/test/runtime.test.js dist/test/files-cli.test.js dist/test/pi.test.js",
+    "test:browser": "pnpm build && node --test dist/test/browser.test.js dist/test/demo.test.js"
+  },
+  "dependencies": {
+    "@earendil-works/pi-agent-core": "1.1.0",
+    "@earendil-works/pi-ai": "1.1.0",
+    "playwright": "1.64.0",
+    "typebox": "1.3.27"
+  },
+  "devDependencies": {
+    "@types/node": "22.19.19",
+    "typescript": "5.9.3"
+  }
+}
