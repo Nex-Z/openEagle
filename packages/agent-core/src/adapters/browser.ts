@@ -82,8 +82,17 @@ export function createBrowserCapabilities(options: BrowserOptions = {}): {
           const url = checkUrl(route.request().url());
           permitted = url.origin === origin;
         } catch { /* 默认拒绝 */ }
-        if (permitted && !closed) await route.continue().catch(() => {});
-        else await route.abort('blockedbyclient').catch(() => {});
+        if (!permitted || closed) { await route.abort('blockedbyclient').catch(() => {}); return; }
+        // continue 会自动跟随重定向且不重新进入 route，可能向未批准来源泄露请求。
+        // 此最小适配器拒绝所有 HTTP 重定向，不重试有副作用的请求。
+        let response;
+        try {
+          response = await route.fetch({ maxRedirects: 0, maxRetries: 0, timeout });
+          if (closed || (response.status() >= 300 && response.status() < 400)) {
+            await route.abort('blockedbyclient').catch(() => {});
+          } else await route.fulfill({ response });
+        } catch { await route.abort('blockedbyclient').catch(() => {}); }
+        finally { await response?.dispose().catch(() => {}); }
       });
       await context.routeWebSocket('**/*', socket => socket.close());
       page = await context.newPage();

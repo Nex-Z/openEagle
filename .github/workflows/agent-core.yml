@@ -22,3 +22,22 @@ jobs:
       - run: pnpm --filter @open-eagle/agent-core exec playwright install --with-deps chromium
       - run: pnpm v2:typecheck
       - run: pnpm v2:test
+
+  headless-windows:
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10.7.0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '24.8.0'
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile --ignore-scripts
+      - run: pnpm --filter @open-eagle/agent-core exec playwright install chromium
+      - run: pnpm v2:typecheck
+      # Windows 文件/CLI 与混合 demo 保持不支持；跳过不等于通过。
+      - run: pnpm --filter @open-eagle/agent-core test:unit
+      - run: pnpm --filter @open-eagle/agent-core test:browser

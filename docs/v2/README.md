@@ -106,3 +106,16 @@ const result = await task.result;
 以上 OpenAI 资料是公开 API/集成建议，不代表知道闭源 ChatGPT 客户端内部实现。
 
 实际通过/阻塞记录见 [VERIFICATION.md](./VERIFICATION.md)。
+
+## Windows 本机验收补充
+
+Windows 可使用已安装的 Chrome，仍由 Playwright 创建专用临时 profile：
+
+```powershell
+$env:OPENEAGLE_CHROMIUM='C:\Program Files\Google\Chrome\Application\chrome.exe'
+corepack pnpm@10.7.0 --filter @open-eagle/agent-core test:browser
+```
+
+当前网络策略明确拒绝所有 HTTP 3xx 响应（包括同源重定向）。真实浏览器验收发现 `route.continue()` 后的重定向可能绕过来源检查，因此改为 `route.fetch({maxRedirects:0,maxRetries:0})` 并拒绝 3xx，再传递非重定向响应。不会重试表单提交。此策略不适用于依赖登录跳转、重定向或流式响应的网站；fetch 会缓冲响应，DOM 字符上限不是网络响应体上限。仅用于受控本地 fixture，不是通用网络沙箱。
+
+Windows 文件与 CLI 仍默认且明确不可用，增加了直接 prepare 也拒绝执行的回归。没有用 realpath/lstat 或 taskkill 的 best-effort 行为替代 Linux 现有保证。安全路径句柄与 Job Object 实现需单独设计；不把 cwd 检查称为 OS 沙箱。真实 Windows browser→file→CLI 混合闭环仍未完成。

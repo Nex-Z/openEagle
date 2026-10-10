@@ -49,3 +49,15 @@ Check failed: . socket() failed: Operation not permitted (1)
 5. Windows 下完成安全文件操作和 Job Object/等效进程监督适配后，再运行完整 browser→file→CLI demo 与独立 oracle
 6. 后续才接 Electron/CJS 与 ESM entry、可信批准 UI、取消映射、身份认证传输和 Python feature flag 回退。现 UI 仍完全走旧 Python
 7. 本地提交作者/提交者必须是 `ZZM-user <z2657272578@gmail.com>`。没有替用户改 git 全局配置，没有推送
+
+## Windows 承接实测（2026-10-10）
+
+- 在独立 `E:\WorkSpace\project\openEagle-v2` 导入 `82c75b24e6e10250437d4e82f9fd6b0f9a72f6e3`；原脏树未改动。Library 原样 helper 在本机现有 Ubuntu 24.04 的临时 Linux 文件系统运行，保留文件 ID/version xattrs；bundle 55,735 bytes 与交接 SHA256 完全匹配，Windows Git 通过 UNC 直接读取、verify、fetch、ff-only 导入。
+- Node 24.8.0；命令级 Corepack pnpm 10.7.0；官方 registry 冻结锁文件安装成功（ignore-scripts）。未改全局 pnpm，未安装 Electron/native 生命周期产物。
+- 新包 typecheck、原 React `tsc --noEmit`、Electron `tsc -p tsconfig.electron.json --noEmit` 均通过。
+- unit：32 tests，27 passed、0 failed、5 skipped。16 项真实 Pi 包循环使用模拟模型传输；10 项 runtime；1 项新增非 Linux 不支持回归。5 项 Linux 文件/CLI 实测在 Windows 跳过，不能算通过。
+- browser：使用已安装 Chrome 154.0.8037.99、临时 profile 与本地 fixture，10 tests，9 passed、0 failed、1 skipped。混合 browser/file/CLI demo 因 Windows 适配器不可用跳过。
+- 首轮真实浏览器检测到跨源重定向泄漏（外部本地 fixture 收到 1 个请求）；修复后原回归通过，并新增 POST 307 与同源 302 拒绝回归。当前保守拒绝全部 HTTP 3xx，不透明支持重定向；fetch 缓冲响应，尚无网络响应体字节硬上限，限受控本地 fixture。
+- 新增 Windows headless CI job；远端 CI 尚未运行。`git diff --check` 通过。
+
+未完成：Windows 安全文件句柄/完整 reparse-point 边界、Job Object 进程生命周期、Windows browser→file→CLI 闭环、真实模型、UIA/macOS Accessibility、Electron UI 接入/安装包。未读取模型凭据、用户浏览器 profile 或真实网站账号，未付费调用。没有用弱化的可信工作区模式冒充现有 Linux 保证；需先审阅 native helper 或明确 opt-in 能力层级设计。

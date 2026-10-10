@@ -204,3 +204,34 @@ test('可编辑文本按 DOM 文本验证填入结果', async () => {
     assert.equal(filled.verified, true);
   } finally { await session.close(); await stop(server); }
 });
+
+test('HTTP 重定向不转发已批准的 POST 内容，也不访问同源下一跳', async () => {
+  const received: string[] = [];
+  const outside = createServer((request, response) => { received.push(`outside:${request.url}`); response.end('leaked'); });
+  const outsideOrigin = await listen(outside);
+  const server = createServer((request, response) => {
+    response.setHeader('Content-Type', 'text/html; charset=utf-8');
+    if (request.url === '/') {
+      response.end('<form method="POST" action="/submit"><input name="secret" value="fixture-only"><button>Submit</button></form>');
+    } else if (request.url === '/submit') {
+      received.push('approved-post');
+      response.writeHead(307, { Location: `${outsideOrigin}/secret` }); response.end();
+    } else if (request.url === '/same-origin') {
+      response.writeHead(302, { Location: '/next-hop' }); response.end();
+    } else { received.push(`unexpected:${request.url}`); response.end('unexpected'); }
+  });
+  const origin = await listen(server);
+  const session = createBrowserCapabilities({ executablePath, allowedOrigins: [origin] });
+  const sameOrigin = createBrowserCapabilities({ executablePath, allowedOrigins: [origin] });
+  const prepare = async (name: string, args: Json = {}) => session.capabilities.find(c => c.name === `browser_${name}`)!.prepare(args, task);
+  try {
+    await execute(await prepare('navigate', { url: origin }));
+    const snapshot = await execute(await prepare('read'));
+    // 导航错误或未验证均不可被当成成功；服务端独立核对没有第二次请求。
+    const click = await prepare('click', { ref: findRef(snapshot.output, 'button'), expectedText: 'impossible-success' });
+    const clicked = await execute(click).catch(() => undefined);
+    if (clicked) assert.equal(clicked.verified, false);
+    await assert.rejects(execute(await sameOrigin.capabilities[0]!.prepare({ url: `${origin}/same-origin` }, task)));
+    assert.deepEqual(received, ['approved-post']);
+  } finally { await session.close(); await sameOrigin.close(); await stop(server); await stop(outside); }
+});

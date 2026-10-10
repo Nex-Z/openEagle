@@ -123,3 +123,19 @@ test('CLI 主进程退出后清理同组后代', linux, async () => {
     await assert.rejects(access(path.join(f.root, 'orphan-marker')));
   } finally { await f.dispose(); }
 });
+
+test('非 Linux 文件与 CLI 能力保持不可用且直接 prepare 也拒绝执行', { skip: process.platform === 'linux' }, async () => {
+  const f = await fixture();
+  try {
+    for (const capability of createFileCapabilities()) {
+      assert.equal(capability.availability.supported, false);
+      assert.ok(capability.availability.reason);
+      await assert.rejects(capability.prepare({ path: 'blocked.txt', ...(capability.name === 'files_write' ? { content: 'must not write' } : {}) }, f.context));
+    }
+    const command = createCliCapability({ profiles: { fixture: { executable: process.execPath, validateArgs: () => true } } });
+    assert.equal(command.availability.supported, false);
+    assert.ok(command.availability.reason);
+    await assert.rejects(command.prepare({ profile: 'fixture', argv: ['-e', 'process.exit(0)'] }, f.context));
+    await assert.rejects(access(path.join(f.root, 'blocked.txt')));
+  } finally { await f.dispose(); }
+});
