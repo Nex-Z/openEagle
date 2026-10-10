@@ -73,3 +73,14 @@ Check failed: . socket() failed: Operation not permitted (1)
 指标报告：4样本（3正常混合任务+1刻意拒绝），总成功/无补救成功均3/4；首次语义checkpoint 12/13，coverage100%仅指预定义四种checkpoint；p50 871.18ms、探索性p95 1138.61ms、range16.73–1138.61ms。含失败的调用/成功任务=25/3，模型调用0，费用unknown。失败任务runtime completed而taskOracle fail，展示两者区别。每run原始结果和单调事件已保存；不是旧新对比或真实LLM质量指标。
 
 最终unit复核：40 tests，35 passed，0 failed，5 Linux-only skipped；已补逐动作审批和argv变更断言。真实browser suite含混合demo为12项通过（完整suite运行中），之后同逻辑混合demo报告又完成3次。
+
+
+## Review fixes and terminal CI diagnosis (2026-10-10)
+
+Published commit 7380f31 CI run 38070713371 reached terminal failure on both platforms. Windows unit tests passed; mixed demo approval compared a short temporary path against its canonical long path. Linux selected system Chromium instead of the installed pinned Playwright browser, with launch timeouts. The demo now canonicalizes its temporary root, tests default to Playwright Chromium unless OPENEAGLE_CHROMIUM is explicitly provided, and browser launch has a separate 30-second budget. These fixes have not yet been validated by a new remote CI run.
+
+P1 immediate cancellation: check the signal before invoking the engine and attach a rejection handler when an already-created promise meets an aborted signal. An independent Node child process with --unhandled-rejections=strict verifies immediate cancellation and in-engine cancellation followed by rejection, no engine start in the first case, cancelled results, exactly one cleanup, and clean exit.
+
+P2 overlapping workspace coordination: ResourceLocks now conflicts canonical workspace roots in both ancestor/descendant directions. Windows comparison is case insensitive and component bounded; sibling prefixes and separate drives remain independent. Regression covers queued cancellation, atomic multiple-key acquisition, reverse nesting, duplicate release and POSIX nesting. This remains in-process coordination, not filesystem isolation; adapters must provide canonical roots, and FIFO fairness is not guaranteed.
+
+Local Node 24.8.0 / installed Chrome: compiled agent-core and ran all 54 tests, 49 passed, zero failed, five Linux-only skipped. Independent read-only review found no blocking issue. No UI integration is claimed by this patch; no real model calls or user credentials used. No push performed.

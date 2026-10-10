@@ -1,3 +1,4 @@
+import path from 'node:path';
 import { performance } from 'node:perf_hooks';
 import type { MetricEvent, MetricInput, Phase } from './metrics.js';
 import { createHash, randomUUID } from 'node:crypto';
@@ -23,7 +24,7 @@ function digest(capability: string, args: Json, action: PreparedAction): string 
 
 /** 只用于无副作用的模型/批准等待；执行器必须自行结束并清理，不能 race 后释放锁。 */
 async function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-  signal.throwIfAborted();
+  if(signal.aborted){void work.catch(()=>{});signal.throwIfAborted();}
   return new Promise<T>((resolve, reject) => {
     const abort = () => reject(signal.reason);
     signal.addEventListener('abort', abort, {once:true});
@@ -32,6 +33,20 @@ async function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
 }
 
 /** 进程内共享锁；跨进程宿主必须另外提供唯一执行所有者。 */
+function resourcesOverlap(a: string, b: string): boolean {
+  if (a === b) return true;
+  if (!a.startsWith('workspace:') || !b.startsWith('workspace:')) return false;
+  const left = a.slice(10), right = b.slice(10);
+  const windows = /^[a-z]:[\\/]/i.test(left) && /^[a-z]:[\\/]/i.test(right);
+  const paths = windows ? path.win32 : path.posix;
+  if (!paths.isAbsolute(left) || !paths.isAbsolute(right)) return false;
+  const within = (parent: string, child: string) => {
+    const relative = paths.relative(parent, child);
+    return relative === '' || (relative !== '..' && !relative.startsWith(`..${paths.sep}`) && !paths.isAbsolute(relative));
+  };
+  return within(left, right) || within(right, left);
+}
+
 export class ResourceLocks {
   private held = new Set<string>();
   private waiters = new Set<() => void>();
@@ -39,7 +54,7 @@ export class ResourceLocks {
     const keys = [...new Set(resources)].sort();
     while (true) {
       signal.throwIfAborted();
-      if (keys.every(key => !this.held.has(key))) {
+      if (keys.every(key => [...this.held].every(held => !resourcesOverlap(key, held)))) {
         keys.forEach(key => this.held.add(key));
         let released = false;
         return () => {
@@ -118,6 +133,7 @@ export class AgentRuntime {
     try {
       const context: TaskContext = {id, goal: input.goal, workspace: await realpath(input.workspace), facts: []};
       const sessionContext = Object.freeze({id, goal: context.goal, workspace: context.workspace, get facts() { return snapshot(context.facts); }});
+      controller.signal.throwIfAborted();
       const answer = await abortable(engine.run({
         context: sessionContext,
         metric: event => this.metric(id,event),

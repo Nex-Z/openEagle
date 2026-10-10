@@ -3,12 +3,11 @@ import { ScriptedEngine } from '../src/engines/scripted.js';
 import { tmpdir } from 'node:os';
 import assert from 'node:assert/strict';
 import { createServer, type Server } from 'node:http';
-import { existsSync } from 'node:fs';
 import { test } from 'node:test';
 import { createBrowserCapabilities } from '../src/adapters/browser.js';
 import type { ActionOutput, Json, PreparedAction, TaskContext } from '../src/contracts.js';
 
-const executablePath = process.env.OPENEAGLE_CHROMIUM ?? (existsSync('/usr/bin/chromium') ? '/usr/bin/chromium' : undefined);
+const executablePath = process.env.OPENEAGLE_CHROMIUM;
 const task: TaskContext = { id: 'browser-test', goal: '填写本地测试表单', workspace: '/tmp', facts: [] };
 async function listen(server: Server): Promise<string> {
   await new Promise<void>((resolve, reject) => {

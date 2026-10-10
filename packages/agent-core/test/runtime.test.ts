@@ -1,10 +1,11 @@
+import { spawnSync } from 'node:child_process';
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { mkdtemp, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { setTimeout as delay } from 'node:timers/promises';
-import { AgentRuntime, CapabilityRegistry } from '../src/runtime.js';
+import { AgentRuntime, CapabilityRegistry, ResourceLocks } from '../src/runtime.js';
 import { ScriptedEngine } from '../src/engines/scripted.js';
 import { nativeDesktopCapabilities } from '../src/adapters/native-desktop.js';
 import type { Capability, Effect } from '../src/contracts.js';
@@ -132,4 +133,59 @@ test('准备阶段获得取消信号，超时后不进入执行', async t => {
   };
   const result=await new AgentRuntime({registry:new CapabilityRegistry().register(cap),actionTimeoutMs:15}).start({goal:'准备取消',workspace:await workspace(t)},new ScriptedEngine(async s=>{await s.invoke('test_action',{});return 'done';})).result;
   assert.equal(result.records[0]?.status,'timed-out'); assert.equal(executed,false);
+});
+
+test('立即取消或引擎取消后立即拒绝不会产生未处理拒绝或进程崩溃',()=>{
+  const runtimeUrl=new URL('../src/runtime.js',import.meta.url).href;
+  const code=`import {AgentRuntime,CapabilityRegistry} from ${JSON.stringify(runtimeUrl)};
+    for(const variant of ['immediate','inside-engine']){
+      let calls=0,cleaned=0;let task;
+      const runtime=new AgentRuntime({registry:new CapabilityRegistry(),cleanup:async()=>{cleaned++;}});
+      task=runtime.start({goal:'cancel',workspace:process.cwd()},{name:'fixture',run:async s=>{calls++;if(variant==='inside-engine')task.cancel();s.signal.throwIfAborted();return 'wrong';}});
+      if(variant==='immediate')task.cancel();
+      const result=await task.result;
+      if(result.status!=='cancelled'||cleaned!==1||(variant==='immediate'&&calls!==0))process.exit(2);
+    }
+    await new Promise(r=>setTimeout(r,30));console.log('safe');`;
+  const child=spawnSync(process.execPath,['--unhandled-rejections=strict','--input-type=module','-e',code],{encoding:'utf8',timeout:10000,windowsHide:true});
+  assert.equal(child.status,0,child.stderr);assert.match(child.stdout,/safe/);
+});
+
+test('workspace locks serialize overlapping roots, preserve boundaries and cancel queues', async () => {
+  const locks = new ResourceLocks();
+  const signal = new AbortController().signal;
+  const parent = 'workspace:C:\\Trusted';
+  const child = 'workspace:c:\\TRUSTED\\child';
+  const release = await locks.acquire([parent], signal);
+  const siblingRelease = await locks.acquire(['workspace:C:\\Trusted-sibling'], signal);
+  siblingRelease();
+  const otherDriveRelease = await locks.acquire(['workspace:D:\\Trusted'], signal);
+  otherDriveRelease();
+  let acquired = false;
+  const waiting = locks.acquire([child, 'other:atomic'], signal).then(done => { acquired = true; return done; });
+  const cancel = new AbortController();
+  const cancelled = locks.acquire([child], cancel.signal);
+  const rejected = assert.rejects(cancelled, /cancel queued/);
+  cancel.abort(new Error('cancel queued'));
+  await rejected;
+  await delay(10);
+  assert.equal(acquired, false);
+  // A blocked multi-resource acquisition never partially holds other resources.
+  const otherRelease = await locks.acquire(['other:atomic'], signal);
+  otherRelease();
+  release(); release();
+  const childRelease = await waiting;
+  let parentAcquired = false;
+  const reverse = locks.acquire([parent], signal).then(done => { parentAcquired = true; return done; });
+  await delay(10);
+  assert.equal(parentAcquired, false);
+  childRelease();
+  (await reverse)();
+  (await locks.acquire([parent, child], signal))();
+  const posix = await locks.acquire(['workspace:/trusted'], signal);
+  (await locks.acquire(['workspace:/trusted-sibling'], signal))();
+  let nested = false;
+  const nestedWait = locks.acquire(['workspace:/trusted/child'], signal).then(done => { nested = true; return done; });
+  await delay(10); assert.equal(nested, false);
+  posix(); (await nestedWait)();
 });

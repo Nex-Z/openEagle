@@ -73,7 +73,7 @@ export function createBrowserCapabilities(options: BrowserOptions = {}): {
     if (page) return page;
     if (!launching) launching = (async () => {
       browser = await chromium.launch({ headless: true, executablePath: options.executablePath,
-        timeout, args: ['--force-webrtc-ip-handling-policy=disable_non_proxied_udp'] });
+        timeout: 30_000, args: ['--force-webrtc-ip-handling-policy=disable_non_proxied_udp'] });
       context = await browser.newContext({ serviceWorkers: 'block', acceptDownloads: false });
       context.setDefaultTimeout(timeout);
       context.setDefaultNavigationTimeout(timeout);
@@ -112,7 +112,7 @@ export function createBrowserCapabilities(options: BrowserOptions = {}): {
     signal.throwIfAborted();
     const abort = () => { void close(); };
     signal.addEventListener('abort', abort, { once: true });
-    const timer = setTimeout(abort, timeout);
+    const timer = setTimeout(abort, page ? timeout : timeout + 30_000);
     try {
       const value = await operation();
       signal.throwIfAborted();

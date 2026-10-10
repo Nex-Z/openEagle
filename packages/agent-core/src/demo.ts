@@ -2,7 +2,7 @@ import { performance } from 'node:perf_hooks';
 import { MetricsCollector } from './metrics.js';
 import { createServer } from 'node:http';
 import { createHash, randomUUID } from 'node:crypto';
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, realpath } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -40,7 +40,7 @@ export async function runDemo(options: {chromiumExecutable?: string; windowsMode
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('本地验收服务器未启动');
   const origin = `http://127.0.0.1:${address.port}`;
-  const workspace = await mkdtemp(join(tmpdir(),'openeagle-v2-demo-'));
+  const workspace = await realpath(await mkdtemp(join(tmpdir(),'openeagle-v2-demo-')));
   const browser = createBrowserCapabilities({allowedOrigins:[origin],executablePath:options.chromiumExecutable});
   const hashScript = "const fs=require('node:fs');const c=require('node:crypto');process.stdout.write(c.createHash('sha256').update(fs.readFileSync('receipt.txt')).digest('hex'))";
   const registry = new CapabilityRegistry();
