@@ -1,7 +1,7 @@
 name: Agent Core v2
 on:
   pull_request:
-    paths: ['packages/agent-core/**', 'electron/**', 'src/**', 'scripts/verify-v2-*.cjs', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.github/workflows/agent-core.yml']
+    paths: ['native/windows-uia/**', 'packages/agent-core/**', 'electron/**', 'src/**', 'scripts/verify-v2-*.cjs', 'package.json', 'pnpm-lock.yaml', 'pnpm-workspace.yaml', '.github/workflows/agent-core.yml']
   workflow_dispatch:
 permissions:
   contents: read
@@ -51,3 +51,18 @@ jobs:
       # Windows 显式可信工作区测试；旧 Linux-only 测试跳过不等于通过。
       - run: pnpm --filter @open-eagle/agent-core test:unit
       - run: pnpm --filter @open-eagle/agent-core test:browser
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Build and self-test UIA sidecar (no OS interaction)
+        shell: pwsh
+        env:
+          DOTNET_CLI_TELEMETRY_OPTOUT: '1'
+          DOTNET_GENERATE_ASPNET_CERTIFICATE: 'false'
+        run: |
+          dotnet restore native/windows-uia/OpenEagle.Uia.csproj --locked-mode --configfile native/windows-uia/NuGet.Config
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          dotnet build native/windows-uia/OpenEagle.Uia.csproj -c Release --no-restore
+          if ($LASTEXITCODE) { exit $LASTEXITCODE }
+          & native/windows-uia/bin/Release/net10.0-windows/OpenEagle.Uia.exe --self-test
+          exit $LASTEXITCODE

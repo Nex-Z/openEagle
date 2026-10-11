@@ -41,3 +41,8 @@ Preload guards/framing, socket facade and desktop client are selectively copied/
 ## 文本与按键分离（2026-10-11）
 
 text_fill复用现有browser_fill的prepare/指纹/资源/effects/handle.fill/verify，注册在原browser能力集中；不新建执行器或扩大来源权限。demo改走整段语义填写，原browser_fill兼容保留。系统扫描码desktop_type保留为显式诊断；UIA桥、原生Unicode入口及安全剪贴板事务均未实现。已有Electron insertText只覆盖自有webContents，旧quick-assistant剪贴板快照没有并发保护，未拿来充当通用桌面文本能力。详见[GUI_TEXT_INPUT.md](GUI_TEXT_INPUT.md)。
+
+
+## 2026-10-11 UIA sidecar 增量
+
+新增受宿主绑定的 FlaUI.UIA3 sidecar 与通用 runtime 工具；仅离线验证，真实 UIA、生产 UI/Pi 注册及 Electron 打包尚未验收/接入。默认 unknown，不能宣称后台或 native 键盘问题已解决。依赖、构建、测试与边界见 [UIA_SIDECAR.md](UIA_SIDECAR.md)。

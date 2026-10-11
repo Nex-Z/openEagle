@@ -44,3 +44,8 @@ Windows的[KEYBDINPUT](https://learn.microsoft.com/en-us/windows/win32/api/winus
 已只读查阅[nut.js #569](https://github.com/nut-tree/nut.js/issues/569)的Windows中文输出问题，以及[libnut-core #126](https://github.com/nut-tree/libnut-core/issues/126)的历史鼠标归一化问题。这些是版本/触发条件不同的社区线索，不证明本机首O组合或迟发1像素差异的具体根因；本轮读取路径与同版[mouse.c](https://github.com/ZachJW34/libnut-core/blob/v2.7.5/src/win32/mouse.c)核对，不套用旧issue的补偿办法。没有对外发帖、上传日志或声称获得维护者确认。
 
 下一步优先扩展经过授权、可独立验证的语义目标，而不是继续让用户重复逐字fixture。任意桌面UIA/Unicode/受控粘贴仍是明确缺口，需具体选型后实施；本轮不自动新增依赖、权限或前台测试。
+
+
+## 2026-10-11 UIA sidecar 增量
+
+新增受宿主绑定的 FlaUI.UIA3 sidecar 与通用 runtime 工具；仅离线验证，真实 UIA、生产 UI/Pi 注册及 Electron 打包尚未验收/接入。默认 unknown，不能宣称后台或 native 键盘问题已解决。依赖、构建、测试与边界见 [UIA_SIDECAR.md](UIA_SIDECAR.md)。

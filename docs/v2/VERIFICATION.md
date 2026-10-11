@@ -166,3 +166,8 @@ observe/click/observe/type 为48.97/107.83/35.92/524.02ms，前三步首次成�
 用户纠正后不再把逐字oracle作为产品默认填写方式：新增独立text_fill，复用现有browser_fill整段填写与独立验证，当前目标仅受支持的隔离loopback浏览器元素；跨工具demo已改走text_fill。系统按键诊断desktop_type明确ASCII扫描码，并在prepare前拒绝不支持文本；已观测IME组合状态现在明确报GUI_IME_COMPOSITION_ACTIVE，不等待笼统超时。没有新增native桥、UIA或剪贴板操作。详细架构、候选和社区线索见[GUI_TEXT_INPUT.md](GUI_TEXT_INPUT.md)。
 
 本轮后台最终验证：core共77项，72 passed、5 Linux-only skipped、0 failed；GUI离线16/16；core/React/Electron类型和Python compileall通过。混合Unicode整段填写含独立HTTP回执，跨工具demo包含text_fill且不调用desktop工具。开发回归曾修正编辑字符串转义、受控fixture说明及新增机制证据后的计数断言，不宣称首次全绿；这些修正未触发现场重试。
+
+
+## 2026-10-11 UIA sidecar 增量
+
+新增受宿主绑定的 FlaUI.UIA3 sidecar 与通用 runtime 工具；仅离线验证，真实 UIA、生产 UI/Pi 注册及 Electron 打包尚未验收/接入。默认 unknown，不能宣称后台或 native 键盘问题已解决。依赖、构建、测试与边界见 [UIA_SIDECAR.md](UIA_SIDECAR.md)。

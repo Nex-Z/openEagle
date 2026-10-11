@@ -9,3 +9,4 @@ export * from './adapters/native-desktop.js';
 export * from './adapters/windows-trusted.js';
 export * from './metrics.js';
 export * from './adapters/text-fill.js';
+export * from './adapters/windows-uia.js';
