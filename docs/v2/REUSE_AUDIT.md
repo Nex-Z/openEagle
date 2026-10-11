@@ -46,3 +46,8 @@ text_fill复用现有browser_fill的prepare/指纹/资源/effects/handle.fill/ve
 ## 2026-10-11 UIA sidecar 增量
 
 新增受宿主绑定的 FlaUI.UIA3 sidecar 与通用 runtime 工具；仅离线验证，真实 UIA、生产 UI/Pi 注册及 Electron 打包尚未验收/接入。默认 unknown，不能宣称后台或 native 键盘问题已解决。依赖、构建、测试与边界见 [UIA_SIDECAR.md](UIA_SIDECAR.md)。
+
+
+## UIA 后续产品接线（2026-10-11）
+
+现已完成共享跨进程桌面 lease、默认关闭的 UI/Pi 宿主目标授权入口，以及 framework-dependent Windows 资源接线和运行时提示；普通 Pi 消息可注册同一 runtime UIA 工具。集中自有窗口验收入口已准备，本轮仅执行 plan 模式，真实 UIA 仍未验收。详见 [UIA_SIDECAR.md](UIA_SIDECAR.md) 后续工程闭环章节。

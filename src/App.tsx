@@ -1,3 +1,4 @@
+import {UiaSessionPanel} from './components/UiaSessionPanel';
 import { ModelSessionPanel } from "./components/ModelSessionPanel";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { invoke, listen, onCloseRequested } from "./lib/electron-bridge";
@@ -819,6 +820,7 @@ export default function App() {
         <strong>{window.electronAPI.guiMode ? "真实 GUI · 前台占用" : window.electronAPI.piMode ? (window.electronAPI.piOffline ? "Pi 离线验收" : "Pi 实验会话") : "V2 测试模式"}</strong><span>{window.electronAPI.guiMode ? "后台优先；无后台能力须明确批准前台。失焦停止，Esc 紧急停止。" : window.electronAPI.piMode ? "临时只读工具；GUI 需单独批准前台专用窗口 · 费用 unknown" : "脚本引擎 · 模拟桌面 · 独立临时资料目录"}</span>
         <button disabled={!fixtureBusy} onClick={cancelFixture}>取消测试任务</button>
         {(window.electronAPI.guiMode || window.electronAPI.piMode) && <><button disabled={fixtureBusy||!canSend} onClick={()=>{sendMessage('GUI_REHEARSAL_BACKGROUND');setGuiChecked(true);}}>后台优先检查</button><button disabled={!guiChecked||fixtureBusy||!canSend||(window.electronAPI.piMode&&!piReady)} onClick={()=>sendMessage('GUI_REHEARSAL_FOREGROUND')}>请求前台专用窗口验收</button></>}
+        {window.electronAPI.piMode && <UiaSessionPanel key={activeConversationId+'-uia'} conversationId={activeConversationId} busy={fixtureBusy}/> }
         {window.electronAPI.piMode && <ModelSessionPanel key={activeConversationId} conversationId={activeConversationId} busy={fixtureBusy} onReady={setPiReady}/> }
       </div>}
       <AppShell

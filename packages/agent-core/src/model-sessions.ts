@@ -29,7 +29,7 @@ export class ModelSessions {
     return {configured:true,provider:current.config.provider,modelId:current.config.modelId,calls:current.budget.calls,maxCalls:current.config.maxCalls,maxOutputTokens:current.config.maxOutputTokens,timeoutMs:current.config.timeoutMs,maxRetries:0,cost:'unknown',workspace:'temporary-sample'};
   }
   clear(id:unknown){if(!validId(id))throw new Error('INVALID_MODEL_SESSION');if(this.sessions.get(id)?.active)throw new Error('MODEL_SESSION_BUSY');this.sessions.delete(id);return {configured:false};}
-  async create(e:SessionEnvelope,onText:(text:string)=>void,extend?:()=>Promise<SessionExecution>):Promise<SessionExecution>{
+  async create(e:SessionEnvelope,onText:(text:string)=>void,extend?:()=>Promise<SessionExecution|undefined>):Promise<SessionExecution>{
     const current=this.sessions.get(e.conversationId);
     if(!current||this.closed||current.expires<Date.now()){if(current&&!current.active)this.sessions.delete(e.conversationId);throw new Error('MODEL_SESSION_NOT_CONFIGURED');}
     if(current.active)throw new Error('MODEL_SESSION_BUSY');

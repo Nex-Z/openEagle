@@ -1,3 +1,4 @@
+import {acquireDesktopLease} from '../desktop-lease.js';
 import {spawn,type ChildProcess} from 'node:child_process';
 import path from 'node:path';
 import {createHash,randomUUID} from 'node:crypto';
@@ -38,7 +39,8 @@ export class UiaProcessClient {
 }
 export async function createWindowsUiaCapabilities(options:WindowsUiaOptions,signal?:AbortSignal):Promise<{capabilities:Capability[];close():Promise<void>}> {
  if(process.platform!=='win32')throw new UiaError('UIA_WINDOWS_ONLY');
- return createBoundUiaCapabilities(new UiaProcessClient(options.command,options.timeoutMs),options,signal);
+ const client=new UiaProcessClient(options.command,options.timeoutMs);const release=await acquireDesktopLease();
+ try{const session=await createBoundUiaCapabilities(client,options,signal);return {capabilities:session.capabilities,async close(){await session.close();await release();}};}catch(error){await client.close();await release();throw error;}
 }
 /** Injectable transport is only an offline test seam, not evidence of OS UIA. */
 export async function createBoundUiaCapabilities(client:Pick<UiaProcessClient,'request'|'close'>,options:WindowsUiaOptions,signal?:AbortSignal){

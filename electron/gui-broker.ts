@@ -3,7 +3,7 @@ import {join} from 'node:path';
 import {BrowserWindow,ipcMain,screen} from 'electron';
 import {getActiveWindow,getWindows,mouse,screen as nativeScreen,Region} from '@nut-tree-fork/nut-js';
 import {randomUUID,createHash} from 'node:crypto';
-import {mkdtemp,writeFile,mkdir,rmdir} from 'node:fs/promises';
+import {mkdtemp,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {CapabilityTicketStore,type DesktopCapability} from './capability-ticket-store';
 import {performMouseAction,performKeyboardAction} from './input';
@@ -27,7 +27,7 @@ export class GuiBroker {
   private target?:BrowserWindow;
   private targetIdentity:{title:string;nativeHandleHex:string}|undefined;
   private ownsLease=false;
-  private readonly leasePath=join(tmpdir(),'openeagle-gui-system-input.lock');
+  private releaseLease?:()=>Promise<void>;
   private admission=new GuiAdmission();
   private tickets=new CapabilityTicketStore();
   private epoch=0;
@@ -63,7 +63,7 @@ export class GuiBroker {
   async open(requestId:string){
     if(process.platform!=='win32')throw new Error('GUI_WINDOWS_ONLY');
     if(desktopOwner)throw new Error('GUI_DESKTOP_BUSY');desktopOwner=this;
-    try{await mkdir(this.leasePath);this.ownsLease=true;}catch{if(desktopOwner===this)desktopOwner=undefined;throw new Error('GUI_DESKTOP_BUSY');}
+    try{const module=await (new Function('url','return import(url)'))(require('node:url').pathToFileURL(join(__dirname,'../packages/agent-core/dist/src/desktop-lease.js')).href);this.releaseLease=await module.acquireDesktopLease();this.ownsLease=true;}catch{if(desktopOwner===this)desktopOwner=undefined;throw new Error('GUI_DESKTOP_BUSY');}
     this.requestId=requestId;this.epoch=this.tickets.beginAuthorityEpoch();
     this.output=await mkdtemp(join(tmpdir(),'openeagle-gui-evidence-'));this.controller.signal.throwIfAborted();
     const win=this.target=await this.binding.create();
@@ -174,7 +174,7 @@ export class GuiBroker {
         return {...report,evidenceDirectory:this.output};
       } finally {
         ipcMain.removeListener('v2:gui:cancel',this.onCancel);ipcMain.removeListener('v2:gui:approve',this.onApprove);
-        if(this.target&&!this.target.isDestroyed())this.target.destroy();if(this.ownsLease){await rmdir(this.leasePath);this.ownsLease=false;}if(desktopOwner===this)desktopOwner=undefined;this.releasedAt=new Date().toISOString();
+        if(this.target&&!this.target.isDestroyed())this.target.destroy();if(this.ownsLease){await this.releaseLease!();this.ownsLease=false;}if(desktopOwner===this)desktopOwner=undefined;this.releasedAt=new Date().toISOString();
       }
     })();return this.closing;
   }

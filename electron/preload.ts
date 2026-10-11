@@ -315,6 +315,11 @@ contextBridge.exposeInMainWorld("electronAPI", {
 
   fixtureMode, v2Mode, piMode, guiMode,
   piOffline: process.argv.includes("--openeagle-v2-offline"),
+  uiaSession: {
+    status:()=>piMode?ipcRenderer.invoke('v2:uia:status'):Promise.resolve({enabled:false,ready:false,targets:[]}),
+    grant:(payload:unknown)=>piMode?ipcRenderer.invoke('v2:uia:grant',payload):Promise.reject(new Error('UIA_DISABLED')),
+    revoke:(conversationId:string)=>piMode?ipcRenderer.invoke('v2:uia:revoke',{conversationId}):Promise.reject(new Error('UIA_DISABLED')),
+  },
   modelSession: {
     configure: (payload: unknown) => piMode ? ipcRenderer.invoke("v2:model:configure",payload) : Promise.reject(new Error("MODEL_MODE_DISABLED")),
     status: (conversationId: string) => piMode ? ipcRenderer.invoke("v2:model:status",{conversationId}) : Promise.resolve({configured:false}),

@@ -8,12 +8,51 @@ importers:
 
   .:
     dependencies:
+      '@open-eagle/agent-core':
+        specifier: workspace:*
+        version: link:packages/agent-core
       '@nut-tree-fork/nut-js':
         specifier: ^4.2.6
         version: 4.2.6(debug@4.4.3(supports-color@7.2.0))
       '@tanstack/react-virtual':
         specifier: ^3.14.2
         version: 3.14.2(react-dom@18.3.1(react@18.3.1))(react@18.3.1)
+      openai:
+        specifier: 7.19.0
+        version: 7.19.0(@aws-sdk/credential-provider-node@3.972.84)(@smithy/signature-v4@5.7.4)(undici@7.25.0)(ws@8.22.0)
+      '@nut-tree-fork/shared':
+        specifier: 4.2.6
+        version: 4.2.6(debug@4.4.3(supports-color@7.2.0))
+      '@nut-tree-fork/provider-interfaces':
+        specifier: 4.2.6
+        version: 4.2.6(debug@4.4.3(supports-color@7.2.0))
+      '@jimp/plugins':
+        specifier: 0.22.12
+        version: 0.22.12(@jimp/custom@0.22.12)(debug@4.4.3(supports-color@7.2.0))
+      '@jimp/plugin-print':
+        specifier: 0.22.12
+        version: 0.22.12(@jimp/custom@0.22.12)(@jimp/plugin-blit@0.22.12(@jimp/custom@0.22.12))(debug@4.4.3(supports-color@7.2.0))
+      '@jimp/plugin-rotate':
+        specifier: 0.22.12
+        version: 0.22.12(@jimp/custom@0.22.12)(@jimp/plugin-blit@0.22.12(@jimp/custom@0.22.12))(@jimp/plugin-crop@0.22.12(@jimp/custom@0.22.12))(@jimp/plugin-resize@0.22.12(@jimp/custom@0.22.12))
+      '@jimp/plugin-scale':
+        specifier: 0.22.12
+        version: 0.22.12(@jimp/custom@0.22.12)(@jimp/plugin-resize@0.22.12(@jimp/custom@0.22.12))
+      '@jimp/plugin-shadow':
+        specifier: 0.22.12
+        version: 0.22.12(@jimp/custom@0.22.12)(@jimp/plugin-blur@0.22.12(@jimp/custom@0.22.12))(@jimp/plugin-resize@0.22.12(@jimp/custom@0.22.12))
+      '@jimp/plugin-threshold':
+        specifier: 0.22.12
+        version: 0.22.12(@jimp/custom@0.22.12)(@jimp/plugin-color@0.22.12(@jimp/custom@0.22.12))(@jimp/plugin-resize@0.22.12(@jimp/custom@0.22.12))
+      '@jimp/plugin-contain':
+        specifier: 0.22.12
+        version: 0.22.12(@jimp/custom@0.22.12)(@jimp/plugin-blit@0.22.12(@jimp/custom@0.22.12))(@jimp/plugin-resize@0.22.12(@jimp/custom@0.22.12))(@jimp/plugin-scale@0.22.12(@jimp/custom@0.22.12)(@jimp/plugin-resize@0.22.12(@jimp/custom@0.22.12)))
+      '@jimp/plugin-cover':
+        specifier: 0.22.12
+        version: 0.22.12(@jimp/custom@0.22.12)(@jimp/plugin-crop@0.22.12(@jimp/custom@0.22.12))(@jimp/plugin-resize@0.22.12(@jimp/custom@0.22.12))(@jimp/plugin-scale@0.22.12(@jimp/custom@0.22.12)(@jimp/plugin-resize@0.22.12(@jimp/custom@0.22.12)))
+      '@jimp/plugin-flip':
+        specifier: 0.22.12
+        version: 0.22.12(@jimp/custom@0.22.12)(@jimp/plugin-rotate@0.22.12(@jimp/custom@0.22.12)(@jimp/plugin-blit@0.22.12(@jimp/custom@0.22.12))(@jimp/plugin-crop@0.22.12(@jimp/custom@0.22.12))(@jimp/plugin-resize@0.22.12(@jimp/custom@0.22.12)))
       classic-level:
         specifier: ^3.0.0
         version: 3.0.0

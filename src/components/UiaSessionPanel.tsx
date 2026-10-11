@@ -1,0 +1,8 @@
+import {useState} from 'react';
+export function UiaSessionPanel({conversationId,busy}:{conversationId:string;busy:boolean}){
+ const [targets,setTargets]=useState<Array<{id:string;label:string}>>([]);const [target,setTarget]=useState('');const [message,setMessage]=useState('UIA 默认关闭；仅从宿主授权清单选择。');const [pending,setPending]=useState(false);
+ async function refresh(){setPending(true);try{const s=await window.electronAPI!.uiaSession!.status();setTargets(s.ready?s.targets:[]);setTarget('');setMessage(s.message??'UIA 不可用');}catch{setMessage('UIA 通道不可用');}finally{setPending(false);}}
+ async function grant(){setPending(true);try{const r=await window.electronAPI!.uiaSession!.grant({conversationId,targetId:target,mode:'allow-unknown'});setMessage(r.approved?'已授权下一条普通 Pi 任务；每次写入仍需确认。':'未授权。');}catch{setMessage('目标授权失败；没有执行 UIA。');}finally{setPending(false);}}
+ async function stop(){try{await window.electronAPI!.uiaSession!.revoke(conversationId);setMessage('已撤销授权并停止 UIA；正在执行的 provider 结果可能未知，请勿直接重试。');}catch{setMessage('UIA 清理未确认，请勿重试；使用任务取消并检查目标。');}}
+ return <details className="pi-session-panel"><summary>UIA 目标授权（后台未验证）</summary><p>{message}</p><button disabled={busy||pending} onClick={()=>void refresh()}>检查组件与宿主目标</button><select aria-label="UIA 宿主目标" disabled={busy||pending} value={target} onChange={e=>setTarget(e.target.value)}><option value="">选择授权目标</option>{targets.map(t=><option key={t.id} value={t.id}>{t.label}</option>)}</select><button disabled={busy||pending||!target} onClick={()=>void grant()}>确认允许可能改变焦点</button><button onClick={()=>void stop()}>停止 UIA 并撤销授权</button><p>不支持后台限定。不会发送键盘或自动重试；不自动安装 .NET。目标文本会进入任务记录，请勿输入密码。</p></details>;
+}

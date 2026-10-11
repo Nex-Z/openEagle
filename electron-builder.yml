@@ -9,6 +9,8 @@ files:
   - dist-electron/**/*
   - build/**/*
   - package.json
+  - packages/agent-core/dist/**/*
+  - packages/agent-core/package.json
 extraResources:
   - from: backend/
     to: backend/
@@ -18,6 +20,10 @@ extraResources:
       - "!__pycache__"
       - "!.open-eagle"
 win:
+  extraResources:
+    - from: native/windows-uia/publish/framework-dependent/
+      to: windows-uia/
+      filter: ["**/*", "!*.pdb"]
   target: nsis
   icon: build/icon.ico
 mac:

@@ -1,3 +1,4 @@
+import {UiaHost} from './uia-host';
 import { ipcMain, MessageChannelMain, utilityProcess, type BrowserWindow } from 'electron';
 import { randomUUID,createHash } from 'node:crypto';
 import path from 'node:path';
@@ -10,6 +11,12 @@ export function attachFixtureBackend(win: BrowserWindow, options: {mode?:'fixtur
   let stopCurrent: (()=>Promise<void>) | undefined;
   const shutdowns = new Set<Promise<void>>();
   let control: ((kind:string,payload:Record<string,unknown>)=>Promise<unknown>) | undefined;
+  const uia=new UiaHost(win,async conversationId=>control?.('uia:revoke',{conversationId}));
+  if(options.mode==='pi') for(const operation of ['status','grant','revoke'])ipcMain.handle('v2:uia:'+operation,async(event,payload:unknown)=>{
+    if(event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||!control)throw new Error('UIA_CHANNEL_UNAVAILABLE');
+    if(operation==='status')return uia.status();const p=payload as {conversationId?:unknown;targetId?:unknown;mode?:unknown};if(!p||typeof p.conversationId!=='string')throw new Error('UIA_REQUEST_REJECTED');
+    return operation==='revoke'?uia.revoke(p.conversationId):uia.grant(p.conversationId,String(p.targetId),p.mode);
+  });
   if(options.mode==='pi') for(const operation of ['configure','status','clear']) {
     ipcMain.handle(`v2:model:${operation}`,async(event,payload:unknown)=>{
       if(event.sender!==win.webContents||event.senderFrame!==win.webContents.mainFrame||!control) throw new Error('MODEL_CHANNEL_UNAVAILABLE');
@@ -40,7 +47,7 @@ export function attachFixtureBackend(win: BrowserWindow, options: {mode?:'fixtur
       const brokerClosing=gui?.close().then(()=>{},()=>{console.error('GUI cleanup evidence failed');})??Promise.resolve();
       stoppedPromise = new Promise<void>(resolve=>{
         if(exited){resolve();return;}
-        const timer=setTimeout(()=>{console.error('Fixture cleanup timeout; forced utility termination');child.kill();resolve();},3000);
+        const timer=setTimeout(()=>{console.error('Fixture cleanup timeout; forced utility termination');child.kill();resolve();},10000);
         child.once('exit',()=>{clearTimeout(timer);resolve();});
       });
       stoppedPromise=Promise.all([stoppedPromise,brokerClosing]).then(()=>{});
@@ -57,9 +64,10 @@ export function attachFixtureBackend(win: BrowserWindow, options: {mode?:'fixtur
       if(stopped&&(message as {kind?:string;operation?:string}).kind!=='gui:control')return;
       const data=message as {kind?:string;envelope?:unknown;id?:string;ok?:boolean;status?:unknown;operation?:string;requestId?:string;payload?:Record<string,unknown>};
       if((options.mode==='gui'||options.mode==='pi')&&data.kind==='gui:control'){
-        if(stopped&&!['close','cancel'].includes(data.operation??''))return;
+        if(stopped&&!['close','cancel','uia-finish'].includes(data.operation??''))return;
         void (async()=>{
           try{let result:unknown={};const p=data.payload??{};
+            if(data.operation?.startsWith('uia-')){result=data.operation==='uia-claim'?uia.claim(String(p.conversationId),String(p.requestId)):data.operation==='uia-authorize'?await uia.authorize(String(p.requestId),String(p.token),p.args):data.operation==='uia-finish'?uia.finish(String(p.requestId),String(p.token)):(()=>{throw new Error('UIA_CONTROL_REJECTED');})();child.postMessage({kind:'gui:reply',id:data.id,ok:true,result});return;}
             if(data.operation!=='open'&&p.requestId!==guiRequestId)throw new Error('GUI_TASK_MISMATCH');
             if(data.operation==='open'){if(gui)throw new Error('GUI_DESKTOP_BUSY');guiRequestId=String(p.requestId);gui=createGuiFixture(process.env.OPEN_EAGLE_GUI_SMOKE==='1');if(process.env.OPEN_EAGLE_GUI_SMOKE==='1')(globalThis as any).__guiBroker=gui;try{result=await gui.open(guiRequestId);}catch(error){await gui.close();gui=undefined;guiRequestId='';throw error;}}
             else if(data.operation==='authorize'){if(!gui)throw new Error('GUI_NOT_OPEN');result=await gui.authorize(p as any);}
@@ -99,7 +107,7 @@ export function attachFixtureBackend(win: BrowserWindow, options: {mode?:'fixtur
     port1.start();
     win.webContents.postMessage('backend://port',{protocolVersion:1,connectionId},[port2]);
   });
-  win.on('closed',()=>stopCurrent?.());
+  win.on('closed',()=>{uia.close();void stopCurrent?.();});
   win.webContents.on('render-process-gone',()=>stopCurrent?.());
-  return async()=>{await stopCurrent?.();await Promise.allSettled([...shutdowns]);};
+  return async()=>{uia.close();await stopCurrent?.();await Promise.allSettled([...shutdowns]);};
 }

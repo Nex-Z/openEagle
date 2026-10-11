@@ -20,7 +20,7 @@ import { migrateTauriSettings } from "./migrate-tauri-settings";
 
 const isDev = !app.isPackaged;
 const guiMode = isDev && process.env.OPEN_EAGLE_V2_GUI === "1";
-const piMode = isDev && process.env.OPEN_EAGLE_V2_PI === "1";
+const piMode = process.env.OPEN_EAGLE_V2_PI === "1";
 const v2Mode = guiMode || piMode || (isDev && process.env.OPEN_EAGLE_V2_FIXTURE === "1");
 
 // 禁用 GPU 硬件加速，避免部分 Windows 设备上 GPU 进程崩溃

@@ -63,6 +63,7 @@ internal static class Program {
  private static readonly JsonSerializerOptions Json=new(){PropertyNamingPolicy=JsonNamingPolicy.CamelCase,UnmappedMemberHandling=JsonUnmappedMemberHandling.Disallow};
  [MTAThread] private static int Main(string[] args) {
   Console.InputEncoding=new UTF8Encoding(false,true);Console.OutputEncoding=new UTF8Encoding(false);
+  if(args.SequenceEqual(new[]{"--owned-fixture"}))return OwnedFixture.Run();
   if(args.SequenceEqual(new[]{"--health"})){Console.WriteLine(JsonSerializer.Serialize(new {version=1,backend="FlaUI.UIA3",packageVersion="5.0.0",platform="windows",protocol="single-request-stdio"},Json));return 0;}
   if(args.SequenceEqual(new[]{"--self-test"}))return SelfTests.Run();
   string? requestId=null;var mayHaveChanged=false;

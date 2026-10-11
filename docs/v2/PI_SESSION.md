@@ -70,3 +70,8 @@ corepack pnpm@10.7.0 v2:test:ui
 显式选择后台检查后，可单独启动前台专用 fixture 并在窗口内批准；本次任务通过 ModelSessions 的宿主扩展注册同一 desktop_observe/click/type 工具，保持 PiEngine → 统一 runtime → DesktopCapabilityClient → Electron broker → nut-js。普通 Pi 对话仍只注册临时只读工具，不会因先前任务的 GUI 权限获得后续权限。预算默认 2 不变，显式可配置上限调整为 12；离线 GUI 流程需要 8 次假模型调用。
 
 当前已通过假 broker 的 Pi 接线回归，真实 Windows GUI 输入因原生前台 HWND 不匹配及人工批准超时而阻塞，未验收通过。截图仅记录窗口区域 PNG 和摘要，当前文本 Pi 配置不会接收视觉图像块；fixture 规划使用独立语义观察，不代表视觉模型能力。详细证据与限制见 [GUI_WINDOWS.md](./GUI_WINDOWS.md)。
+
+
+## UIA 后续产品接线（2026-10-11）
+
+现已完成共享跨进程桌面 lease、默认关闭的 UI/Pi 宿主目标授权入口，以及 framework-dependent Windows 资源接线和运行时提示；普通 Pi 消息可注册同一 runtime UIA 工具。集中自有窗口验收入口已准备，本轮仅执行 plan 模式，真实 UIA 仍未验收。详见 [UIA_SIDECAR.md](UIA_SIDECAR.md) 后续工程闭环章节。
