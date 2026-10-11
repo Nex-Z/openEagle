@@ -23,6 +23,7 @@ let desktopOwner:GuiBroker|undefined;
 // Selective CapabilityBroker adaptation: same request/result and ticket store, narrower owned-window driver.
 export class GuiBroker {
   private target?:BrowserWindow;
+  private targetIdentity:{title:string;nativeHandleHex:string}|undefined;
   private ownsLease=false;
   private readonly leasePath=join(tmpdir(),'openeagle-gui-system-input.lock');
   private admission=new GuiAdmission();
@@ -49,13 +50,13 @@ export class GuiBroker {
     this.requestId=requestId;this.epoch=this.tickets.beginAuthorityEpoch();
     this.output=await mkdtemp(join(tmpdir(),'openeagle-gui-evidence-'));this.controller.signal.throwIfAborted();
     const win=this.target=await this.binding.create();
-    const title=win.getTitle();
+    const title=win.getTitle();this.targetIdentity={title,nativeHandleHex:win.getNativeWindowHandle().toString('hex')};
     win.on('blur',()=>this.cancel('GUI_FOCUS_LOST'));win.on('closed',()=>this.cancel('GUI_WINDOW_CLOSED'));
     ipcMain.on('v2:gui:cancel',this.onCancel);ipcMain.on('v2:gui:approve',this.onApprove);
     win.setTitle(title);this.controller.signal.throwIfAborted();win.show();await new Promise(resolve=>setTimeout(resolve,180));this.controller.signal.throwIfAborted();
     win.on('move',()=>this.cancel('GUI_WINDOW_MOVED'));win.on('resize',()=>this.cancel('GUI_WINDOW_RESIZED'));win.on('minimize',()=>this.cancel('GUI_WINDOW_MINIMIZED'));win.webContents.on('did-start-navigation',()=>this.cancel('GUI_NAVIGATION'));win.webContents.on('render-process-gone',()=>this.cancel('GUI_RENDERER_GONE'));win.webContents.on('zoom-changed',()=>this.cancel('GUI_ZOOM_CHANGED')); // Initial display is user-requested; never refocus after blur.
     await new Promise<void>((resolve,reject)=>{
-      const finish=(error?:Error)=>{clearTimeout(timer);this.controller.signal.removeEventListener('abort',abort);this.readyResolve=undefined;if(error)reject(error);else resolve();};
+      const finish=(error?:Error)=>{clearTimeout(timer);this.controller.signal.removeEventListener('abort',abort);this.readyResolve=undefined;if(error){this.cancel(error.message);reject(error);}else resolve();};
       const abort=()=>finish(new Error('GUI_CANCELLED'));
       const timer=setTimeout(()=>finish(new Error('GUI_APPROVAL_TIMEOUT')),30000);
       this.readyResolve=()=>finish();this.controller.signal.addEventListener('abort',abort,{once:true});
@@ -140,7 +141,7 @@ export class GuiBroker {
     this.closing=(async()=>{
       try {
         await this.queue;
-        const report={runtimeMetrics:metrics,stopReason:this.stopReason,actuation:'nut-js OS input',capture:'nut-js OS region, target content bounds only',state:await this.binding.inspect(),stage:this.stage,images:this.images,...this.binding.summary()};
+        const report={runtimeMetrics:metrics,target:this.targetIdentity,stopReason:this.stopReason,actuation:'nut-js OS input',capture:'nut-js OS region, target content bounds only',state:await this.binding.inspect(),stage:this.stage,images:this.images,...this.binding.summary()};
         if(this.output)await writeFile(join(this.output,'oracle.json'),JSON.stringify(report,null,2));
         return {...report,evidenceDirectory:this.output};
       } finally {
