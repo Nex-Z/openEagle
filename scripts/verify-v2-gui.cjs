@@ -5,9 +5,10 @@ const root=path.resolve(__dirname,'..');const os=require('node:os');
 const {_electron:electron}=createRequire(path.join(root,'packages/agent-core/package.json'))('playwright');
 const expected='OpenEagle native input';
 async function scenario(name){
+ if(process.env.GUI_MANUAL_APPROVAL!=='1'&&process.env.GUI_TEST_AUTHORIZATION!=='conversation')throw new Error('请明确设置 GUI_TEST_AUTHORIZATION=conversation 以记录本次用户对话测试授权');
  const pi=name==='pi';
  const app=await electron.launch({executablePath:process.env.OPENEAGLE_ELECTRON||require('electron'),args:[root],cwd:root,
-  env:{SystemRoot:process.env.SystemRoot,TEMP:process.env.TEMP,TMP:process.env.TMP,PATH:process.env.PATH,...(pi?{OPEN_EAGLE_V2_PI:'1',OPEN_EAGLE_V2_PI_TEST:'1'}:{OPEN_EAGLE_V2_GUI:'1'}),OPEN_EAGLE_GUI_SMOKE:'1',OPEN_EAGLE_GUI_MANUAL:process.env.GUI_MANUAL_APPROVAL||'',OPENEAGLE_FIXTURE_HEADLESS:'1'},timeout:60000});
+  env:{SystemRoot:process.env.SystemRoot,TEMP:process.env.TEMP,TMP:process.env.TMP,PATH:process.env.PATH,...(pi?{OPEN_EAGLE_V2_PI:'1',OPEN_EAGLE_V2_PI_TEST:'1'}:{OPEN_EAGLE_V2_GUI:'1'}),OPEN_EAGLE_GUI_SMOKE:'1',OPEN_EAGLE_GUI_TEST_AUTHORIZATION:process.env.GUI_TEST_AUTHORIZATION||'',OPEN_EAGLE_GUI_INITIAL_ACTIVATION:process.env.GUI_INITIAL_ACTIVATION||'',OPEN_EAGLE_GUI_MANUAL:process.env.GUI_MANUAL_APPROVAL||'',OPENEAGLE_FIXTURE_HEADLESS:'1'},timeout:60000});
 
  let profile;const errors=[];const started=performance.now();
  try{
@@ -45,7 +46,7 @@ async function scenario(name){
   else{assert.notEqual(result.payload.status,'completed');assert.equal(stats?.exact,false);assert.equal(stats?.state.saved,'');if(name==='cancel')assert.equal(stats.state.value,expected.slice(0,5));else assert.equal(stats.state.value,'');}
   if(pi){assert.equal(stats.calls,8);assert.equal(stats.planning,'fake-model');assert.equal(stats.steps.length,7);}
   assert.ok(stats.evidenceDirectory);const oracle=JSON.parse(fs.readFileSync(path.join(stats.evidenceDirectory,'oracle.json'),'utf8'));assert.equal(oracle.exact,stats.exact);
-  assert.deepEqual(errors,[]);console.log(JSON.stringify({scenario:name,status:result.payload.status,exact:stats.exact,evidenceDirectory:stats.evidenceDirectory,state:stats.state,steps:stats.steps??stats.runtimeMetrics.steps,planning:stats.planning??'scripted',modelCalls:stats.calls??0}));
+  assert.deepEqual(errors,[]);console.log(JSON.stringify({scenario:name,status:result.payload.status,exact:stats.exact,evidenceDirectory:stats.evidenceDirectory,state:stats.state,steps:stats.steps??stats.runtimeMetrics.steps,planning:stats.planning??'scripted',modelCalls:stats.calls??0,approvalAudit:stats.approvalAudit,activationAttempts:stats.activationAttempts}));
  }catch(error){console.error(JSON.stringify({scenario:name,status:'failed',durationMs:performance.now()-started,error:String(error),osInputVerified:false}));throw error;}finally{try{await app.evaluate(()=>{for(const w of globalThis.__guiExtra??[])if(!w.isDestroyed())w.destroy();});}finally{await app.close();if(profile&&path.dirname(profile).toLowerCase()===os.tmpdir().toLowerCase()&&path.basename(profile).startsWith('openeagle-v2-app-'))fs.rmSync(profile,{recursive:true,force:true});}}
 
 }

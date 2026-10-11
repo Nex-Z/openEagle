@@ -1,12 +1,12 @@
 import {join} from 'node:path';
 import {BrowserWindow,ipcMain,screen} from 'electron';
-import {getActiveWindow,mouse,screen as nativeScreen,Region} from '@nut-tree-fork/nut-js';
+import {getActiveWindow,getWindows,mouse,screen as nativeScreen,Region} from '@nut-tree-fork/nut-js';
 import {randomUUID,createHash} from 'node:crypto';
 import {mkdtemp,writeFile,mkdir,rmdir} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {CapabilityTicketStore,type DesktopCapability} from './capability-ticket-store';
 import {performMouseAction,performKeyboardAction} from './input';
-import {GuiAdmission} from './gui-policy';
+import {GuiAdmission,GuiConsent} from './gui-policy';
 import {imageToPngBuffer} from './screenshot';
 export interface GuiBinding {
   create():Promise<BrowserWindow>;
@@ -32,7 +32,11 @@ export class GuiBroker {
   private requestId='';
   private controller=new AbortController();
   private queue:Promise<unknown>=Promise.resolve();
-  private consent=false;
+  private readonly consent:GuiConsent;
+  private readonly approvals:Record<string,unknown>[]=[];
+  private activationAttempts=0;
+  private nativeFocusCalls=0;
+  private authorizationSource:string|undefined;
   private stage=0;
   private stopReason='';
   private closing?:Promise<Record<string,unknown>>;
@@ -40,9 +44,9 @@ export class GuiBroker {
   private output='';
   private images:string[]=[];
   private readyResolve?:()=>void;
-  private onApprove=(event:Electron.IpcMainEvent)=>{if(event.sender===this.target?.webContents&&event.senderFrame===this.target.webContents.mainFrame){this.consent=true;this.readyResolve?.();}};
+  private onApprove=(event:Electron.IpcMainEvent)=>{if(!this.controller.signal.aborted&&event.sender===this.target?.webContents&&event.senderFrame===this.target.webContents.mainFrame){this.consent.grant('owned-window-ui-ipc');this.readyResolve?.();}};
   private onCancel=(event:Electron.IpcMainEvent)=>{if(event.sender===this.target?.webContents)this.cancel();};
-  constructor(private readonly binding:GuiBinding,private readonly smoke=false){}
+  constructor(private readonly binding:GuiBinding,private readonly smoke=false){this.consent=new GuiConsent(smoke);}
   async open(requestId:string){
     if(process.platform!=='win32')throw new Error('GUI_WINDOWS_ONLY');
     if(desktopOwner)throw new Error('GUI_DESKTOP_BUSY');desktopOwner=this;
@@ -60,8 +64,17 @@ export class GuiBroker {
       const abort=()=>finish(new Error('GUI_CANCELLED'));
       const timer=setTimeout(()=>finish(new Error('GUI_APPROVAL_TIMEOUT')),30000);
       this.readyResolve=()=>finish();this.controller.signal.addEventListener('abort',abort,{once:true});
-      if(this.controller.signal.aborted){abort();return;}if((this.smoke&&process.env.OPEN_EAGLE_GUI_MANUAL!=='1')||this.consent){this.consent=true;finish();}
+      if(this.controller.signal.aborted){abort();return;}if(this.smoke&&process.env.OPEN_EAGLE_GUI_MANUAL!=='1'&&process.env.OPEN_EAGLE_GUI_TEST_AUTHORIZATION==='conversation'){this.consent.grant('conversation-fixture-test');finish();}else if(this.consent.approved)finish();
     });
+    this.authorizationSource=this.consent.source;
+    if(this.smoke&&this.consent.source==='conversation-fixture-test'&&process.env.OPEN_EAGLE_GUI_INITIAL_ACTIVATION==='1'){
+      this.controller.signal.throwIfAborted();this.activationAttempts++;
+      const bytes=win.getNativeWindowHandle();const expected=bytes.length===8?Number(bytes.readBigUInt64LE()):bytes.readUInt32LE();
+      const native=(await getWindows()).find(w=>(w as unknown as {windowHandle?:number}).windowHandle===expected);
+      if(!native)throw this.stopError('GUI_INITIAL_TARGET_UNAVAILABLE');
+      this.nativeFocusCalls++;if(!await native.focus())throw this.stopError('GUI_INITIAL_ACTIVATION_REJECTED');
+      await new Promise(resolve=>setTimeout(resolve,100));this.controller.signal.throwIfAborted();
+    }
     await this.guard();return {target:title,evidenceDirectory:this.output};
   }
   private async guard(checkPointer=true){
@@ -75,15 +88,15 @@ export class GuiBroker {
     if(checkPointer&&this.pointer){const position=await mouse.getPosition();this.controller.signal.throwIfAborted();if(position.x!==this.pointer.x||position.y!==this.pointer.y)throw this.stopError('GUI_POINTER_TAKEOVER');}
   }
   private stopError(code:string){this.cancel(code);return new Error(code);}
-  cancel(reason='GUI_CANCELLED'){if(!this.stopReason)this.stopReason=reason;this.admission.stop();this.controller.abort();this.tickets.revokeAuthorityEpoch(this.epoch);this.readyResolve=undefined;}
+  cancel(reason='GUI_CANCELLED'){if(!this.stopReason)this.stopReason=reason;this.admission.stop();this.consent.revoke();this.controller.abort();this.tickets.revokeAuthorityEpoch(this.epoch);this.readyResolve=undefined;}
   private async inspect(){await this.guard();return {bounds:this.target!.getContentBounds(),state:await this.binding.inspect()};}
   async authorize(approval:Approval){
     if(this.smoke)await (globalThis as any).__guiHooks?.authorize?.(this,approval,this.stage);
-    await this.guard();if(!this.consent)throw new Error('GUI_CONFIRMATION_REQUIRED');
+    await this.guard();if(!this.consent.approved)throw new Error('GUI_CONFIRMATION_REQUIRED');
     const p=approval.args;await this.validate(p);
     if(!await this.binding.approve(approval.capability,p,this.stage))throw new Error('GUI_PLAN_NOT_APPROVED');
     const cap:DesktopCapability=approval.capability==='desktop_type'?'desktop.keyboard':'desktop.mouse';
-    const ticket=randomUUID();if(!this.tickets.grant(ticket,this.requestId,cap,p,this.epoch,2500))throw new Error('GUI_TICKET_REJECTED');return {ticket};
+    const ticket=randomUUID();if(!this.tickets.grant(ticket,this.requestId,cap,p,this.epoch,2500))throw new Error('GUI_TICKET_REJECTED');this.approvals.push({source:this.consent.source,requestId:this.requestId,target:this.targetIdentity?.title,capability:cap,argsSha256:createHash('sha256').update(JSON.stringify(p)).digest('hex')});return {ticket};
   }
   private async validate(payload:Record<string,unknown>){
     if(payload.target!==this.target?.getTitle())throw new Error('GUI_TARGET_MISMATCH');
@@ -141,7 +154,7 @@ export class GuiBroker {
     this.closing=(async()=>{
       try {
         await this.queue;
-        const report={runtimeMetrics:metrics,target:this.targetIdentity,stopReason:this.stopReason,actuation:'nut-js OS input',capture:'nut-js OS region, target content bounds only',state:await this.binding.inspect(),stage:this.stage,images:this.images,...this.binding.summary()};
+        const report={runtimeMetrics:metrics,target:this.targetIdentity,approvalAudit:this.approvals,activationAttempts:this.activationAttempts,nativeFocusCalls:this.nativeFocusCalls,authorizationSource:this.authorizationSource,stopReason:this.stopReason,actuation:'nut-js OS input',capture:'nut-js OS region, target content bounds only',state:await this.binding.inspect(),stage:this.stage,images:this.images,...this.binding.summary()};
         if(this.output)await writeFile(join(this.output,'oracle.json'),JSON.stringify(report,null,2));
         return {...report,evidenceDirectory:this.output};
       } finally {

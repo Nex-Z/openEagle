@@ -26,7 +26,7 @@ UI 先显示后台检查，再单独启动专用前台窗口；正常路径还�
 | 验证 | 结果 | 能证明什么 |
 |---|---|---|
 | Windows 完整核心测试 | 76 项：71 passed、0 failed、5 Linux-only skipped | 真实 Chrome loopback、files、CLI 与核心/Pi 回归；含 2 个 GUI 接线单元测试 |
-| GUI admission/ticket 策略 | 4/4 passed | 重放、停止、过期、状态变化、参数/请求/epoch 绑定、拒绝与一次性票据 |
+| GUI admission/ticket 策略 | 5/5 passed | 重放、停止、过期、状态变化、参数/请求/epoch 绑定、拒绝与一次性票据 |
 | 隐藏 Electron Pi UI | 通过 | 既有模型配置、隔离、假模型工具、预算、清理；不证明 OS GUI 输入 |
 | 核心/React/Electron 类型检查 | 通过 | 编译契约 |
 | Vite 构建、Python compileall | 通过 | 构建/语法 |
@@ -34,7 +34,7 @@ UI 先显示后台检查，再单独启动专用前台窗口；正常路径还�
 | 真实 GUI 诊断第 2 轮 | 同样 HWND 不匹配，输入前停止 | 未通过放宽检查或抢焦点补救 |
 | 真实 GUI 等待人工批准轮 | 30 秒 GUI_APPROVAL_TIMEOUT，随后关闭 | 本次没有获得窗口内批准，没有输入 |
 
-两次自动轮次加一次人工等待均未完成；不是“成功 3 次”。真实成功任务 0，成功输入步骤 0，成功 OS 截图证据 0；成功步骤耗时、首次准确率、最终准确率均 **N/A（未验证）**，不能填成 100%。没有原生动作自动重试。实现过程发生两次编译问题修复（编辑换行/截断、Pi transcript 类型）和一次新增票据测试预期修正；不声称首次实现准确。
+两次自动轮次、一次人工等待及下述新授权单次激活均未完成；不是成功次数。真实成功任务 0，成功输入步骤 0，成功 OS 截图证据 0；成功步骤耗时、首次准确率、最终准确率均 **N/A（未验证）**，不能填成 100%。没有原生动作自动重试。实现过程发生两次编译问题修复（编辑换行/截断、Pi transcript 类型）和一次新增票据测试预期修正；不声称首次实现准确。
 
 成功后脚本会记录每步 durationMs、firstAttempt、retries=0、工具状态、独立 oracle、受信任 click/input 计数和 PNG SHA256。fake Pi 流程预计 8 次假模型调用、7 次工具调用；这些计数已经由 fake broker 单元测试验证，**不是成功的 OS 执行数据，也不是 LLM 准确率**。脚本规划、假模型、真实模型须分开标记。
 
@@ -50,3 +50,12 @@ UI 先显示后台检查，再单独启动专用前台窗口；正常路径还�
 - GUI 策略：corepack pnpm@10.7.0 v2:test:gui-policy。
 
 此轮没有安装 VM、新系统用户、新依赖或管理员权限，没有操作日常软件、用户文件或 browser profile。测试窗口由 finally/close 销毁；任务 workspace 清理，证据目录单独保留。本轮未使用全局进程名终止或终止 WSL。前两轮使用宿主受限测试授权，已通过产品批准门；诊断轮 Electron isFocused=true，目标 HWND=4850774、nut-js 系统前台 HWND=461958。无法从现有证据断定锁屏，只能确认 Windows 前台身份不匹配；第三轮才是人工批准超时。此前完整随机标题未记录，下一次一次性入口会打印精确标题。下一次真实验收需先确认用户允许的短暂前台时段。产品 fixture 批准按钮不是额外政策：受限宿主测试授权源可以反映这份明确授权，但不得伪称人工点击；一次性手动入口是可选的主动聚焦办法。若桌面实际锁定或不可交互才需用户解锁/切回可交互会话，当前证据不足以认定该状态。后续仅可在获准时段单次激活自有窗口，并继续严格原生焦点检查，不能绕过 OS/UAC 或反复抢焦点。
+
+
+## 用户确认前台时段后的单次尝试
+
+用户表示不在电脑前后，依据既有测试授权，使用独立 conversation-fixture-test 来源，并设置 GUI_TEST_AUTHORIZATION=conversation、GUI_INITIAL_ACTIVATION=1，只尝试一次自有目标激活。生产 UI 来源为 owned-window-ui-ipc，两者分别测试；生产门拒绝测试来源，取消后不能重新批准。正常生产流程未放宽，也未伪造批准按钮点击。
+
+本轮约 6104.49ms 后返回 GUI_INITIAL_ACTIVATION_REJECTED，未进行截图或输入，不再重试。确切窗口标题为 OpenEagle GUI 29699772-feac-413c-ad74-e5d17636018a，现已关闭。oracle 位于本机临时目录 openeagle-gui-evidence-Qhj01t/oracle.json，activationAttempts=1、stage=0、images=[]、trustedClicks=0、trustedInputs=0、approved=false、exact=false。此版本失败码合并了“枚举未找到目标”和“focus 返回 false”，不能据此断定锁屏、OS 权限拒绝或实际调用过 focus。后续诊断代码已将 GUI_INITIAL_TARGET_UNAVAILABLE 分开，并记录 nativeFocusCalls 与 authorizationSource；本轮没有再次运行 native 来补齐该细分证据。
+
+这是技术激活路径尚未验证成功，不是要求额外人工批准的政策。下一步可由用户回到可交互桌面后主动聚焦一次性入口打印的专用窗口；若实际锁屏才由用户解锁。也可先只读诊断窗口枚举/会话归属，不操作其他窗口，不绕 UAC，不重复强抢焦点。成功 OS 截图/输入证据仍为 0，后续交互矩阵和 Pi→OS 端到端仍未通过。
