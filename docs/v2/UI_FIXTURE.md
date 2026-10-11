@@ -45,3 +45,19 @@ This fixture UI was published at 8b13077a233511cb4ed73ea8568fbeab4d739c14; both 
 窗口已经关闭但验收器未报告终态：离线复现确认，未调用原生聚焦的报告含 undefined 字段，被未改动的 preload 严格 JSON 校验拒绝。报告改用 null，回归直接验证真实 broker.close 的输出；验收器监测端口 error/close，独立监测宿主队列结束、窗口销毁且租约释放后的释放标记，输出“可恢复鼠键”，释放后缺终态最多再等 3 秒。5 分钟仅供手动批准交接，不适用于释放后的等待。
 
 离线 GUI 策略回归 10/10 通过；本次修复后未再次打开 GUI，真实完整链路、其他真实 GUI 场景及 fake-model→真实 GUI 完整验收仍待用户方便时明确确认下一轮。CI 不运行交互 GUI。
+
+## 2026-10-11 第二轮手动 OS 验收与文字输入调查
+
+原始证据：[round2 oracle](evidence/windows-gui-manual-2026-10-11-round2/oracle.json)，同目录两张 OS 截图及 SHA-256。用户在精确自有窗口批准，自动聚焦 0、重试 0。63 次指针检查全部差值 0；双屏、目标屏幕缩放 1.5、物理点 (1811,1113)。本轮没有 GUI_POINTER_TAKEOVER，不能反推上轮原因。
+
+observe/click/observe/type 为 49.51/88.15/27.54/236.51ms，前三步首次成功，type 为 unverified。最终 Open Eaglenativeinput，不等于 OpenEagle native input，trustedClicks=1、trustedInputs=22、saved 空；GUI_INPUT_UNVERIFIED 停止，保存未执行。脚本总时长约 32.99 秒含人工等待。06:13:18.720Z 宿主已释放输入，终态正常到达，窗口/进程/租约/服务清理；反馈修复本轮有效。
+
+调查边界：旧 oracle 仅有最终值与事件计数，未记录原始 keydown/beforeinput/input/composition 及选区，因此不能恢复当时按键和输入法状态，也不能声称已证实现场根因。焦点保持 entry、HWND 检查通过；这不能排除输入法处理。
+
+已安装 nut-js 4.2.6 的字符串分支按字符 await provider.type；provider 同步调用 libnut.typeString 后 resolve。对同版 Windows 原生 [keypress.c](https://github.com/ZachJW34/libnut-core/blob/v2.7.5/src/win32/keypress.c) 和 [N-API](https://github.com/ZachJW34/libnut-core/blob/v2.7.5/src/main.cc) 的核对表明它走键码/扫描码，而非 Unicode 文本注入，返回不等待控件接收；UTF-8 解码后转 char 的路径也不足以支持通用多字节文字。现有 ASCII 限制继续保留；多字节、孤立代理项和控制字符在任何输入前拒绝，不修改 native 包、不切换输入法、不用剪贴板。
+
+确定性离线测试验证真实 input 适配器和已安装 nut-js 的空格传递顺序正确，并未复现现场变化。因此本次是已证实的“缺少控件接收确认”缺口修复，不冒充现场错字根因已经定位：每字符发出后，宿主提供的 textReceipt 必须确认精确前缀、可信 input 数量、输入框焦点、选区及非组合状态；每次等待继续核对原生焦点、指针和取消，最多 500ms，失败停止且不发后续字符。缺少宿主 receipt 的文字能力拒绝执行。原生 driver 和旧非 GUI 路径保留。
+
+仅自有 fixture 新增有界原始按键/输入/组合事件审计，记录时间、key/code/data、修饰键、选区和目标值；broker 记录逐字符调用和接收时间。审计事件不加入观察指纹，避免异步 keyup 日志使已批准目标无意义失效。无全局键盘钩子，不收集其他应用输入。
+
+离线 GUI 回归 15/15，涵盖首尾/连续空格、多字节明确拒绝、异步次序、接收超时不继续输入、等待中取消、旧延迟设置恢复及终态释放。本轮代码修复后未再打开 GUI；新接收确认能否解决现场错字仍需未来明确授权的实测，完整 GUI 与 Pi→OS 验收仍未通过。

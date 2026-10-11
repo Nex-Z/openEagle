@@ -1,0 +1,20 @@
+{
+  "sha256": {
+    "oracle.json": "a4907332fdbc64a5e0781c336e5e2e68c909ccb1186bae35a35f4e067bdd19f9",
+    "window-0.png": "e8be7b7613486d022b19678e97ced99fb00d123a23428d0acca329321e91def1",
+    "window-1.png": "403e697ad90400bce757a39f13482e0e4c8612584b6b4b098281e70664ea948b"
+  },
+  "planning": "scripted",
+  "modelCalls": 0,
+  "complete": false,
+  "attempts": 1,
+  "retries": 0,
+  "releasedAt": "2026-10-11T06:13:18.720Z",
+  "scriptDurationMs": 32990.3068,
+  "pointerChecks": 63,
+  "nonzeroDeltas": 0,
+  "stopReason": "GUI_INPUT_UNVERIFIED",
+  "nativeFocusCalls": 0,
+  "rawKeyboardEvents": "not collected in this run; cannot reconstruct",
+  "screenshots": "target content only; both before typing"
+}

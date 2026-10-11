@@ -6,9 +6,10 @@ export const guiTargetHtml=`<!doctype html><meta charset="utf-8"><title>OpenEagl
 <small>允许一次：点击输入框 → 输入 OpenEagle native input → 点击保存。会占用全局鼠标和键盘。失焦、指针被移走或取消会停止，不自动恢复；无法识别所有人工输入。</small>
 <button id="stop" onclick="window.guiFixture.cancel()">紧急停止 / Esc</button><button id="approve">批准本次固定流程</button><input id="entry" aria-label="验收文本" autocomplete="off" spellcheck="false" placeholder="等待真实键盘输入"><button id="save">保存样本</button><div id="result">尚未保存</div>
 <script>
-const state={value:'',saved:'',clicks:0,inputs:0,trustedClicks:0,trustedInputs:0,approved:false};
+const state={value:'',saved:'',clicks:0,inputs:0,trustedClicks:0,trustedInputs:0,approved:false,composing:false,events:[]};
 const entry=document.querySelector('#entry'),save=document.querySelector('#save');
-function report(){window.guiFixture.report({...state,focused:document.activeElement.id});}
+function report(){window.guiFixture.report({...state,focused:document.activeElement.id,selectionStart:entry.selectionStart,selectionEnd:entry.selectionEnd});}
+for(const kind of ['keydown','keyup','beforeinput','input','compositionstart','compositionupdate','compositionend'])entry.addEventListener(kind,e=>{if(kind==='compositionstart')state.composing=true;if(kind==='compositionend')state.composing=false;if(state.events.length<512)state.events.push({type:kind,at:performance.now(),trusted:e.isTrusted,focused:document.activeElement.id,shiftKey:e.shiftKey??false,ctrlKey:e.ctrlKey??false,altKey:e.altKey??false,metaKey:e.metaKey??false,key:e.key??null,code:e.code??null,data:e.data??null,inputType:e.inputType??null,isComposing:e.isComposing??false,value:entry.value,selectionStart:entry.selectionStart,selectionEnd:entry.selectionEnd});report();});
 document.querySelector('#approve').onclick=()=>{state.approved=true;window.guiFixture.approve();report();};
 entry.addEventListener('input',e=>{state.value=entry.value;state.inputs++;if(e.isTrusted)state.trustedInputs++;report();});
 entry.addEventListener('click',e=>{state.clicks++;if(e.isTrusted)state.trustedClicks++;report();});

@@ -1,3 +1,4 @@
+import {waitForTextReceipt} from './guarded-text';
 import {join} from 'node:path';
 import {BrowserWindow,ipcMain,screen} from 'electron';
 import {getActiveWindow,getWindows,mouse,screen as nativeScreen,Region} from '@nut-tree-fork/nut-js';
@@ -14,6 +15,7 @@ export interface GuiBinding {
   approve(capability:string,args:Record<string,unknown>,stage:number):Promise<boolean>;
   verify(capability:string,args:Record<string,unknown>,stage:number):Promise<boolean>;
   summary():Record<string,unknown>;
+  textReceipt?(prefix:string):Promise<boolean>;
 }
 
 
@@ -44,6 +46,7 @@ export class GuiBroker {
   private stopReason='';
   private closing?:Promise<Record<string,unknown>>;
   private pointer?:{x:number;y:number};
+  private readonly keyboardAudit:Record<string,unknown>[]=[];
   private readonly pointerAudit:Record<string,unknown>[]=[];
   private releasedAt:string|null=null;
   private recordPointer(expected:{x:number;y:number},actual:{x:number;y:number},phase:string){
@@ -148,8 +151,9 @@ export class GuiBroker {
           });
         }else{
           if(typeof r.payload.text!=='string')throw new Error('GUI_TEXT_REQUIRED');
+          if(!this.binding.textReceipt)throw new Error('GUI_TEXT_RECEIPT_UNAVAILABLE');
           inputStarted=true;
-          await performKeyboardAction({action:'type_text',text:r.payload.text},async phase=>{if(this.smoke)await (globalThis as any).__guiHooks?.input?.(this,phase,this.stage);await this.guard(true,`keyboard:${phase}`);});
+          await performKeyboardAction({action:'type_text',text:r.payload.text},async (phase,progress)=>{this.keyboardAudit.push({at:new Date().toISOString(),monotonicMs:performance.now(),phase,index:progress.index,codePoint:progress.char.codePointAt(0)});if(this.smoke)await (globalThis as any).__guiHooks?.input?.(this,phase,this.stage);await this.guard(true,`keyboard:${phase}`);},async progress=>{try{await waitForTextReceipt(()=>this.binding.textReceipt!(progress.prefix),()=>this.guard(true,'keyboard:receipt'));this.keyboardAudit.push({at:new Date().toISOString(),monotonicMs:performance.now(),phase:'received',index:progress.index});}catch(error){throw this.stopError(error instanceof Error?error.message:'GUI_TEXT_RECEIPT_FAILED');}});
 
         }
         await this.guard();await new Promise(resolve=>setTimeout(resolve,70));await this.guard();this.stage++;
@@ -165,7 +169,7 @@ export class GuiBroker {
     this.closing=(async()=>{
       try {
         await this.queue;
-        const report={runtimeMetrics:metrics,target:this.targetIdentity??null,approvalAudit:this.approvals,activationAttempts:this.activationAttempts,nativeFocusCalls:this.nativeFocusCalls,nativeFocusReturnType:this.nativeFocusReturnType??null,nativeFocusReturnValue:this.nativeFocusReturnValue,lastForegroundHandle:this.lastForegroundHandle??null,authorizationSource:this.authorizationSource??null,stopReason:this.stopReason,pointerAudit:this.pointerAudit,actuation:'nut-js OS input',capture:'nut-js OS region, target content bounds only',state:await this.binding.inspect(),stage:this.stage,images:this.images,...this.binding.summary()};
+        const report={runtimeMetrics:metrics,target:this.targetIdentity??null,approvalAudit:this.approvals,activationAttempts:this.activationAttempts,nativeFocusCalls:this.nativeFocusCalls,nativeFocusReturnType:this.nativeFocusReturnType??null,nativeFocusReturnValue:this.nativeFocusReturnValue,lastForegroundHandle:this.lastForegroundHandle??null,authorizationSource:this.authorizationSource??null,stopReason:this.stopReason,pointerAudit:this.pointerAudit,keyboardAudit:this.keyboardAudit,actuation:'nut-js OS input',capture:'nut-js OS region, target content bounds only',state:await this.binding.inspect(),stage:this.stage,images:this.images,...this.binding.summary()};
         if(this.output)await writeFile(join(this.output,'oracle.json'),JSON.stringify(report,null,2));
         return {...report,evidenceDirectory:this.output};
       } finally {

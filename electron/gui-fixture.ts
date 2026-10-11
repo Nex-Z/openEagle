@@ -18,7 +18,7 @@ export function createGuiFixture(smoke=false):GuiBroker {
       controls=await win.webContents.executeJavaScript("Object.fromEntries(['entry','save'].map(id=>{const r=document.getElementById(id).getBoundingClientRect();return [id,{x:r.x+r.width/2,y:r.y+r.height/2}];}))");
       return win;
     },
-    async inspect(){return {...state,controls};},
+    async inspect(){const {events,...observed}=state;return {...observed,controls};},
     async approve(capability,args,stage){
       if(stage>2)return false;
       if(stage===1)return capability==='desktop_type'&&args.text===GUI_TEXT&&state.focused==='entry';
@@ -27,7 +27,8 @@ export function createGuiFixture(smoke=false):GuiBroker {
     async verify(capability,args,stage){
       return capability==='desktop.keyboard'?state.value===args.text&&state.trustedInputs===GUI_TEXT.length:stage===1?state.focused==='entry'&&state.trustedClicks===1:state.saved===GUI_TEXT&&state.trustedClicks===2;
     },
-    summary(){return {exact:state.saved===GUI_TEXT&&state.trustedClicks===2&&state.trustedInputs===GUI_TEXT.length};},
+    async textReceipt(prefix){return state.value===prefix&&state.trustedInputs===prefix.length&&state.focused==='entry'&&state.composing===false&&state.selectionStart===prefix.length&&state.selectionEnd===prefix.length;},
+    summary(){return {eventAudit:state.events??[],exact:state.saved===GUI_TEXT&&state.trustedClicks===2&&state.trustedInputs===GUI_TEXT.length};},
   };
   return new GuiBroker(binding,smoke);
 }

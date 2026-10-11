@@ -1,3 +1,4 @@
+import {typeGuardedText,type TextProgress} from './guarded-text';
 import { mouse, keyboard, Button, Key, Point } from "@nut-tree-fork/nut-js";
 
 export interface ActionPayload {
@@ -118,12 +119,12 @@ export async function performMouseAction(payload: ActionPayload, guard?: (phase:
   return { ok: true, action };
 }
 
-export async function performKeyboardAction(payload: ActionPayload, guard?: (phase: 'before'|'after') => Promise<void>): Promise<Record<string, unknown>> {
+export async function performKeyboardAction(payload: ActionPayload, guard?: (phase: 'before'|'after',progress:TextProgress) => Promise<void>,receipt?: (progress:TextProgress)=>Promise<void>): Promise<Record<string, unknown>> {
   const { action, text, keys } = payload;
   if(guard){
     if(action!=='type_text'||!text||text.length>80||!/^[ -~]+$/.test(text))throw new Error('GUI_NARROW_INPUT_ONLY');
     const delay=keyboard.config.autoDelayMs;keyboard.config.autoDelayMs=0;
-    try{for(const char of text){await guard('before');await keyboard.type(char);await guard('after');}return {ok:true,action};}finally{keyboard.config.autoDelayMs=delay;}
+    try{await typeGuardedText(text,char=>keyboard.type(char),guard,receipt);return {ok:true,action};}finally{keyboard.config.autoDelayMs=delay;}
   }
 
   switch (action) {
