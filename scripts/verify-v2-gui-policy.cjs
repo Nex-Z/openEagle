@@ -10,3 +10,24 @@ test('production UI approval and conversation test approval are distinct; produc
 
 test('native activation return values never substitute for independent focus verification',async()=>{for(const returned of [undefined,false,true]){let activations=0,checks=0;const result=await activateGuiWindowOnce(async()=>{activations++;return returned;},async()=>{checks++;},new AbortController().signal);assert.equal(result,typeof returned);assert.equal(activations,1);assert.equal(checks,1);}});
 test('activation identity failure and cancellation never trigger another activation',async()=>{let attempts=0;await assert.rejects(activateGuiWindowOnce(async()=>{attempts++;},async()=>{throw new Error('GUI_NATIVE_HANDLE_MISMATCH');},new AbortController().signal),/HANDLE_MISMATCH/);assert.equal(attempts,1);const c=new AbortController();c.abort();await assert.rejects(activateGuiWindowOnce(async()=>{attempts++;},async()=>{},c.signal));assert.equal(attempts,1);});
+
+const {waitForGuiTerminal}=require('./gui-terminal-wait.cjs');
+test('GUI terminal waiter reports release once and fails missing terminal within three seconds',async()=>{let time=0,releases=0;await assert.rejects(waitForGuiTerminal({read:async()=>({release:{releasedAt:'now'},terminal:false}),onRelease:()=>releases++,timeoutMs:330000,now:()=>time,sleep:async ms=>{time+=ms;}}),/MISSING_AFTER_RELEASE/);assert.equal(time,3000);assert.equal(releases,1);});
+test('GUI terminal waiter fails transport errors immediately and accepts terminal',async()=>{let reads=0;await assert.rejects(waitForGuiTerminal({read:async()=>{reads++;return {failure:{kind:'close'}};},onRelease:()=>{},timeoutMs:330000}),/TRANSPORT_FAILED/);assert.equal(reads,1);await waitForGuiTerminal({read:async()=>({terminal:true}),onRelease:()=>{},timeoutMs:100});});
+test('manual broker report passes the unchanged strict preload validator without native activation',async()=>{
+ const fs=require('node:fs'),vm=require('node:vm'),path=require('node:path');
+ const brokerFile=path.resolve(__dirname,'../dist-electron/gui-broker.js');
+ const originalRequire=require('node:module').createRequire(brokerFile);
+ const context={exports:{},AbortController,performance,require:id=>id==='electron'?{ipcMain:{removeListener(){}}}:id==='@nut-tree-fork/nut-js'||id==='./input'||id==='./screenshot'?{}:originalRequire(id)};
+ vm.runInNewContext(fs.readFileSync(brokerFile,'utf8'),context);
+ const broker=new context.exports.GuiBroker({inspect:async()=>({}),summary:()=>({})},true);
+ broker.recordPointer({x:150,y:300},{x:150,y:300},'keyboard:before');
+ assert.throws(()=>broker.recordPointer({x:150,y:300},{x:151,y:300},'keyboard:after'),/GUI_POINTER_TAKEOVER/);
+ const report=await broker.close();
+ assert.equal(report.pointerAudit.length,2);assert.equal(report.pointerAudit[1].delta.x,1);assert.equal(report.pointerAudit[1].phase,'keyboard:after');assert.equal(report.stopReason,'GUI_POINTER_TAKEOVER');
+ const validation={exports:{},require:()=>({})};const preload=fs.readFileSync(path.resolve(__dirname,'../dist-electron/preload.js'),'utf8');vm.runInNewContext(preload.slice(0,preload.indexOf('const BACKEND_PORT_CHANNEL')),validation);
+ const envelope=stats=>({type:'server:message',requestId:'r',conversationId:'c',timestamp:new Date().toISOString(),payload:{modelStats:stats}});
+ assert.equal(validation.isValidRendererEnvelope(envelope({...report,nativeFocusReturnType:undefined})),false);
+ assert.equal(validation.isValidRendererEnvelope(envelope(report)),true);
+ assert.ok(broker.testReleaseStatus().releasedAt);assert.equal(report.nativeFocusReturnType,null);
+});

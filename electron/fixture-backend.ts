@@ -20,7 +20,7 @@ export function attachFixtureBackend(win: BrowserWindow, options: {mode?:'fixtur
   win.webContents.on('did-finish-load',()=>{
     stopCurrent?.();
     const child=utilityProcess.fork(path.resolve(__dirname,'../packages/agent-core/dist/src/fixture-host.js'),[],{
-      serviceName:'OpenEagle V2 fixture',stdio:'pipe',env:{OPEN_EAGLE_V2_MODE:options.mode??'fixture',OPEN_EAGLE_V2_PI_TEST:options.offline?'1':'0',SystemRoot:process.env.SystemRoot ?? '',TEMP:process.env.TEMP ?? '',TMP:process.env.TMP ?? ''},
+      serviceName:'OpenEagle V2 fixture',stdio:'pipe',env:{OPEN_EAGLE_V2_MODE:options.mode??'fixture',OPEN_EAGLE_V2_GUI_MANUAL_WAIT:process.env.OPEN_EAGLE_GUI_SMOKE==='1'&&process.env.OPEN_EAGLE_GUI_MANUAL==='1'?'1':'0',OPEN_EAGLE_V2_PI_TEST:options.offline?'1':'0',SystemRoot:process.env.SystemRoot ?? '',TEMP:process.env.TEMP ?? '',TMP:process.env.TMP ?? ''},
     });
     const {port1,port2}=new MessageChannelMain();
     let gui:GuiBroker|undefined;let guiRequestId='';

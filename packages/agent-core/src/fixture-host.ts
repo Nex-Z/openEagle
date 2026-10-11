@@ -12,7 +12,7 @@ const gui=process.env.OPEN_EAGLE_V2_MODE==='gui';
 const listeners=new Set<(v:unknown)=>void>();
 const pending=new Map<string,{resolve:(v:Record<string,unknown>)=>void;reject:(e:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
 const transport:CapabilityTransport={send:v=>parent.postMessage(v),subscribe:f=>{listeners.add(f);return()=>{listeners.delete(f);};}};
-const control=(operation:string,payload:Record<string,unknown>)=>new Promise<Record<string,unknown>>((resolve,reject)=>{const id=randomUUID();const timer=setTimeout(()=>{pending.delete(id);reject(new Error('GUI_CONTROL_TIMEOUT'));},35000);pending.set(id,{resolve,reject,timer});parent.postMessage({kind:'gui:control',id,operation,payload});});
+const control=(operation:string,payload:Record<string,unknown>)=>new Promise<Record<string,unknown>>((resolve,reject)=>{const id=randomUUID();const timer=setTimeout(()=>{pending.delete(id);reject(new Error('GUI_CONTROL_TIMEOUT'));},operation==='open'&&process.env.OPEN_EAGLE_V2_GUI_MANUAL_WAIT==='1'?305000:35000);pending.set(id,{resolve,reject,timer});parent.postMessage({kind:'gui:control',id,operation,payload});});
 const pi=process.env.OPEN_EAGLE_V2_MODE==='pi';
 const models=new ModelSessions(process.env.OPEN_EAGLE_V2_PI_TEST==='1'?offlineModel:undefined);
 const session = new FixtureSession({mode:gui?'gui':pi?'pi':'fixture',send:e=>parent.postMessage({kind:'envelope',envelope:e}),create:gui?(e)=>createGuiExecution(e,transport,control):pi?(e,onText)=>e.payload.content==='GUI_REHEARSAL_BACKGROUND'?createGuiExecution(e,transport,control):models.create(e,onText,e.payload.content==='GUI_REHEARSAL_FOREGROUND'?()=>createGuiExecution(e,transport,control):undefined):(e)=>createFixtureExecution(e)});

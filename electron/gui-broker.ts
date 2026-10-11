@@ -44,6 +44,13 @@ export class GuiBroker {
   private stopReason='';
   private closing?:Promise<Record<string,unknown>>;
   private pointer?:{x:number;y:number};
+  private readonly pointerAudit:Record<string,unknown>[]=[];
+  private releasedAt:string|null=null;
+  private recordPointer(expected:{x:number;y:number},actual:{x:number;y:number},phase:string){
+    this.pointerAudit.push({at:new Date().toISOString(),monotonicMs:performance.now(),stage:this.stage,phase,expected:{...expected},actual:{x:actual.x,y:actual.y},delta:{x:actual.x-expected.x,y:actual.y-expected.y}});
+    if(actual.x!==expected.x||actual.y!==expected.y)throw this.stopError('GUI_POINTER_TAKEOVER');
+  }
+  testReleaseStatus(){if(!this.smoke)throw new Error('GUI_TEST_DISABLED');return {releasedAt:this.releasedAt,stopReason:this.stopReason,evidenceDirectory:this.output};}
   private output='';
   private images:string[]=[];
   private readyResolve?:()=>void;
@@ -65,7 +72,7 @@ export class GuiBroker {
     await new Promise<void>((resolve,reject)=>{
       const finish=(error?:Error)=>{clearTimeout(timer);this.controller.signal.removeEventListener('abort',abort);this.readyResolve=undefined;if(error){this.cancel(error.message);reject(error);}else resolve();};
       const abort=()=>finish(new Error('GUI_CANCELLED'));
-      const timer=setTimeout(()=>finish(new Error('GUI_APPROVAL_TIMEOUT')),30000);
+      const timer=setTimeout(()=>finish(new Error('GUI_APPROVAL_TIMEOUT')),this.smoke&&process.env.OPEN_EAGLE_GUI_MANUAL==='1'?300000:30000);
       this.readyResolve=()=>finish();this.controller.signal.addEventListener('abort',abort,{once:true});
       if(this.controller.signal.aborted){abort();return;}if(this.smoke&&process.env.OPEN_EAGLE_GUI_MANUAL!=='1'&&process.env.OPEN_EAGLE_GUI_TEST_AUTHORIZATION==='conversation'){this.consent.grant('conversation-fixture-test');finish();}else if(this.consent.approved)finish();
     });
@@ -80,7 +87,7 @@ export class GuiBroker {
     }
     await this.guard();return {target:title,evidenceDirectory:this.output};
   }
-  private async guard(checkPointer=true){
+  private async guard(checkPointer=true,phase='guard'){
     if(this.stopReason)throw new Error(this.stopReason);this.admission.assertActive();this.controller.signal.throwIfAborted();
     const win=this.target;if(!win||win.isDestroyed()||!win.isVisible()||!win.isFocused())throw this.stopError('GUI_FOCUS_LOST');
     const active=await getActiveWindow();this.controller.signal.throwIfAborted();
@@ -88,7 +95,7 @@ export class GuiBroker {
     const actual=(active as unknown as {windowHandle?:number}).windowHandle;this.lastForegroundHandle=actual;
     const bytes=win.getNativeWindowHandle();const expected=bytes.length===8?Number(bytes.readBigUInt64LE()):bytes.readUInt32LE();
     if(actual!==expected)throw this.stopError('GUI_NATIVE_HANDLE_MISMATCH');if(!win.isFocused())throw this.stopError('GUI_FOCUS_LOST');
-    if(checkPointer&&this.pointer){const position=await mouse.getPosition();this.controller.signal.throwIfAborted();if(position.x!==this.pointer.x||position.y!==this.pointer.y)throw this.stopError('GUI_POINTER_TAKEOVER');}
+    if(checkPointer&&this.pointer){const position=await mouse.getPosition();this.controller.signal.throwIfAborted();this.recordPointer(this.pointer,position,phase);}
   }
   private stopError(code:string){this.cancel(code);return new Error(code);}
   cancel(reason='GUI_CANCELLED'){if(!this.stopReason)this.stopReason=reason;this.admission.stop();this.consent.revoke();this.controller.abort();this.tickets.revokeAuthorityEpoch(this.epoch);this.readyResolve=undefined;}
@@ -132,16 +139,17 @@ export class GuiBroker {
           const bounds=this.target!.getContentBounds();const {x,y}=r.payload;
           if(typeof x!=='number'||typeof y!=='number'||!Number.isFinite(x)||!Number.isFinite(y)||x<0||y<0||x>=bounds.width||y>=bounds.height)throw new Error('GUI_COORDINATE_REJECTED');
           const point=screen.dipToScreenPoint({x:Math.round(bounds.x+x),y:Math.round(bounds.y+y)});
+          this.pointerAudit.push({at:new Date().toISOString(),monotonicMs:performance.now(),phase:'planned-move',contentBoundsDip:bounds,relativeDip:{x,y},physical:point,display:(({id,scaleFactor,bounds})=>({id,scaleFactor,bounds}))(screen.getDisplayMatching(bounds)),displayCount:screen.getAllDisplays().length});
           inputStarted=true;
           await performMouseAction({action:'click',x:point.x,y:point.y},async phase=>{
             if(this.smoke)await (globalThis as any).__guiHooks?.input?.(this,phase,this.stage);
-            await this.guard(phase!=='after-move');
-            if(phase==='after-move'){const actual=await mouse.getPosition();this.controller.signal.throwIfAborted();if(actual.x!==point.x||actual.y!==point.y)throw this.stopError('GUI_POINTER_TAKEOVER');this.pointer=point;}
+            await this.guard(phase!=='after-move',`mouse:${phase}`);
+            if(phase==='after-move'){const actual=await mouse.getPosition();this.controller.signal.throwIfAborted();this.recordPointer(point,actual,'mouse:after-move');this.pointer=point;}
           });
         }else{
           if(typeof r.payload.text!=='string')throw new Error('GUI_TEXT_REQUIRED');
           inputStarted=true;
-          await performKeyboardAction({action:'type_text',text:r.payload.text},async phase=>{if(this.smoke)await (globalThis as any).__guiHooks?.input?.(this,phase,this.stage);await this.guard();});
+          await performKeyboardAction({action:'type_text',text:r.payload.text},async phase=>{if(this.smoke)await (globalThis as any).__guiHooks?.input?.(this,phase,this.stage);await this.guard(true,`keyboard:${phase}`);});
 
         }
         await this.guard();await new Promise(resolve=>setTimeout(resolve,70));await this.guard();this.stage++;
@@ -157,12 +165,12 @@ export class GuiBroker {
     this.closing=(async()=>{
       try {
         await this.queue;
-        const report={runtimeMetrics:metrics,target:this.targetIdentity,approvalAudit:this.approvals,activationAttempts:this.activationAttempts,nativeFocusCalls:this.nativeFocusCalls,nativeFocusReturnType:this.nativeFocusReturnType,nativeFocusReturnValue:this.nativeFocusReturnValue,lastForegroundHandle:this.lastForegroundHandle,authorizationSource:this.authorizationSource,stopReason:this.stopReason,actuation:'nut-js OS input',capture:'nut-js OS region, target content bounds only',state:await this.binding.inspect(),stage:this.stage,images:this.images,...this.binding.summary()};
+        const report={runtimeMetrics:metrics,target:this.targetIdentity??null,approvalAudit:this.approvals,activationAttempts:this.activationAttempts,nativeFocusCalls:this.nativeFocusCalls,nativeFocusReturnType:this.nativeFocusReturnType??null,nativeFocusReturnValue:this.nativeFocusReturnValue,lastForegroundHandle:this.lastForegroundHandle??null,authorizationSource:this.authorizationSource??null,stopReason:this.stopReason,pointerAudit:this.pointerAudit,actuation:'nut-js OS input',capture:'nut-js OS region, target content bounds only',state:await this.binding.inspect(),stage:this.stage,images:this.images,...this.binding.summary()};
         if(this.output)await writeFile(join(this.output,'oracle.json'),JSON.stringify(report,null,2));
         return {...report,evidenceDirectory:this.output};
       } finally {
         ipcMain.removeListener('v2:gui:cancel',this.onCancel);ipcMain.removeListener('v2:gui:approve',this.onApprove);
-        if(this.target&&!this.target.isDestroyed())this.target.destroy();if(this.ownsLease){await rmdir(this.leasePath);this.ownsLease=false;}if(desktopOwner===this)desktopOwner=undefined;
+        if(this.target&&!this.target.isDestroyed())this.target.destroy();if(this.ownsLease){await rmdir(this.leasePath);this.ownsLease=false;}if(desktopOwner===this)desktopOwner=undefined;this.releasedAt=new Date().toISOString();
       }
     })();return this.closing;
   }

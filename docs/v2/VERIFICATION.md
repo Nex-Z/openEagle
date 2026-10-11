@@ -114,3 +114,17 @@ Real hidden Electron 42.2.0 UI test (`scripts/verify-v2-fixture.cjs`) passed: co
 用户确认本次前台时段后的单次受限激活仍返回 GUI_INITIAL_ACTIVATION_REJECTED（约 6.10 秒），stage/截图/输入计数均为 0，停止原生路径。生产 UI 与独立测试批准来源回归增至 5/5；精确窗口标题、原始证据和诊断歧义见 GUI_WINDOWS.md。
 
 恢复开发只读诊断确认自有 HWND、native 枚举和 Session 1/Default 桌面一致。独立前台核对后的单次激活仍 GUI_NATIVE_HANDLE_MISMATCH，零截图/输入，停止重复原生尝试。新增 2 个激活结果/取消回归，GUI 策略 7/7；细节与原始 JSON 见 GUI_WINDOWS.md。
+
+## 2026-10-11 手动批准的真实 OS 输入与离线修复
+
+用户亲自在专用窗口批准；原生聚焦调用 0 次。真实 nut-js 点击输入框成功（trustedClicks=1），随后真实键盘输入部分完成（trustedInputs=18，最终值 OpenEaglenativei），触发 GUI_POINTER_TAKEOVER 后停止；未点击保存，saved 为空，最终 exact=false。不能称完整 GUI 验收通过，也不能把触发原因归因于用户移动鼠标。两张目标窗口 OS 截图均在打字前，第二张可见输入框焦点；不把截图当成完整打字成功证据。
+
+证据见 [手动验收原始 oracle](evidence/windows-gui-manual-2026-10-11/oracle.json) 与同目录 manifest.json（原始文件 SHA-256）。4 个工具步骤耗时分别为 observe 38.64ms、click 100.94ms、observe 29.94ms、type 205.72ms；前 3 步首次成功，输入步骤失败，重试/补救动作 0 次，脚本规划、模型调用 0 次。全流程首次成功率不能计算为 100%，未执行的保存不算成功。256 秒脚本总时长包含人工批准等待和终态反馈故障，不能当成原生操作耗时。
+
+本轮旧日志未保存预期/实际指针坐标、对应屏幕缩放和移动时序，因此无法事后判断 DPI、多屏、驱动移动或物理输入的原因。点击及之后 observe 均通过精确坐标检查，差异在输入期间出现；这不能排除上述原因。另有缺空格/部分文字问题未定位，不修改系统输入法、不放宽坐标容差、不自动重试。新增审计保存自身计划移动的 DIP/物理坐标、目标屏幕缩放/边界/屏幕数量及每次检查的阶段、时间、预期/实际坐标和差值，精确相等保护不变。
+
+窗口已经关闭但验收器未报告终态：离线复现确认，未调用原生聚焦的报告含 undefined 字段，被未改动的 preload 严格 JSON 校验拒绝。报告改用 null，回归直接验证真实 broker.close 的输出；验收器监测端口 error/close，独立监测宿主队列结束、窗口销毁且租约释放后的释放标记，输出“可恢复鼠键”，释放后缺终态最多再等 3 秒。5 分钟仅供手动批准交接，不适用于释放后的等待。
+
+离线 GUI 策略回归 10/10 通过；本次修复后未再次打开 GUI，真实完整链路、其他真实 GUI 场景及 fake-model→真实 GUI 完整验收仍待用户方便时明确确认下一轮。CI 不运行交互 GUI。
+
+后台回归：GUI policy 10/10；core 76 项中 71 passed、5 Linux-only skipped、0 failed；core/React/Electron 类型检查与 Python compileall 通过。首次完整后台测试未设置 OPENEAGLE_CHROMIUM，Playwright 缺自带浏览器导致失败/等待；停止已确认的本轮 browser.test.js 子进程后，显式使用现有 Chrome 重跑通过（未安装浏览器）。此环境纠正计为一次回归补救，不能称所有检查首次通过。
