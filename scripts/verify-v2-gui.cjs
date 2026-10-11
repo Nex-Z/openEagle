@@ -30,6 +30,15 @@ async function scenario(name){
     if(which==='replay')globalThis.__guiHooks.authorize=async b=>{if(globalThis.__replayChecked)return;globalThis.__replayChecked=true;const q={kind:'capability:request',id:'replay-proof',requestId:b.requestId,capability:'screen.capture',payload:{operation:'oracle'}};const first=await b.handle(q);const second=await b.handle(q);if(!first.ok||second.ok||second.error.code!=='GUI_REPLAY_OR_LIMIT')throw new Error('REPLAY_FAILED');};
   },name);
   await page.getByRole('button',{name:'请求前台专用窗口验收',exact:true}).click();
+  if(process.env.GUI_MANUAL_APPROVAL==='1'){
+    let target;
+    for(let attempt=0;attempt<100&&!target;attempt++){
+      target=await app.evaluate(()=>{const w=globalThis.__guiBroker?.testWindow();return w&&!w.isDestroyed()?{title:w.getTitle(),nativeHandleHex:w.getNativeWindowHandle().toString('hex')}:null;});
+      if(!target)await new Promise(resolve=>setTimeout(resolve,50));
+    }
+    console.log(JSON.stringify({manualTarget:target,instruction:'仅在已解锁且可暂时让出鼠键时，点击此精确标题窗口内的批准按钮。30 秒后未批准自动结束；不重抢焦点。'}));
+  }
+
   await page.waitForFunction(()=>window.guiEvents.filter(e=>e.type==='server:message').length>=2,{},{timeout:45000});
   const events=await page.evaluate(()=>window.guiEvents);const result=events.filter(e=>e.type==='server:message').at(-1);const stats=result.payload.modelStats;
   if(['success','lease','replay','pi'].includes(name)){assert.equal(result.payload.status,'completed',JSON.stringify(result.payload));assert.equal(stats.exact,true);assert.equal(stats.state.saved,expected);assert.equal(stats.state.trustedClicks,2);assert.equal(stats.state.trustedInputs,expected.length);}
