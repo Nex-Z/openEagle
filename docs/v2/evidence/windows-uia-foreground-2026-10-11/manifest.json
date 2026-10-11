@@ -1,0 +1,23 @@
+{
+  "baseCommit": "fecb3c2eceb4fcfdd617a8119796052dfa8405b4",
+  "source": "base plus foreground entry changes committed with this evidence",
+  "sha256": "8624e01369868de8e1929cbdff7a8d1b60f6a2433ca8d187d4abb8154c087afa",
+  "bytes": 9470,
+  "acceptanceMode": "authorized-foreground-text-only",
+  "plannedScenarios": 1,
+  "executedScenarios": 1,
+  "firstAttemptPassed": 1,
+  "retries": 0,
+  "planning": "scripted",
+  "modelCalls": 0,
+  "totalMs": 37515,
+  "afterStartMs": 864,
+  "stepDurationMs": 661.2955000000002,
+  "samples": 28,
+  "sampleSpanMs": 807.8430000000008,
+  "maxSampleGapMs": 32.079499999999825,
+  "backgroundVerified": false,
+  "cancellationResult": "not-run",
+  "fixtureExited": true,
+  "leaseReleased": true
+}

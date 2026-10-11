@@ -1,0 +1,380 @@
+{
+  "acceptanceMode": "authorized-foreground-text-only",
+  "backgroundVerified": false,
+  "startedAt": "2026-10-11T08:37:28.455Z",
+  "planning": "scripted",
+  "modelCalls": 0,
+  "osUiaExecuted": true,
+  "steps": [
+    {
+      "name": "whole Unicode value",
+      "status": "passed",
+      "firstAttempt": true,
+      "retries": 0,
+      "startedAtMs": 36825.5358,
+      "durationMs": 661.2955000000002,
+      "evidence": {
+        "valueMatched": true
+      }
+    }
+  ],
+  "retries": 0,
+  "output": "C:\\Users\\17602\\AppData\\Local\\Temp\\openeagle-uia-acceptance-pd1CN9",
+  "textResult": {
+    "status": "passed",
+    "expected": "  中文 😀  \nsecond line  ",
+    "actual": "  中文 😀  \nsecond line  ",
+    "independentOracle": true
+  },
+  "cancellationResult": {
+    "status": "not-run"
+  },
+  "workerAudit": [
+    {
+      "requestId": "89278ccd-d173-46b4-a7ca-2d23dd5a7c8f",
+      "operation": "bind",
+      "phase": "worker-started",
+      "atMs": 36689.6319,
+      "stage": "bind"
+    },
+    {
+      "requestId": "89278ccd-d173-46b4-a7ca-2d23dd5a7c8f",
+      "operation": "bind",
+      "phase": "request-validated",
+      "atMs": 36773.9086,
+      "stage": "bind"
+    },
+    {
+      "requestId": "89278ccd-d173-46b4-a7ca-2d23dd5a7c8f",
+      "operation": "bind",
+      "phase": "operation-returned",
+      "atMs": 36816.7893,
+      "stage": "bind"
+    },
+    {
+      "requestId": "89278ccd-d173-46b4-a7ca-2d23dd5a7c8f",
+      "operation": "bind",
+      "phase": "worker-closed",
+      "atMs": 36825.2702,
+      "stage": "bind"
+    },
+    {
+      "requestId": "ee364763-87a2-4d84-a48a-e46579d47a5e",
+      "operation": "inspect",
+      "phase": "worker-started",
+      "atMs": 36829.9788,
+      "stage": "whole Unicode value"
+    },
+    {
+      "requestId": "ee364763-87a2-4d84-a48a-e46579d47a5e",
+      "operation": "inspect",
+      "phase": "request-validated",
+      "atMs": 36910.8444,
+      "stage": "whole Unicode value"
+    },
+    {
+      "requestId": "ee364763-87a2-4d84-a48a-e46579d47a5e",
+      "operation": "inspect",
+      "phase": "operation-returned",
+      "atMs": 36973.6708,
+      "stage": "whole Unicode value"
+    },
+    {
+      "requestId": "ee364763-87a2-4d84-a48a-e46579d47a5e",
+      "operation": "inspect",
+      "phase": "worker-closed",
+      "atMs": 36981.9169,
+      "stage": "whole Unicode value"
+    },
+    {
+      "requestId": "68165446-a0c1-4cdc-b714-2468060cc055",
+      "operation": "inspect",
+      "phase": "worker-started",
+      "atMs": 36986.6366,
+      "stage": "whole Unicode value"
+    },
+    {
+      "requestId": "68165446-a0c1-4cdc-b714-2468060cc055",
+      "operation": "inspect",
+      "phase": "request-validated",
+      "atMs": 37070.5678,
+      "stage": "whole Unicode value"
+    },
+    {
+      "requestId": "68165446-a0c1-4cdc-b714-2468060cc055",
+      "operation": "inspect",
+      "phase": "operation-returned",
+      "atMs": 37134.7075,
+      "stage": "whole Unicode value"
+    },
+    {
+      "requestId": "68165446-a0c1-4cdc-b714-2468060cc055",
+      "operation": "inspect",
+      "phase": "worker-closed",
+      "atMs": 37143.0436,
+      "stage": "whole Unicode value"
+    },
+    {
+      "requestId": "ce96df51-ecdb-45bb-a577-8550dcb5672a",
+      "operation": "set",
+      "phase": "worker-started",
+      "atMs": 37147.2083,
+      "stage": "whole Unicode value"
+    },
+    {
+      "requestId": "ce96df51-ecdb-45bb-a577-8550dcb5672a",
+      "operation": "set",
+      "phase": "request-validated",
+      "atMs": 37228.3912,
+      "stage": "whole Unicode value"
+    },
+    {
+      "requestId": "ce96df51-ecdb-45bb-a577-8550dcb5672a",
+      "operation": "set",
+      "phase": "set-call-boundary",
+      "atMs": 37289.0118,
+      "stage": "whole Unicode value"
+    },
+    {
+      "requestId": "ce96df51-ecdb-45bb-a577-8550dcb5672a",
+      "operation": "set",
+      "phase": "set-returned",
+      "atMs": 37300.2928,
+      "stage": "whole Unicode value"
+    },
+    {
+      "requestId": "ce96df51-ecdb-45bb-a577-8550dcb5672a",
+      "operation": "set",
+      "phase": "operation-returned",
+      "atMs": 37319.5286,
+      "stage": "whole Unicode value"
+    },
+    {
+      "requestId": "ce96df51-ecdb-45bb-a577-8550dcb5672a",
+      "operation": "set",
+      "phase": "worker-closed",
+      "atMs": 37328.3778,
+      "stage": "whole Unicode value"
+    },
+    {
+      "requestId": "9e3385b3-52fe-4942-a38e-177cf75d1915",
+      "operation": "inspect",
+      "phase": "worker-started",
+      "atMs": 37334.8172,
+      "stage": "whole Unicode value"
+    },
+    {
+      "requestId": "9e3385b3-52fe-4942-a38e-177cf75d1915",
+      "operation": "inspect",
+      "phase": "request-validated",
+      "atMs": 37417.4767,
+      "stage": "whole Unicode value"
+    },
+    {
+      "requestId": "9e3385b3-52fe-4942-a38e-177cf75d1915",
+      "operation": "inspect",
+      "phase": "operation-returned",
+      "atMs": 37477.3405,
+      "stage": "whole Unicode value"
+    },
+    {
+      "requestId": "9e3385b3-52fe-4942-a38e-177cf75d1915",
+      "operation": "inspect",
+      "phase": "worker-closed",
+      "atMs": 37486.2344,
+      "stage": "whole Unicode value"
+    }
+  ],
+  "target": {
+    "hwnd": "2431428",
+    "processId": 38436
+  },
+  "sentinel": {
+    "hwnd": "0"
+  },
+  "startConfirmedAt": "2026-10-11T08:38:05.106Z",
+  "uiaBindingAttempted": true,
+  "leaseAcquired": true,
+  "status": "completed",
+  "leaseReleased": true,
+  "fixtureExited": true,
+  "focusResult": {
+    "status": "target-at-all-samples",
+    "failure": null,
+    "method": "20ms requested polling; actual gaps recorded",
+    "provesNoTransientChange": false,
+    "count": 28,
+    "maxGapMs": 32.079499999999825,
+    "samples": [
+      {
+        "sequence": 1,
+        "elapsedMs": 36546.507,
+        "role": "target",
+        "receivedAtMs": 36678.5433
+      },
+      {
+        "sequence": 2,
+        "elapsedMs": 36550.543,
+        "role": "target",
+        "receivedAtMs": 36678.7168
+      },
+      {
+        "sequence": 3,
+        "elapsedMs": 36576.2602,
+        "role": "target",
+        "receivedAtMs": 36704.3321
+      },
+      {
+        "sequence": 4,
+        "elapsedMs": 36607.8166,
+        "role": "target",
+        "receivedAtMs": 36735.7441
+      },
+      {
+        "sequence": 5,
+        "elapsedMs": 36637.7927,
+        "role": "target",
+        "receivedAtMs": 36765.7691
+      },
+      {
+        "sequence": 6,
+        "elapsedMs": 36669.8363,
+        "role": "target",
+        "receivedAtMs": 36797.7561
+      },
+      {
+        "sequence": 7,
+        "elapsedMs": 36701.8802,
+        "role": "target",
+        "receivedAtMs": 36830.0567
+      },
+      {
+        "sequence": 8,
+        "elapsedMs": 36732.7798,
+        "role": "target",
+        "receivedAtMs": 36860.7103
+      },
+      {
+        "sequence": 9,
+        "elapsedMs": 36763.7674,
+        "role": "target",
+        "receivedAtMs": 36891.6836
+      },
+      {
+        "sequence": 10,
+        "elapsedMs": 36795.6155,
+        "role": "target",
+        "receivedAtMs": 36923.5359
+      },
+      {
+        "sequence": 11,
+        "elapsedMs": 36825.9701,
+        "role": "target",
+        "receivedAtMs": 36953.9252
+      },
+      {
+        "sequence": 12,
+        "elapsedMs": 36858.0496,
+        "role": "target",
+        "receivedAtMs": 36986.7651
+      },
+      {
+        "sequence": 13,
+        "elapsedMs": 36888.0819,
+        "role": "target",
+        "receivedAtMs": 37016.0893
+      },
+      {
+        "sequence": 14,
+        "elapsedMs": 36919.9685,
+        "role": "target",
+        "receivedAtMs": 37047.8502
+      },
+      {
+        "sequence": 15,
+        "elapsedMs": 36949.9016,
+        "role": "target",
+        "receivedAtMs": 37077.7831
+      },
+      {
+        "sequence": 16,
+        "elapsedMs": 36980.1525,
+        "role": "target",
+        "receivedAtMs": 37108.1139
+      },
+      {
+        "sequence": 17,
+        "elapsedMs": 37011.675,
+        "role": "target",
+        "receivedAtMs": 37139.5775
+      },
+      {
+        "sequence": 18,
+        "elapsedMs": 37042.0263,
+        "role": "target",
+        "receivedAtMs": 37169.9628
+      },
+      {
+        "sequence": 19,
+        "elapsedMs": 37072.9619,
+        "role": "target",
+        "receivedAtMs": 37200.9171
+      },
+      {
+        "sequence": 20,
+        "elapsedMs": 37104.4769,
+        "role": "target",
+        "receivedAtMs": 37232.4692
+      },
+      {
+        "sequence": 21,
+        "elapsedMs": 37135.0879,
+        "role": "target",
+        "receivedAtMs": 37263.0347
+      },
+      {
+        "sequence": 22,
+        "elapsedMs": 37167.0782,
+        "role": "target",
+        "receivedAtMs": 37294.9761
+      },
+      {
+        "sequence": 23,
+        "elapsedMs": 37198.1586,
+        "role": "target",
+        "receivedAtMs": 37326.0221
+      },
+      {
+        "sequence": 24,
+        "elapsedMs": 37229.2601,
+        "role": "target",
+        "receivedAtMs": 37357.1339
+      },
+      {
+        "sequence": 25,
+        "elapsedMs": 37261.1957,
+        "role": "target",
+        "receivedAtMs": 37389.1518
+      },
+      {
+        "sequence": 26,
+        "elapsedMs": 37292.6921,
+        "role": "target",
+        "receivedAtMs": 37420.6024
+      },
+      {
+        "sequence": 27,
+        "elapsedMs": 37324.3813,
+        "role": "target",
+        "receivedAtMs": 37452.3552
+      },
+      {
+        "sequence": 28,
+        "elapsedMs": 37354.35,
+        "role": "target",
+        "receivedAtMs": 37482.2931
+      }
+    ]
+  },
+  "finishedAt": "2026-10-11T08:38:05.970Z"
+}

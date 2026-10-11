@@ -161,3 +161,20 @@ runner 在窗口就绪立即输出 `UIA_READY`（含两个自有窗口身份、s
 
 下一步仅在另行授权后做有界验证：先用新审计定位变化相对worker/set边界的顺序；若已确认只发生在SetValue边界，再单独分析目标provider。当前保持backgroundVerified=false；本轮没有重新运行现场，也没有新增测试门槛替代能力。
 本次后台验证：UIA transport / Pi integration / sentinel 离线回归 26/26，C# 纯策略自检 14/14，TypeScript core、React、Electron 类型检查通过。新增审计测试首次因测试内子进程脚本换行转义错误失败，修正测试后通过；这不是现场重试，也不计入现场首次成功率。未再运行真实窗口。
+
+## 自有 WinForms 前台 UIA 单轮通过（pd1CN9）
+
+用户明确批准一次前台填写，复用同一 sidecar/adapter、观察与独立验证；新增最小入口参数 --foreground-text-only（命令见下）。只显示一个自有 target，用户点击 Start 后开始，不自动激活，无鼠键/剪贴板降级。仅测试整段文本填写，未扩大场景矩阵。默认双窗口后台入口不变，生产 backgroundVerified=false，后台限定不能因此接受 unknown provider。
+
+原始证据：[report.json](evidence/windows-uia-foreground-2026-10-11/report.json)、[manifest.json](evidence/windows-uia-foreground-2026-10-11/manifest.json)。报告逐字节保存并使用 -text 防止换行转换。
+
+- 1项计划、1项首次通过，步骤661.296ms，重试0；脚本规划、模型调用0，不代表LLM准确率或重复运行可靠率。
+- 从启动到完成总37.515秒，其中包含人工等待；明确开始后至清理完成864ms。总时间不能当作文本输入耗时。
+- 内容包含中文、emoji、换行、首尾与连续空格；UIA SetValue 返回成功，另起 inspect worker 验证，再经 fixture 的独立 entry.Text oracle 比较，expected/actual完全一致。
+- 28次采样全部为target，覆盖807.843ms，最大间隔32.0795ms；仅代表这些离散采样，provesNoTransientChange=false。
+- 自有fixtureExited=true、leaseReleased=true；UIA_RELEASED已立即通知，无须用户继续配合。
+- 此轮为受控自有WinForms**前台**UIA成功；此前后台轮次仍失败/值未知，未解释其焦点根因。取消专项not-run；不冒充OS鼠键、任意应用、真实模型或完整Pi→OS验收。
+
+显式获准后使用：node scripts/verify-v2-uia.cjs --run-owned-window --foreground-text-only。仅查看计划可用 --foreground-text-only（不加 --run-owned-window），不创建窗口。等待开始最多120秒，执行最多20秒；失焦/Stop/未知结果停止，不重试。此处记录命令不授权新一轮运行。
+
+最终离线验证：入口11/11（含前台target允许、失焦停止、后台默认仍要求sentinel）；C#构建及14/14纯策略自检通过。相关core单元80项：75通过、5项Linux专用跳过、0失败；core/React/Electron类型检查通过。CI终态另记录于PR，Hosted CI真实交互UIA为not run。
