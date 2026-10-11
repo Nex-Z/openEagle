@@ -1,0 +1,6 @@
+namespace OpenEagle.Uia;
+internal static class SelfTests {
+ public static int Run(){var count=0;void Reject(Action action,string code){try{action();throw new Exception("expected rejection");}catch(Rejected e){if(e.Message!=code)throw;}count++;}
+  try {Policy.Writable(true,false,false,true,true);count++;Reject(()=>Policy.Writable(true,true,false,true,true),"UIA_PASSWORD_REJECTED");Reject(()=>Policy.Writable(true,false,true,true,true),"UIA_READONLY");Reject(()=>Policy.Writable(false,false,false,true,true),"UIA_DISABLED");Reject(()=>Policy.Writable(true,false,false,false,true),"UIA_VALUE_UNSUPPORTED");Reject(()=>Policy.Writable(true,false,false,true,false),"UIA_CONTROL_UNSUPPORTED");Reject(()=>Policy.Match("before","changed"),"UIA_STALE_OBSERVATION");foreach(var text in new[]{"","  中文 😀  ","first\nsecond"}){Policy.Text(text);count++;}Reject(()=>Policy.Text("\0"),"UIA_TEXT_REJECTED");Reject(()=>Policy.Text("\ud800"),"UIA_TEXT_REJECTED");Reject(()=>Policy.Text(new string('a',10001)),"UIA_TEXT_REJECTED");Policy.Require(Policy.Hash("中文")==Policy.Hash("中文")&&Policy.Hash("a")!=Policy.Hash("b"),"HASH_TEST");count++;Console.WriteLine(System.Text.Json.JsonSerializer.Serialize(new {selfTest=true,passed=count,osUiaExecuted=false}));return 0;}catch{Console.Error.WriteLine("UIA_SELF_TEST_FAILED");return 1;}
+ }
+}

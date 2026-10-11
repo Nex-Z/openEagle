@@ -1,0 +1,1897 @@
+{
+  "runtimeMetrics": {
+    "interaction": {
+      "interactionMode": "foreground",
+      "usesSystemInput": true,
+      "mayChangeFocus": true,
+      "cancelSupport": "cooperative-between-inputs",
+      "targetWindow": "host-authorized-window"
+    },
+    "steps": [
+      {
+        "name": "desktop_observe",
+        "status": "succeeded",
+        "firstAttempt": true,
+        "retries": 0,
+        "durationMs": 48.967499999998836
+      },
+      {
+        "name": "desktop_click",
+        "status": "succeeded",
+        "firstAttempt": true,
+        "retries": 0,
+        "durationMs": 107.83090000000084
+      },
+      {
+        "name": "desktop_observe",
+        "status": "succeeded",
+        "firstAttempt": true,
+        "retries": 0,
+        "durationMs": 35.918400000000474
+      },
+      {
+        "name": "desktop_type",
+        "status": "failed",
+        "firstAttempt": false,
+        "retries": 0,
+        "durationMs": 524.0172999999995
+      }
+    ],
+    "planning": "scripted",
+    "modelCalls": 0
+  },
+  "target": {
+    "title": "OpenEagle GUI 17eaec4f-8d9f-4b38-a4bd-8b192691b890",
+    "nativeHandleHex": "ee04170000000000"
+  },
+  "approvalAudit": [
+    {
+      "source": "owned-window-ui-ipc",
+      "requestId": "88081e865f40772e8cef02cb0d0da407a4f12210c77d775bb1f1bfde2a679fcd",
+      "target": "OpenEagle GUI 17eaec4f-8d9f-4b38-a4bd-8b192691b890",
+      "capability": "desktop.mouse",
+      "argsSha256": "4797e1f01ff396a0792297538ec8f92cc7ed066f8613f0bfe20e1d90be6daef9"
+    },
+    {
+      "source": "owned-window-ui-ipc",
+      "requestId": "88081e865f40772e8cef02cb0d0da407a4f12210c77d775bb1f1bfde2a679fcd",
+      "target": "OpenEagle GUI 17eaec4f-8d9f-4b38-a4bd-8b192691b890",
+      "capability": "desktop.keyboard",
+      "argsSha256": "6c28f2119b82492ca277ce08e6310adc17d735c9982750cf88beabf0adaafaae"
+    }
+  ],
+  "activationAttempts": 0,
+  "nativeFocusCalls": 0,
+  "nativeFocusReturnType": null,
+  "nativeFocusReturnValue": null,
+  "lastForegroundHandle": 1508590,
+  "authorizationSource": "owned-window-ui-ipc",
+  "stopReason": "GUI_TEXT_RECEIPT_TIMEOUT",
+  "pointerAudit": [
+    {
+      "at": "2026-10-11T06:24:19.744Z",
+      "monotonicMs": 11306.4257,
+      "phase": "planned-move",
+      "contentBoundsDip": {
+        "x": 947,
+        "y": 442,
+        "width": 666,
+        "height": 557
+      },
+      "relativeDip": {
+        "x": 259.6666717529297,
+        "y": 299.7395935058594
+      },
+      "physical": {
+        "x": 1811,
+        "y": 1113
+      },
+      "display": {
+        "id": 2793937986,
+        "scaleFactor": 1.5,
+        "bounds": {
+          "x": 0,
+          "y": 0,
+          "width": 2560,
+          "height": 1440
+        }
+      },
+      "displayCount": 2
+    },
+    {
+      "at": "2026-10-11T06:24:19.745Z",
+      "monotonicMs": 11307.0234,
+      "stage": 0,
+      "phase": "mouse:after-move",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.768Z",
+      "monotonicMs": 11330.5691,
+      "stage": 0,
+      "phase": "mouse:after",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.768Z",
+      "monotonicMs": 11330.5866,
+      "stage": 0,
+      "phase": "guard",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.849Z",
+      "monotonicMs": 11411.5747,
+      "stage": 0,
+      "phase": "guard",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.851Z",
+      "monotonicMs": 11413.0922,
+      "stage": 1,
+      "phase": "guard",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.851Z",
+      "monotonicMs": 11413.1211,
+      "stage": 1,
+      "phase": "guard",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.868Z",
+      "monotonicMs": 11430.5062,
+      "stage": 1,
+      "phase": "guard",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.887Z",
+      "monotonicMs": 11448.752,
+      "stage": 1,
+      "phase": "guard",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.887Z",
+      "monotonicMs": 11448.7718,
+      "stage": 1,
+      "phase": "guard",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.887Z",
+      "monotonicMs": 11449.1036,
+      "stage": 1,
+      "phase": "guard",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.887Z",
+      "monotonicMs": 11449.1215,
+      "stage": 1,
+      "phase": "guard",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.887Z",
+      "monotonicMs": 11449.3994,
+      "stage": 1,
+      "phase": "guard",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.887Z",
+      "monotonicMs": 11449.4124,
+      "stage": 1,
+      "phase": "guard",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.888Z",
+      "monotonicMs": 11449.6523,
+      "stage": 1,
+      "phase": "guard",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.888Z",
+      "monotonicMs": 11449.6606,
+      "stage": 1,
+      "phase": "guard",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.888Z",
+      "monotonicMs": 11449.8943,
+      "stage": 1,
+      "phase": "guard",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.888Z",
+      "monotonicMs": 11449.9031,
+      "stage": 1,
+      "phase": "guard",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.888Z",
+      "monotonicMs": 11450.1601,
+      "stage": 1,
+      "phase": "keyboard:before",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.897Z",
+      "monotonicMs": 11458.9695,
+      "stage": 1,
+      "phase": "keyboard:after",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.897Z",
+      "monotonicMs": 11459.0697,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.897Z",
+      "monotonicMs": 11459.0938,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.912Z",
+      "monotonicMs": 11473.9963,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.912Z",
+      "monotonicMs": 11474.0348,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.928Z",
+      "monotonicMs": 11489.7596,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.928Z",
+      "monotonicMs": 11489.8081,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.944Z",
+      "monotonicMs": 11505.8272,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.944Z",
+      "monotonicMs": 11505.855,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.958Z",
+      "monotonicMs": 11520.3913,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.958Z",
+      "monotonicMs": 11520.4073,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.974Z",
+      "monotonicMs": 11535.7705,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.974Z",
+      "monotonicMs": 11535.7816,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.989Z",
+      "monotonicMs": 11551.361,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:19.989Z",
+      "monotonicMs": 11551.4374,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.005Z",
+      "monotonicMs": 11567.38,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.005Z",
+      "monotonicMs": 11567.4099,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.020Z",
+      "monotonicMs": 11582.4522,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.020Z",
+      "monotonicMs": 11582.518,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.038Z",
+      "monotonicMs": 11599.7102,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.038Z",
+      "monotonicMs": 11599.818,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.052Z",
+      "monotonicMs": 11613.7805,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.052Z",
+      "monotonicMs": 11613.7992,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.068Z",
+      "monotonicMs": 11630.0745,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.068Z",
+      "monotonicMs": 11630.0917,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.082Z",
+      "monotonicMs": 11643.6268,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.082Z",
+      "monotonicMs": 11643.6377,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.099Z",
+      "monotonicMs": 11660.8168,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.099Z",
+      "monotonicMs": 11660.8855,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.113Z",
+      "monotonicMs": 11674.8202,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.113Z",
+      "monotonicMs": 11674.8414,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.129Z",
+      "monotonicMs": 11691.1541,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.129Z",
+      "monotonicMs": 11691.1834,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.145Z",
+      "monotonicMs": 11706.8445,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.145Z",
+      "monotonicMs": 11706.9848,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.160Z",
+      "monotonicMs": 11721.7297,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.160Z",
+      "monotonicMs": 11721.7574,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.175Z",
+      "monotonicMs": 11736.8075,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.175Z",
+      "monotonicMs": 11736.8596,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.191Z",
+      "monotonicMs": 11752.6829,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.191Z",
+      "monotonicMs": 11752.7478,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.205Z",
+      "monotonicMs": 11767.1365,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.205Z",
+      "monotonicMs": 11767.1469,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.221Z",
+      "monotonicMs": 11783.4314,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.221Z",
+      "monotonicMs": 11783.4411,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.237Z",
+      "monotonicMs": 11799.5238,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.237Z",
+      "monotonicMs": 11799.5339,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.249Z",
+      "monotonicMs": 11810.7429,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.249Z",
+      "monotonicMs": 11810.7518,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.268Z",
+      "monotonicMs": 11830.0934,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.268Z",
+      "monotonicMs": 11830.1825,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.284Z",
+      "monotonicMs": 11846.2828,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.284Z",
+      "monotonicMs": 11846.3149,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.300Z",
+      "monotonicMs": 11861.7433,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.300Z",
+      "monotonicMs": 11861.7533,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.315Z",
+      "monotonicMs": 11876.9462,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.315Z",
+      "monotonicMs": 11876.9562,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.330Z",
+      "monotonicMs": 11892.2977,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.330Z",
+      "monotonicMs": 11892.3266,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.346Z",
+      "monotonicMs": 11908.24,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.346Z",
+      "monotonicMs": 11908.2501,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.363Z",
+      "monotonicMs": 11924.7467,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.363Z",
+      "monotonicMs": 11924.8126,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.378Z",
+      "monotonicMs": 11940.0673,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.378Z",
+      "monotonicMs": 11940.0772,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.394Z",
+      "monotonicMs": 11955.7803,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.394Z",
+      "monotonicMs": 11955.8082,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.410Z",
+      "monotonicMs": 11971.6927,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    },
+    {
+      "at": "2026-10-11T06:24:20.410Z",
+      "monotonicMs": 11971.7029,
+      "stage": 1,
+      "phase": "keyboard:receipt",
+      "expected": {
+        "x": 1811,
+        "y": 1113
+      },
+      "actual": {
+        "x": 1811,
+        "y": 1113
+      },
+      "delta": {
+        "x": 0,
+        "y": 0
+      }
+    }
+  ],
+  "keyboardAudit": [
+    {
+      "at": "2026-10-11T06:24:19.888Z",
+      "monotonicMs": 11450.1396,
+      "phase": "before",
+      "index": 0,
+      "codePoint": 79
+    },
+    {
+      "at": "2026-10-11T06:24:19.897Z",
+      "monotonicMs": 11458.913,
+      "phase": "after",
+      "index": 0,
+      "codePoint": 79
+    }
+  ],
+  "actuation": "nut-js OS input",
+  "capture": "nut-js OS region, target content bounds only",
+  "state": {
+    "value": "O",
+    "saved": "",
+    "clicks": 1,
+    "inputs": 1,
+    "trustedClicks": 1,
+    "trustedInputs": 1,
+    "approved": true,
+    "composing": true,
+    "focused": "entry",
+    "selectionStart": 1,
+    "selectionEnd": 1,
+    "controls": {
+      "entry": {
+        "x": 259.6666717529297,
+        "y": 299.7395935058594
+      },
+      "save": {
+        "x": 90.66666793823242,
+        "y": 379.7395935058594
+      }
+    }
+  },
+  "stage": 1,
+  "images": [
+    "window-0.png",
+    "window-1.png"
+  ],
+  "eventAudit": [
+    {
+      "type": "keydown",
+      "at": 5793.600000023842,
+      "trusted": true,
+      "focused": "entry",
+      "shiftKey": true,
+      "ctrlKey": false,
+      "altKey": false,
+      "metaKey": false,
+      "key": "Shift",
+      "code": "ShiftLeft",
+      "data": null,
+      "inputType": null,
+      "isComposing": false,
+      "value": "",
+      "selectionStart": 0,
+      "selectionEnd": 0
+    },
+    {
+      "type": "keydown",
+      "at": 5795.5,
+      "trusted": true,
+      "focused": "entry",
+      "shiftKey": true,
+      "ctrlKey": false,
+      "altKey": false,
+      "metaKey": false,
+      "key": "Process",
+      "code": "KeyO",
+      "data": null,
+      "inputType": null,
+      "isComposing": false,
+      "value": "",
+      "selectionStart": 0,
+      "selectionEnd": 0
+    },
+    {
+      "type": "compositionstart",
+      "at": 5795.800000071526,
+      "trusted": true,
+      "focused": "entry",
+      "shiftKey": false,
+      "ctrlKey": false,
+      "altKey": false,
+      "metaKey": false,
+      "key": null,
+      "code": null,
+      "data": "",
+      "inputType": null,
+      "isComposing": false,
+      "value": "",
+      "selectionStart": 0,
+      "selectionEnd": 0
+    },
+    {
+      "type": "compositionupdate",
+      "at": 5795.899999976158,
+      "trusted": true,
+      "focused": "entry",
+      "shiftKey": false,
+      "ctrlKey": false,
+      "altKey": false,
+      "metaKey": false,
+      "key": null,
+      "code": null,
+      "data": "O",
+      "inputType": null,
+      "isComposing": false,
+      "value": "",
+      "selectionStart": 0,
+      "selectionEnd": 0
+    },
+    {
+      "type": "beforeinput",
+      "at": 5795.899999976158,
+      "trusted": true,
+      "focused": "entry",
+      "shiftKey": false,
+      "ctrlKey": false,
+      "altKey": false,
+      "metaKey": false,
+      "key": null,
+      "code": null,
+      "data": "O",
+      "inputType": "insertCompositionText",
+      "isComposing": true,
+      "value": "",
+      "selectionStart": 0,
+      "selectionEnd": 0
+    },
+    {
+      "type": "input",
+      "at": 5796.300000071526,
+      "trusted": true,
+      "focused": "entry",
+      "shiftKey": false,
+      "ctrlKey": false,
+      "altKey": false,
+      "metaKey": false,
+      "key": null,
+      "code": null,
+      "data": "O",
+      "inputType": "insertCompositionText",
+      "isComposing": true,
+      "value": "O",
+      "selectionStart": 1,
+      "selectionEnd": 1
+    },
+    {
+      "type": "keyup",
+      "at": 5796.600000023842,
+      "trusted": true,
+      "focused": "entry",
+      "shiftKey": true,
+      "ctrlKey": false,
+      "altKey": false,
+      "metaKey": false,
+      "key": "Process",
+      "code": "KeyO",
+      "data": null,
+      "inputType": null,
+      "isComposing": true,
+      "value": "O",
+      "selectionStart": 1,
+      "selectionEnd": 1
+    },
+    {
+      "type": "keyup",
+      "at": 5796.600000023842,
+      "trusted": true,
+      "focused": "entry",
+      "shiftKey": true,
+      "ctrlKey": false,
+      "altKey": false,
+      "metaKey": false,
+      "key": "O",
+      "code": "KeyO",
+      "data": null,
+      "inputType": null,
+      "isComposing": true,
+      "value": "O",
+      "selectionStart": 1,
+      "selectionEnd": 1
+    },
+    {
+      "type": "keyup",
+      "at": 5796.800000071526,
+      "trusted": true,
+      "focused": "entry",
+      "shiftKey": false,
+      "ctrlKey": false,
+      "altKey": false,
+      "metaKey": false,
+      "key": "Process",
+      "code": "ShiftLeft",
+      "data": null,
+      "inputType": null,
+      "isComposing": true,
+      "value": "O",
+      "selectionStart": 1,
+      "selectionEnd": 1
+    },
+    {
+      "type": "keyup",
+      "at": 5798.100000023842,
+      "trusted": true,
+      "focused": "entry",
+      "shiftKey": false,
+      "ctrlKey": false,
+      "altKey": false,
+      "metaKey": false,
+      "key": "Shift",
+      "code": "ShiftLeft",
+      "data": null,
+      "inputType": null,
+      "isComposing": true,
+      "value": "O",
+      "selectionStart": 1,
+      "selectionEnd": 1
+    }
+  ],
+  "exact": false
+}

@@ -1,0 +1,5 @@
+const {spawnSync}=require('node:child_process');const path=require('node:path');
+if(process.platform!=='win32')throw new Error('UIA build is Windows-only');
+const root=path.resolve(__dirname,'..'),project=path.join(root,'native/windows-uia/OpenEagle.Uia.csproj');
+const env={...process.env,DOTNET_CLI_TELEMETRY_OPTOUT:'1',DOTNET_GENERATE_ASPNET_CERTIFICATE:'false'};
+for(const args of [['restore',project,'--locked-mode','--configfile',path.join(root,'native/windows-uia/NuGet.Config')],['publish',project,'-c','Release','--no-restore','--self-contained','false','-o',path.join(root,'native/windows-uia/publish/framework-dependent')]]){const r=spawnSync('dotnet',args,{cwd:root,env,stdio:'inherit',windowsHide:true});if(r.error||r.status!==0){console.error('UIA build requires the existing .NET 10 SDK; no automatic installation.');process.exit(r.status||1);}}

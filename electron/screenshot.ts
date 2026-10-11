@@ -29,7 +29,7 @@ export async function captureScreenshot(): Promise<ScreenshotResult> {
   };
 }
 
-function imageToPngBuffer(image: { width: number; height: number; data: Buffer }): Buffer {
+export function imageToPngBuffer(image: { width: number; height: number; data: Buffer }): Buffer {
   // nut-js returns raw BGRA pixel data; encode as PNG manually
   // Use a minimal PNG encoder for the raw pixel data
   const { width, height, data } = image;

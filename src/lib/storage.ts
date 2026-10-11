@@ -387,6 +387,7 @@ export function loadSettings(): AppSettings {
 }
 
 export function saveSettings(settings: AppSettings) {
+  if (typeof window !== "undefined" && window.electronAPI?.piMode) return;
   localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
   // Also persist to Electron file if available
   if (isElectronRuntime()) {

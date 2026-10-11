@@ -1,0 +1,97 @@
+{
+  "runtimeMetrics": {
+    "interaction": {
+      "interactionMode": "foreground",
+      "usesSystemInput": true,
+      "mayChangeFocus": true,
+      "cancelSupport": "cooperative-between-inputs",
+      "targetWindow": "host-authorized-window"
+    },
+    "steps": [
+      {
+        "name": "desktop_observe",
+        "status": "succeeded",
+        "firstAttempt": true,
+        "retries": 0,
+        "durationMs": 38.63519999998971
+      },
+      {
+        "name": "desktop_click",
+        "status": "succeeded",
+        "firstAttempt": true,
+        "retries": 0,
+        "durationMs": 100.93880000000354
+      },
+      {
+        "name": "desktop_observe",
+        "status": "succeeded",
+        "firstAttempt": true,
+        "retries": 0,
+        "durationMs": 29.936600000000908
+      },
+      {
+        "name": "desktop_type",
+        "status": "failed",
+        "firstAttempt": false,
+        "retries": 0,
+        "durationMs": 205.71839999999793
+      }
+    ],
+    "planning": "scripted",
+    "modelCalls": 0
+  },
+  "target": {
+    "title": "OpenEagle GUI 347e5037-3d39-4af2-9599-12757e144211",
+    "nativeHandleHex": "1a00c80000000000"
+  },
+  "approvalAudit": [
+    {
+      "source": "owned-window-ui-ipc",
+      "requestId": "8e97e5aa5d84390d622a8b635763a784ac1ee55808f0acf33cdfd5abfc084c33",
+      "target": "OpenEagle GUI 347e5037-3d39-4af2-9599-12757e144211",
+      "capability": "desktop.mouse",
+      "argsSha256": "996c48c5659342eca11203ae6c0b2d802e4d9fc49aa2b3f955a139ce599e8cb1"
+    },
+    {
+      "source": "owned-window-ui-ipc",
+      "requestId": "8e97e5aa5d84390d622a8b635763a784ac1ee55808f0acf33cdfd5abfc084c33",
+      "target": "OpenEagle GUI 347e5037-3d39-4af2-9599-12757e144211",
+      "capability": "desktop.keyboard",
+      "argsSha256": "a4bd6098f192dfb438f79cdff9563343d642c62d5b2e843c1c005248b9f0ce4a"
+    }
+  ],
+  "activationAttempts": 0,
+  "nativeFocusCalls": 0,
+  "nativeFocusReturnValue": null,
+  "lastForegroundHandle": 13107226,
+  "authorizationSource": "owned-window-ui-ipc",
+  "stopReason": "GUI_POINTER_TAKEOVER",
+  "actuation": "nut-js OS input",
+  "capture": "nut-js OS region, target content bounds only",
+  "state": {
+    "value": "OpenEaglenativei",
+    "saved": "",
+    "clicks": 1,
+    "inputs": 18,
+    "trustedClicks": 1,
+    "trustedInputs": 18,
+    "approved": true,
+    "focused": "entry",
+    "controls": {
+      "entry": {
+        "x": 259.6666717529297,
+        "y": 299.7395935058594
+      },
+      "save": {
+        "x": 90.66666793823242,
+        "y": 379.7395935058594
+      }
+    }
+  },
+  "stage": 1,
+  "images": [
+    "window-0.png",
+    "window-1.png"
+  ],
+  "exact": false
+}

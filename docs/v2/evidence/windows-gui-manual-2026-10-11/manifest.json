@@ -1,0 +1,17 @@
+{
+  "sha256": {
+    "oracle.json": "0642979aebd84e1b37dc1b715a5179a49e51995f91f34797ea0d6ab674c80bd2",
+    "window-0.png": "859df5913d0fc31bd0d2d180221263c7db2b05d1ea9d7e3cc961ae9b204520d8",
+    "window-1.png": "e61316e8f58e88cd02f1e5262705c2773e3d96d05338220b5431522a7f114387"
+  },
+  "planning": "scripted",
+  "modelCalls": 0,
+  "complete": false,
+  "nativeFocusCalls": 0,
+  "approval": "owned-window-ui-ipc",
+  "pointerCause": "unknown: expected/actual coordinates were not recorded",
+  "screenshots": "target content only; both before typing",
+  "attempts": 1,
+  "retries": 0,
+  "feedbackDelayBug": true
+}

@@ -1,0 +1,21 @@
+{
+  "sha256": {
+    "oracle.json": "ca3648a16ad4341d7e3252f19ca1e8fdfbb28776f0c64e7675a31b529d9112bc",
+    "window-0.png": "e8be7b7613486d022b19678e97ced99fb00d123a23428d0acca329321e91def1",
+    "window-1.png": "403e697ad90400bce757a39f13482e0e4c8612584b6b4b098281e70664ea948b"
+  },
+  "planning": "scripted",
+  "modelCalls": 0,
+  "attempts": 1,
+  "retries": 0,
+  "complete": false,
+  "stopReason": "GUI_TEXT_RECEIPT_TIMEOUT",
+  "releasedAt": "2026-10-11T06:24:20.437Z",
+  "scriptDurationMs": 11533.3481,
+  "pointerChecks": 87,
+  "nonzeroDeltas": 0,
+  "keyboardCalls": 1,
+  "eventCount": 10,
+  "compositionEndCount": 0,
+  "nativeFocusCalls": 0
+}

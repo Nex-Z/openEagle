@@ -4,7 +4,14 @@
 
  */
 
+export type BackendPortEvent = {kind:"open"} | {kind:"close";reason?:string} | {kind:"error";message:string} | {kind:"message";data:string};
+
 export interface ElectronAPI {
+  fixtureMode?: boolean;
+  v2Mode?: boolean; piMode?: boolean; guiMode?: boolean; piOffline?: boolean;
+  uiaSession?: {status():Promise<{enabled:boolean;ready:boolean;targets:Array<{id:string;label:string}>;message?:string}>;grant(payload:unknown):Promise<{approved:boolean}>;revoke(conversationId:string):Promise<unknown>};
+  modelSession?: {configure(payload:unknown):Promise<Record<string,unknown>>;status(conversationId:string):Promise<Record<string,unknown>>;clear(conversationId:string):Promise<Record<string,unknown>>};
+  backendPort?: { close():void; onEvent(callback:(event:BackendPortEvent)=>void):()=>void; send(data:string):boolean; state():"closed"|"connecting"|"open" };
   invoke: <T = unknown>(channel: string, args?: Record<string, unknown>) => Promise<T>;
   on: (channel: string, callback: (...args: unknown[]) => void) => () => void;
   emit: (channel: string, ...args: unknown[]) => void;

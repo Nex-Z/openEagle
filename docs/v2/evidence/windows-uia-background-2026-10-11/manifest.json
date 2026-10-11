@@ -1,0 +1,40 @@
+{
+  "sourceCommit": "52afe4614e25a97054c476723837234ac1d88c0b",
+  "sha256": "cf98150514d96a4487447f65e55d1a5b9d89b048350c4c820c857fa961a3d637",
+  "bytes": 8476,
+  "planning": "scripted",
+  "modelCalls": 0,
+  "retries": 0,
+  "plannedScenarios": 9,
+  "executedScenarios": 6,
+  "passedScenarios": 5,
+  "failedOrUnverifiedScenarios": 1,
+  "notRunScenarios": [
+    "stale observation rejection",
+    "duplicate execution rejection",
+    "in-flight cancellation"
+  ],
+  "firstForegroundTransition": {
+    "from": "sentinel",
+    "to": "target",
+    "previousSample": {
+      "sequence": 60,
+      "elapsedMs": 13001.839,
+      "role": "sentinel"
+    },
+    "changedSample": {
+      "sequence": 61,
+      "elapsedMs": 13033.0444,
+      "role": "target"
+    },
+    "intervalMs": 31.205400000000736,
+    "elapsedSinceFirstSampleMs": 1835.4702000000016
+  },
+  "cancellationOrigin": "foreground monitor; not cancellation scenario",
+  "setValueCallEvidence": "unknown: no worker operation/COM boundary audit in original report",
+  "textSideEffects": "unknown",
+  "cleanupReported": {
+    "fixtureExited": true,
+    "leaseReleased": true
+  }
+}

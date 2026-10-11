@@ -1,0 +1,16 @@
+{
+  "planning": "scripted",
+  "modelCalls": 0,
+  "osUiaExecuted": false,
+  "steps": [],
+  "retries": 0,
+  "output": "C:\\Users\\17602\\AppData\\Local\\Temp\\openeagle-uia-acceptance-cntbz3",
+  "target": {
+    "hwnd": "1513828",
+    "processId": 42896
+  },
+  "status": "failed",
+  "error": "FIXTURE_NOT_FOREGROUND_NO_REFOCUS",
+  "leaseReleased": true,
+  "fixtureExited": true
+}
