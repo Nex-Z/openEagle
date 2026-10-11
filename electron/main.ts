@@ -19,8 +19,9 @@ import { loadAppSettings, saveAppSettings } from "./conversations";
 import { migrateTauriSettings } from "./migrate-tauri-settings";
 
 const isDev = !app.isPackaged;
+const guiMode = isDev && process.env.OPEN_EAGLE_V2_GUI === "1";
 const piMode = isDev && process.env.OPEN_EAGLE_V2_PI === "1";
-const v2Mode = piMode || (isDev && process.env.OPEN_EAGLE_V2_FIXTURE === "1");
+const v2Mode = guiMode || piMode || (isDev && process.env.OPEN_EAGLE_V2_FIXTURE === "1");
 
 // 禁用 GPU 硬件加速，避免部分 Windows 设备上 GPU 进程崩溃
 // 注意：命令行开关需在 electron-dev.cjs / 启动脚本中传入，此处仅作打包后的兜底
@@ -85,7 +86,7 @@ function createMainWindow() {
     show: false, // show after backend ready
     webPreferences: {
       preload: path.join(__dirname, "preload.js"),
-      additionalArguments: v2Mode ? [piMode ? "--openeagle-v2-pi" : "--openeagle-v2-fixture", ...(process.env.OPEN_EAGLE_V2_PI_TEST === "1" ? ["--openeagle-v2-offline"] : [])] : [],
+      additionalArguments: v2Mode ? [guiMode ? "--openeagle-v2-gui" : piMode ? "--openeagle-v2-pi" : "--openeagle-v2-fixture", ...(process.env.OPEN_EAGLE_V2_PI_TEST === "1" ? ["--openeagle-v2-offline"] : [])] : [],
       contextIsolation: true,
       nodeIntegration: false,
       webSecurity: v2Mode, // legacy asset behavior is retained outside fixture mode
@@ -180,7 +181,7 @@ app.whenReady().then(async () => {
       return {phase:"ready",port:1,message:piMode?"V2 Pi experimental session":"V2 TEST MODE · fake broker"};
     });
     const win = createMainWindow();
-    stopFixture = attachFixtureBackend(win,{mode:piMode?"pi":"fixture",offline:piMode&&process.env.OPEN_EAGLE_V2_PI_TEST === "1"});
+    stopFixture = attachFixtureBackend(win,{mode:guiMode?"gui":piMode?"pi":"fixture",offline:piMode&&process.env.OPEN_EAGLE_V2_PI_TEST === "1"});
     win.once("ready-to-show", () => { if (process.env.OPENEAGLE_FIXTURE_HEADLESS !== "1") win.show(); });
     return;
   }

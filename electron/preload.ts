@@ -179,7 +179,8 @@ ipcRenderer.on("backend://port", (event, metadata: unknown) => {
 
 const fixtureMode = process.argv.includes("--openeagle-v2-fixture");
 const piMode = process.argv.includes("--openeagle-v2-pi");
-const v2Mode = fixtureMode || piMode;
+const guiMode = process.argv.includes("--openeagle-v2-gui");
+const v2Mode = fixtureMode || piMode || guiMode;
 
 const ALLOWED_INVOKE_CHANNELS = [
   "get_backend_state",
@@ -312,7 +313,7 @@ contextBridge.exposeInMainWorld("electronAPI", {
     state: () => backendPortState,
   },
 
-  fixtureMode, v2Mode, piMode,
+  fixtureMode, v2Mode, piMode, guiMode,
   piOffline: process.argv.includes("--openeagle-v2-offline"),
   modelSession: {
     configure: (payload: unknown) => piMode ? ipcRenderer.invoke("v2:model:configure",payload) : Promise.reject(new Error("MODEL_MODE_DISABLED")),

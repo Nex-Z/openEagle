@@ -39,7 +39,7 @@ export function ModelSessionPanel({conversationId,busy,onReady}:{conversationId:
       <label>模型 ID<input aria-label="模型 ID" value={modelId} onChange={e=>setModelId(e.target.value)} required/></label>
       <label>仅本会话的 API Key<SecretInput value={credential} onChange={setCredential} placeholder="在此输入，不要粘贴到聊天中"/></label>
       <div className="pi-budget-fields">
-        <label>调用次数<input aria-label="最大调用次数" type="number" min={1} max={4} value={maxCalls} onChange={e=>setMaxCalls(Number(e.target.value))}/></label>
+        <label>调用次数<input aria-label="最大调用次数" type="number" min={1} max={12} value={maxCalls} onChange={e=>setMaxCalls(Number(e.target.value))}/></label>
         <label>每次输出 tokens<input aria-label="最大输出 tokens" type="number" min={32} max={2048} value={maxOutputTokens} onChange={e=>setMaxOutputTokens(Number(e.target.value))}/></label>
         <label>每次超时 ms<input aria-label="模型超时" type="number" min={1000} max={60000} value={timeoutMs} onChange={e=>setTimeoutMs(Number(e.target.value))}/></label>
       </div>

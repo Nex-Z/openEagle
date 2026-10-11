@@ -18,7 +18,7 @@ export function parseModelConfig(value: unknown): Readonly<ModelConfig> {
   if(typeof value.endpoint!=='string'||value.endpoint.length>2048)throw new Error('INVALID_MODEL_ENDPOINT');
   let url:URL;try{url=new URL(value.endpoint);}catch{throw new Error('INVALID_MODEL_ENDPOINT');}
   if(url.protocol!=='https:'||url.username||url.password||url.search||url.hash)throw new Error('INVALID_MODEL_ENDPOINT');
-  for(const [key,min,max] of [['maxCalls',1,4],['maxOutputTokens',32,2048],['timeoutMs',1000,60000]] as const){
+  for(const [key,min,max] of [['maxCalls',1,12],['maxOutputTokens',32,2048],['timeoutMs',1000,60000]] as const){
     const n=value[key];if(typeof n!=='number'||!Number.isSafeInteger(n)||n<min||n>max)throw new Error('INVALID_MODEL_BUDGET');
   }
   if(value.maxRetries!==0||value.workspace!=='temporary-sample'||value.approved!==true)throw new Error('MODEL_APPROVAL_REQUIRED');

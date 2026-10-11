@@ -1,10 +1,12 @@
 import { ipcMain, MessageChannelMain, utilityProcess, type BrowserWindow } from 'electron';
-import { randomUUID } from 'node:crypto';
+import { randomUUID,createHash } from 'node:crypto';
 import path from 'node:path';
+import type {GuiBroker} from './gui-broker';
+import {createGuiFixture} from './gui-fixture';
 
 // Matches the selectively reused preload framing. No direct desktop capability
 // channel is granted to this fixture utility process.
-export function attachFixtureBackend(win: BrowserWindow, options: {mode?:'fixture'|'pi';offline?:boolean} = {}): () => Promise<void> {
+export function attachFixtureBackend(win: BrowserWindow, options: {mode?:'fixture'|'pi'|'gui';offline?:boolean} = {}): () => Promise<void> {
   let stopCurrent: (()=>Promise<void>) | undefined;
   const shutdowns = new Set<Promise<void>>();
   let control: ((kind:string,payload:Record<string,unknown>)=>Promise<unknown>) | undefined;
@@ -21,6 +23,7 @@ export function attachFixtureBackend(win: BrowserWindow, options: {mode?:'fixtur
       serviceName:'OpenEagle V2 fixture',stdio:'pipe',env:{OPEN_EAGLE_V2_MODE:options.mode??'fixture',OPEN_EAGLE_V2_PI_TEST:options.offline?'1':'0',SystemRoot:process.env.SystemRoot ?? '',TEMP:process.env.TEMP ?? '',TMP:process.env.TMP ?? ''},
     });
     const {port1,port2}=new MessageChannelMain();
+    let gui:GuiBroker|undefined;let guiRequestId='';
     const connectionId=randomUUID();let inbound=0,outbound=0,stopped=false,exited=false;
     let stoppedPromise: Promise<void> | undefined;
     const pending=new Map<string,{resolve:(value:unknown)=>void;reject:(error:Error)=>void;timer:ReturnType<typeof setTimeout>}>();
@@ -32,13 +35,15 @@ export function attachFixtureBackend(win: BrowserWindow, options: {mode?:'fixtur
     });
     const frame=(kind:string,fields:Record<string,unknown>={})=>({channel:'open-eagle.data',protocolVersion:1,connectionId,kind,...fields});
     const stop=():Promise<void>=>{
-      if(stoppedPromise)return stoppedPromise;stopped=true;
+      if(stoppedPromise)return stoppedPromise;stopped=true;gui?.cancel();
       for(const item of pending.values()){clearTimeout(item.timer);item.reject(new Error("MODEL_CHANNEL_CLOSED"));}pending.clear();
+      const brokerClosing=gui?.close().then(()=>{},()=>{console.error('GUI cleanup evidence failed');})??Promise.resolve();
       stoppedPromise = new Promise<void>(resolve=>{
         if(exited){resolve();return;}
         const timer=setTimeout(()=>{console.error('Fixture cleanup timeout; forced utility termination');child.kill();resolve();},3000);
         child.once('exit',()=>{clearTimeout(timer);resolve();});
       });
+      stoppedPromise=Promise.all([stoppedPromise,brokerClosing]).then(()=>{});
       shutdowns.add(stoppedPromise);
       void stoppedPromise.finally(()=>shutdowns.delete(stoppedPromise!));
       try{port1.postMessage(frame('close',{reason:'fixture_disconnected'}));}catch{/* already closed */}
@@ -48,8 +53,24 @@ export function attachFixtureBackend(win: BrowserWindow, options: {mode?:'fixtur
     };
     stopCurrent=stop;
     child.on('message',(message:unknown)=>{
-      if(stopped||!message||typeof message!=='object')return;
-      const data=message as {kind?:string;envelope?:unknown;id?:string;ok?:boolean;status?:unknown};
+      if(!message||typeof message!=='object')return;
+      if(stopped&&(message as {kind?:string;operation?:string}).kind!=='gui:control')return;
+      const data=message as {kind?:string;envelope?:unknown;id?:string;ok?:boolean;status?:unknown;operation?:string;requestId?:string;payload?:Record<string,unknown>};
+      if((options.mode==='gui'||options.mode==='pi')&&data.kind==='gui:control'){
+        if(stopped&&!['close','cancel'].includes(data.operation??''))return;
+        void (async()=>{
+          try{let result:unknown={};const p=data.payload??{};
+            if(data.operation!=='open'&&p.requestId!==guiRequestId)throw new Error('GUI_TASK_MISMATCH');
+            if(data.operation==='open'){if(gui)throw new Error('GUI_DESKTOP_BUSY');guiRequestId=String(p.requestId);gui=createGuiFixture(process.env.OPEN_EAGLE_GUI_SMOKE==='1');if(process.env.OPEN_EAGLE_GUI_SMOKE==='1')(globalThis as any).__guiBroker=gui;try{result=await gui.open(guiRequestId);}catch(error){await gui.close();gui=undefined;guiRequestId='';throw error;}}
+            else if(data.operation==='authorize'){if(!gui)throw new Error('GUI_NOT_OPEN');result=await gui.authorize(p as any);}
+            else if(data.operation==='cancel'){gui?.cancel();}
+            else if(data.operation==='close'){result=await gui?.close(p.metrics)??{};gui=undefined;guiRequestId='';}
+            else throw new Error('GUI_CONTROL_REJECTED');
+            child.postMessage({kind:'gui:reply',id:data.id,ok:true,result});
+          }catch(error){child.postMessage({kind:'gui:reply',id:data.id,ok:false,error:error instanceof Error?error.message:'GUI_FAILED'});}
+        })();return;
+      }
+      if((options.mode==='gui'||options.mode==='pi')&&data.kind==='capability:request'){void (async()=>{const result=gui?await gui.handle(message):{kind:'capability:result',id:data.id,ok:false,error:{code:'GUI_NOT_OPEN',message:'GUI_NOT_OPEN'}};child.postMessage(result);})();return;}
       if(data.kind==='model:reply'){
         const item=pending.get(data.id??'');if(!item)return;pending.delete(data.id!);clearTimeout(item.timer);
         if(data.ok)item.resolve(data.status);else item.reject(new Error('MODEL_CONFIGURATION_REJECTED'));return;
@@ -72,6 +93,7 @@ export function attachFixtureBackend(win: BrowserWindow, options: {mode?:'fixtur
       let serialized: string | undefined;
       try { serialized=JSON.stringify(f.envelope); } catch { void stop();return; }
       if(f.seq!==inbound+1||!serialized||serialized.length>128_000){void stop();return;}
+      if((options.mode==='gui'||options.mode==='pi')&&f.envelope?.type==='client:cancel_task'&&createHash('sha256').update(JSON.stringify([f.envelope.conversationId,f.envelope.payload?.targetRequestId])).digest('hex')===guiRequestId)gui?.cancel();
       inbound=f.seq;child.postMessage({kind:'envelope',envelope:f.envelope});port1.postMessage(frame('ack',{ack:f.seq}));
     });
     port1.start();

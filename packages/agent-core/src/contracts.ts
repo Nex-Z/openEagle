@@ -14,6 +14,7 @@ export interface PreparedAction {
   verify(output: ActionOutput, signal: AbortSignal): Promise<boolean>;
 }
 export interface Capability {
+  interaction?: {interactionMode:'background'|'foreground'|'unknown';usesSystemInput:boolean;mayChangeFocus:boolean;cancelSupport:string;targetWindow?:string};
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;

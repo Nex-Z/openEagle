@@ -32,3 +32,8 @@ Preload guards/framing, socket facade and desktop client are selectively copied/
 ## Pi 会话增量复用
 
 选择性参考旧 `packages/agent-backend/src/application/pi-model.ts` 的明确 provider/API 映射，在新 `model-config.ts` 中保留三种受支持组合；不导入旧 BackendApplication、设置、key、模型目录或隐式认证。复用已有 PiEngine 与统一 runtime 的 prepare/execute/verify，不创建第二套权限执行器。新 `ModelSessions` 仅持有会话内凭据、预算及有界文本历史；专用 IPC 与普通 Envelope 分离。完整边界和下一步接口见 [PI_SESSION.md](./PI_SESSION.md)。
+
+
+## Windows GUI 接线（2026-10-11）
+
+复用 desktop-tools 通道契约、既有 DesktopCapabilityClient、原样 CapabilityTicketStore 与 input.ts/nut-js 驱动；GuiBroker 选择性适配原 CapabilityBroker 的请求/票据边界，增加专用窗口租约、身份/焦点/观察检查。GuiBinding 与 fixture 策略分离，Pi 宿主扩展注册同一工具。没有复制 BackendApplication 或新建 native 栈。原 capability-broker.ts SHA256：04f68f88d71a7620b0f2c55842ce3f1b6c91b617bd5399afc51238c6469014b8；desktop-tools.ts：1ad2ee1bc73af72fc296405cb551f24754b807fd96a5db54827abd5f4f8b9e59。实际 OS 验收阻塞和完整限制见 [GUI_WINDOWS.md](./GUI_WINDOWS.md)。

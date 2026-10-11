@@ -39,7 +39,7 @@ corepack pnpm@10.7.0 v2:test:pi-ui
 
 ## 预算与费用
 
-宿主在进入每次 provider 调用前消耗一次额度，失败也计入，不自动重试。一次配置最多 1–4 次调用，每次请求 32–2048 输出 tokens、1000–60000 ms 超时；统一 runtime 另有默认 120 秒任务期限。取消会传播 signal，并在临时目录清理后给终态。
+宿主在进入每次 provider 调用前消耗一次额度，失败也计入，不自动重试。一次配置最多 1–12 次调用，每次请求 32–2048 输出 tokens、1000–60000 ms 超时；统一 runtime 另有默认 120 秒任务期限。取消会传播 signal，并在临时目录清理后给终态。
 
 输出 token 参数依赖供应商遵守；终态 usage 超额也会拒绝结果，但不能撤销已发生的计费。HTTP 代理/供应商内部重试、网络中断后的远端执行、系统强杀等也不构成可证明的账单上限。**这些是调用和本地执行限制，不是 USD 硬上限。**
 
@@ -63,3 +63,10 @@ corepack pnpm@10.7.0 v2:test:ui
 ```
 
 本机浏览器回归通过 `OPENEAGLE_CHROMIUM` 指向已有 Chrome；CI 安装锁定 Playwright 的 Chromium。UI 两项需要前述 Vite 和编译产物。真实供应商账单、生产恢复、真实桌面以及任意用户目录仍不在此次验收范围。
+
+
+## GUI 接线补充（2026-10-11）
+
+显式选择后台检查后，可单独启动前台专用 fixture 并在窗口内批准；本次任务通过 ModelSessions 的宿主扩展注册同一 desktop_observe/click/type 工具，保持 PiEngine → 统一 runtime → DesktopCapabilityClient → Electron broker → nut-js。普通 Pi 对话仍只注册临时只读工具，不会因先前任务的 GUI 权限获得后续权限。预算默认 2 不变，显式可配置上限调整为 12；离线 GUI 流程需要 8 次假模型调用。
+
+当前已通过假 broker 的 Pi 接线回归，真实 Windows GUI 输入因原生前台 HWND 不匹配及人工批准超时而阻塞，未验收通过。截图仅记录窗口区域 PNG 和摘要，当前文本 Pi 配置不会接收视觉图像块；fixture 规划使用独立语义观察，不代表视觉模型能力。详细证据与限制见 [GUI_WINDOWS.md](./GUI_WINDOWS.md)。

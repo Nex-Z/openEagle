@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { AgentRuntime, CapabilityRegistry, type TaskHandle } from './runtime.js';
-import type { AgentEngine, AuthorizationRequest } from './contracts.js';
+import type { AgentEngine, AuthorizationRequest, Authorizer } from './contracts.js';
 
 // Selective adaptation of the existing protocol envelope and request-bound
 // confirmation broker. No BackendApplication/settings/service composition root.
@@ -22,6 +22,7 @@ export function parseSessionEnvelope(value: unknown): SessionEnvelope {
 export interface SessionExecution {
   workspace: string; registry: CapabilityRegistry; engine: AgentEngine;
   cleanup(): Promise<void>;
+  authorize?: Authorizer;
   report?(): Record<string,unknown>;
 }
 type Entry = { input: string; handle?: TaskHandle; finished: Promise<void>; cancelRequested: boolean };
@@ -35,7 +36,7 @@ export class FixtureSession {
   constructor(private readonly options: {
     send(envelope: SessionEnvelope): void;
     create(envelope: SessionEnvelope, onText:(text:string)=>void): Promise<SessionExecution>;
-    mode?: "fixture" | "pi";
+    mode?: "fixture" | "pi" | "gui";
     maxRequests?: number;
   }) {}
   private emit(e: SessionEnvelope, type: string, payload: Record<string, unknown>) {
@@ -103,16 +104,16 @@ export class FixtureSession {
       await execution.cleanup();
     };
     try {
-      this.emit(e, 'server:status', { stage: 'thinking', fixture: this.options.mode !== 'pi' });
-      this.emit(e, 'server:agent_progress', { content: this.options.mode === 'pi' ? 'Pi 实验会话：仅临时示例只读工具；费用未知。' : 'TEST MODE · scripted engine / fake desktop broker' });
+      this.emit(e, 'server:status', { stage: 'thinking', fixture: this.options.mode !== 'pi' && this.options.mode !== 'gui' });
+      this.emit(e, 'server:agent_progress', { content: (this.options.mode === 'gui'||e.payload.content==='GUI_REHEARSAL_FOREGROUND') ? '真实 GUI 前台验收：仅专用窗口，失焦停止；脚本规划，非模型自主。' : this.options.mode === 'pi' ? 'Pi 实验会话：仅临时示例只读工具；费用未知。' : 'TEST MODE · scripted engine / fake desktop broker' });
       execution = await this.options.create(e,text=>{if(text&&!entry.cancelRequested)this.emit(e,'server:message_delta',{content:text});});
       if (entry.cancelRequested || this.closed) {
         await cleanup(); execution = undefined;
-        this.emit(e,'server:message',{ content:'Fixture cancelled; cleanup complete.', route:'answer_directly', status:'cancelled', fixture:this.options.mode !== 'pi' });
+        this.emit(e,'server:message',{ content:'Fixture cancelled; cleanup complete.', route:'answer_directly', status:'cancelled', fixture:this.options.mode !== 'pi' && this.options.mode !== 'gui' });
         return;
       }
       const runtime = new AgentRuntime({ registry: execution.registry, cleanup,
-        authorize: (request, signal) => this.authorize(e, request, signal),
+        authorize: execution.authorize ?? ((request, signal) => this.authorize(e, request, signal)),
         onRecord: record => this.emit(e,'server:trace',{ trace: { id: record.id, kind:'tool', name:record.capability,
           status: record.status === 'succeeded' ? 'completed' : 'error', summary:record.status,
           startedAt:record.startedAt, completedAt:record.finishedAt, result:JSON.stringify(record.output?.value ?? record.error ?? record.status) } }),
@@ -121,10 +122,10 @@ export class FixtureSession {
       runtimeOwnsCleanup = true;
       if (entry.cancelRequested || this.closed) entry.handle.cancel();
       const result = await entry.handle.result;
-      this.emit(e,'server:message',{ ...(execution.report ? {modelStats:execution.report()} : {}), content:result.status === 'completed' ? result.answer : result.status === 'failed' ? (this.options.mode === 'pi' ? `Pi 请求失败：${safeModelError(result.error)}` : `Fixture failed: ${result.error ?? 'unknown failure'}`) : `Fixture ${result.status}; cleanup complete.`, route:'answer_directly', status:result.status, fixture:this.options.mode !== 'pi' });
+      this.emit(e,'server:message',{ ...(execution.report ? {modelStats:execution.report()} : {}), content:result.status === 'completed' ? result.answer : result.status === 'failed' ? (this.options.mode === 'pi' ? `Pi 请求失败：${safeModelError(result.error)}` : `Fixture failed: ${result.error ?? 'unknown failure'}`) : `Fixture ${result.status}; cleanup complete.`, route:'answer_directly', status:result.status, fixture:this.options.mode !== 'pi' && this.options.mode !== 'gui' });
     } catch (error) {
       if (execution && !runtimeOwnsCleanup) await cleanup().catch(() => {});
-      this.emit(e,'server:message',{ content:this.options.mode === 'pi' ? `Pi 请求失败：${safeModelError(error)}` : `Fixture failed: ${String(error)}`,route:'answer_directly',status:'failed',fixture:this.options.mode !== 'pi' });
+      this.emit(e,'server:message',{ content:this.options.mode === 'pi' ? `Pi 请求失败：${safeModelError(error)}` : `Fixture failed: ${String(error)}`,route:'answer_directly',status:'failed',fixture:this.options.mode !== 'pi' && this.options.mode !== 'gui' });
     }
   }
   async idle(): Promise<void> { await Promise.allSettled([...this.entries.values()].map(e => e.finished)); }
@@ -138,5 +139,5 @@ export class FixtureSession {
 
 function safeModelError(error:unknown):string {
   const text=String(error);
-  return ['MODEL_SESSION_NOT_CONFIGURED','MODEL_SESSION_BUSY','MODEL_CALL_BUDGET_EXHAUSTED','MODEL_INPUT_LIMIT','MODEL_OUTPUT_LIMIT','MODEL_INCOMPLETE_STREAM','MODEL_TIMEOUT','MODEL_CANCELLED','MODEL_PROVIDER_FAILED'].find(code=>text.includes(code)) ?? 'MODEL_RUNTIME_FAILED';
+  return ['MODEL_SESSION_NOT_CONFIGURED','MODEL_SESSION_BUSY','MODEL_CALL_BUDGET_EXHAUSTED','MODEL_INPUT_LIMIT','MODEL_OUTPUT_LIMIT','MODEL_INCOMPLETE_STREAM','MODEL_TIMEOUT','MODEL_CANCELLED','MODEL_PROVIDER_FAILED'].find(code=>text.includes(code)) ?? (['GUI_NATIVE_HANDLE_MISMATCH','GUI_FOCUS_LOST','GUI_APPROVAL_TIMEOUT','GUI_DESKTOP_BUSY','GUI_CANCELLED'].find(code=>text.includes(code))??'MODEL_RUNTIME_FAILED');
 }

@@ -22,7 +22,10 @@ jobs:
       - run: pnpm --filter @open-eagle/agent-core exec playwright install --with-deps chromium
       - run: pnpm v2:typecheck
       - run: pnpm exec tsc --noEmit
-      - run: pnpm exec tsc -p tsconfig.electron.json --noEmit
+      - run: pnpm exec tsc -p tsconfig.electron.json
+      - run: node scripts/ensure-cjs-package.cjs
+      - run: node --test scripts/verify-v2-gui-policy.cjs
+      # OS GUI smoke requires an interactive owned window; not run on hosted CI.
       - run: pnpm v2:test
 
   headless-windows:
@@ -41,7 +44,10 @@ jobs:
       - run: pnpm --filter @open-eagle/agent-core exec playwright install chromium
       - run: pnpm v2:typecheck
       - run: pnpm exec tsc --noEmit
-      - run: pnpm exec tsc -p tsconfig.electron.json --noEmit
+      - run: pnpm exec tsc -p tsconfig.electron.json
+      - run: node scripts/ensure-cjs-package.cjs
+      - run: node --test scripts/verify-v2-gui-policy.cjs
+      # OS GUI smoke requires an interactive owned window; not run on hosted CI.
       # Windows 显式可信工作区测试；旧 Linux-only 测试跳过不等于通过。
       - run: pnpm --filter @open-eagle/agent-core test:unit
       - run: pnpm --filter @open-eagle/agent-core test:browser

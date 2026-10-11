@@ -28,7 +28,10 @@
     "v2:test": "pnpm --filter @open-eagle/agent-core test",
     "v2:demo": "pnpm --filter @open-eagle/agent-core demo",
     "v2:test:ui": "node scripts/verify-v2-fixture.cjs",
-    "v2:test:pi-ui": "node scripts/verify-v2-pi-session.cjs"
+    "v2:test:pi-ui": "node scripts/verify-v2-pi-session.cjs",
+    "v2:test:gui": "node scripts/verify-v2-gui.cjs",
+    "v2:test:gui-policy": "tsc -p tsconfig.electron.json && node scripts/ensure-cjs-package.cjs && node --test scripts/verify-v2-gui-policy.cjs",
+    "v2:test:gui:manual": "node scripts/start-v2-gui-manual.cjs"
   },
   "dependencies": {
     "@nut-tree-fork/nut-js": "^4.2.6",

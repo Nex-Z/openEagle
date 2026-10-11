@@ -105,3 +105,8 @@ Real hidden Electron 42.2.0 UI test (`scripts/verify-v2-fixture.cjs`) passed: co
 - 本次没有真实 provider 网络/付费调用、旧用户数据访问或真实桌面操作。真实供应商和费用验收仍待用户明确选择。
 
 - 最终 fixture UI 回归发现可选 modelStats 的 undefined 值被 preload 严格 JSON 校验拒绝；改为有值才发送，并加入协议 JSON 往返断言。相关 19/19 通过；原 fixture 的跨会话确认/结果、取消、关窗和 port 断连三组实际 Electron 验收全部通过。
+
+
+## Windows GUI 接线本轮（2026-10-11）
+
+完整核心回归 76 项：71 passed、0 failed、5 Linux-only skipped；新增 GUI 策略 4/4，包含在核心内的 Pi GUI/后台拒绝接线 2/2。既有隐藏 Pi UI 回归通过；三层类型、Vite、Python compileall 通过。真实 GUI 两轮 HWND 不匹配在输入前停止，一轮人工批准超时；成功 OS 输入/截图证据为 0，性能和准确率未验证，不能标通过。详见 [GUI_WINDOWS.md](./GUI_WINDOWS.md)。

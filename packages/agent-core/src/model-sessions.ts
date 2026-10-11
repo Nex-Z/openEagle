@@ -29,25 +29,27 @@ export class ModelSessions {
     return {configured:true,provider:current.config.provider,modelId:current.config.modelId,calls:current.budget.calls,maxCalls:current.config.maxCalls,maxOutputTokens:current.config.maxOutputTokens,timeoutMs:current.config.timeoutMs,maxRetries:0,cost:'unknown',workspace:'temporary-sample'};
   }
   clear(id:unknown){if(!validId(id))throw new Error('INVALID_MODEL_SESSION');if(this.sessions.get(id)?.active)throw new Error('MODEL_SESSION_BUSY');this.sessions.delete(id);return {configured:false};}
-  async create(e:SessionEnvelope,onText:(text:string)=>void):Promise<SessionExecution>{
+  async create(e:SessionEnvelope,onText:(text:string)=>void,extend?:()=>Promise<SessionExecution>):Promise<SessionExecution>{
     const current=this.sessions.get(e.conversationId);
     if(!current||this.closed||current.expires<Date.now()){if(current&&!current.active)this.sessions.delete(e.conversationId);throw new Error('MODEL_SESSION_NOT_CONFIGURED');}
     if(current.active)throw new Error('MODEL_SESSION_BUSY');
+    let extra:SessionExecution|undefined;const guiSteps:Record<string,unknown>[]=[];const initialCalls=current.budget.calls;
     current.active=true;let workspace:string|undefined,cleaned=false;
-    const cleanup=async()=>{if(cleaned)return;cleaned=true;try{if(workspace)await rm(workspace,{recursive:true,force:true});}finally{current.active=false;}};
+    const cleanup=async()=>{if(cleaned)return;cleaned=true;try{try{await extra?.cleanup();}finally{if(workspace)await rm(workspace,{recursive:true,force:true});}}finally{current.active=false;}};
     try {
       workspace=await realpath(await mkdtemp(join(tmpdir(),'openeagle-pi-workspace-')));
       await writeFile(join(workspace,'sample.txt'),'This is an isolated OpenEagle sample.\nTasks: review the sample, report its SHA256-backed observation.\n',{flag:'wx'});
       const registry=new CapabilityRegistry();for(const capability of await readonlyWorkspace(workspace))registry.register(capability);
+      extra=await extend?.();if(extra)for(const capability of extra.registry.list())registry.register(capability);
       const streamFn=createProviderStream({config:current.config,credential:current.credential,budget:current.budget,transport:this.transport,onText});
       const pi=new PiEngine({model:configuredModel(current.config),streamFn,maxTurns:current.config.maxCalls,history:current.history});
       return {workspace,registry,engine:{name:pi.name,async run(session){
-        const answer=sanitize(await pi.run(session),current.credential) as string;
+        const answer=sanitize(await pi.run({...session,invoke:async(name,args)=>{const started=performance.now();const record=await session.invoke(name,args);if(extra)guiSteps.push({name,status:record.status,firstAttempt:record.status==='succeeded',retries:0,durationMs:performance.now()-started});return record;}}),current.credential) as string;
         current.history.push({role:'user',content:sanitize(session.context.goal,current.credential) as string},{role:'assistant',content:answer});
         while(current.history.length>8||JSON.stringify(current.history).length>24000)current.history.splice(0,2);
         return answer;
-      }},cleanup,
-        report:()=>this.status(e.conversationId)};
+      }},cleanup,authorize:extra?.authorize,
+        report:()=>({...this.status(e.conversationId),...(extra?.report?.()??{}),planning:this.transport?'fake-model':'model',calls:current.budget.calls,modelCalls:current.budget.calls-initialCalls,...(extra?{steps:guiSteps}:{})})};
     } catch(error){await cleanup();throw error;}
   }
   close(){this.closed=true;this.sessions.clear();}

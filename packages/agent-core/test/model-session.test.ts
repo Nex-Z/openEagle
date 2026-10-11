@@ -45,7 +45,7 @@ test('explicit provider/API compatibility fails closed and validates endpoint, c
   }
   for(const bad of [{provider:'unknown'},{provider:'openai'},{api:'anthropic-messages'},{endpoint:'http://fixture.invalid'},
     {endpoint:'https://user:pass@fixture.invalid'},{endpoint:'https://fixture.invalid/?key=bad'},{endpoint:'https://fixture.invalid/#fragment'},
-    {maxCalls:5},{maxCalls:0},{maxOutputTokens:2049},{timeoutMs:999},{maxRetries:1},{approved:false},{workspace:'C:/'},{extra:true}]){
+    {maxCalls:13},{maxCalls:0},{maxOutputTokens:2049},{timeoutMs:999},{maxRetries:1},{approved:false},{workspace:'C:/'},{extra:true}]){
     assert.throws(()=>parseModelConfig({...config,...bad}));
   }
 });
