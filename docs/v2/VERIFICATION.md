@@ -176,3 +176,13 @@ observe/click/observe/type 为48.97/107.83/35.92/524.02ms，前三步首次成�
 ## UIA 后续产品接线（2026-10-11）
 
 现已完成共享跨进程桌面 lease、默认关闭的 UI/Pi 宿主目标授权入口，以及 framework-dependent Windows 资源接线和运行时提示；普通 Pi 消息可注册同一 runtime UIA 工具。集中自有窗口验收入口已准备，本轮仅执行 plan 模式，真实 UIA 仍未验收。详见 [UIA_SIDECAR.md](UIA_SIDECAR.md) 后续工程闭环章节。
+
+## 首轮真实自有窗口尝试（2026-10-11）
+
+用户明确批准单轮后，在 `0e20577` 干净工作树、活动 console session、无桌面锁的条件下执行了一次 `v2:test:uia:owned`。专用 WinForms 窗口创建成功（PID 42896 / HWND 1513828），但首个自有控件 oracle 报告窗口不在前台，立即以 `FIXTURE_NOT_FOREGROUND_NO_REFOCUS` 停止。没有激活/抢回焦点，没有重试、鼠键或剪贴板降级。
+
+结果：**启动前置条件失败；所有 UIA 写入、拒绝、取消和焦点保持场景均未运行**。`osUiaExecuted=false`、步骤0、模型调用0、重试0，不能算 UIA 成功或失败准确率。启动未首次通过；没有实际步骤耗时可报告。没有足够证据判定是 Windows 前台授权、隐藏启动参数还是 Shown/激活时序所致，不能归因用户操作。
+
+原始报告逐字节保存在 [report.json](evidence/windows-uia-owned-2026-10-11/report.json)，SHA-256、源提交和独立清理检查见 [manifest.json](evidence/windows-uia-owned-2026-10-11/manifest.json)。报告称 fixtureExited=true，随后独立检查 PID 已不存在、桌面锁不存在，立即告知用户可以恢复操作。
+
+已做离线工程修复：仅对显式授权的可见测试 fixture 使用可见启动；增加 `Start this one authorized UIA round` 按钮。runner 最多等待120秒，必须收到用户点击开始且该窗口在前台的自有 oracle 才启动 UIA；点击后失焦直接失败，不反复 refocus。立即显示窗口标题和按钮说明，关闭/超时有明确失败。新增3项离线门槛测试；**修复后的窗口模式没有再次运行**。下一次真实尝试需要先说明并取得新的单轮授权。

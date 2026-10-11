@@ -1,0 +1,14 @@
+{
+  "sourceCommit": "0e205772fb6d24f68986006f223500d8fb43aa3c",
+  "planning": "scripted",
+  "attempts": 1,
+  "retries": 0,
+  "sha256": "ebc5f85e0131e331da5b93e3d92d1e64e00bef094da5b656d364233258d1bc6d",
+  "bytes": 376,
+  "independentCleanupCheck": {
+    "processId": 42896,
+    "processAlive": false,
+    "desktopLeaseExists": false
+  },
+  "result": "startup rejected; all UIA scenarios not run"
+}

@@ -92,3 +92,13 @@ agent-core 作为 workspace 生产依赖进入包；OpenAI SDK 使用 Pi 已锁�
 最终解包验证已通过：打包内 Pi / UIA / lease / nut-js 在 ELECTRON_RUN_AS_NODE=1 下成功加载（PACKAGED_PI_UIA_LEASE_NATIVE_IMPORT_OK），外置组件 --health 成功。只检查模块/资源，不启动应用窗口，不执行鼠键、UIA 控件操作或模型请求。打包器剩余警告为 mac-only 权限包及构建期 node-addon-api；Windows 所需 native import 已通过。解包验证之后另补了一项 host claim 在途撤销测试，最终源码由离线测试和 CI 验证；解包目录不是交付安装器。
 
 最终源码完整回归：91 项，86 通过、5 Linux-only 跳过，耗时 22.78 秒；UIA transport/integration 14/14、宿主策略4/4、GUI策略16/16、C#纯策略14/14，React/Electron/core类型检查与 Python compileall 通过。真实 UIA/前台窗口仍为 not run。
+
+## 首轮真实自有窗口尝试（2026-10-11）
+
+用户明确批准单轮后，在 `0e20577` 干净工作树、活动 console session、无桌面锁的条件下执行了一次 `v2:test:uia:owned`。专用 WinForms 窗口创建成功（PID 42896 / HWND 1513828），但首个自有控件 oracle 报告窗口不在前台，立即以 `FIXTURE_NOT_FOREGROUND_NO_REFOCUS` 停止。没有激活/抢回焦点，没有重试、鼠键或剪贴板降级。
+
+结果：**启动前置条件失败；所有 UIA 写入、拒绝、取消和焦点保持场景均未运行**。`osUiaExecuted=false`、步骤0、模型调用0、重试0，不能算 UIA 成功或失败准确率。启动未首次通过；没有实际步骤耗时可报告。没有足够证据判定是 Windows 前台授权、隐藏启动参数还是 Shown/激活时序所致，不能归因用户操作。
+
+原始报告逐字节保存在 [report.json](evidence/windows-uia-owned-2026-10-11/report.json)，SHA-256、源提交和独立清理检查见 [manifest.json](evidence/windows-uia-owned-2026-10-11/manifest.json)。报告称 fixtureExited=true，随后独立检查 PID 已不存在、桌面锁不存在，立即告知用户可以恢复操作。
+
+已做离线工程修复：仅对显式授权的可见测试 fixture 使用可见启动；增加 `Start this one authorized UIA round` 按钮。runner 最多等待120秒，必须收到用户点击开始且该窗口在前台的自有 oracle 才启动 UIA；点击后失焦直接失败，不反复 refocus。立即显示窗口标题和按钮说明，关闭/超时有明确失败。新增3项离线门槛测试；**修复后的窗口模式没有再次运行**。下一次真实尝试需要先说明并取得新的单轮授权。
