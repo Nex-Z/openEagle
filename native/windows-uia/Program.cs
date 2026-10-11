@@ -53,8 +53,8 @@ internal sealed class Driver : IDisposable {
   var value=element.Patterns.Value.Pattern.Value.Value??string.Empty;Policy.Require(value.Length<=10000,"UIA_VALUE_TOO_LARGE");var id=string.Join(",",element.Properties.RuntimeId.Value);var identity=Policy.Hash(JsonSerializer.Serialize(new {target.Hwnd,target.ProcessId,target.StartTicks,target.RootId,automationId,id}));var hash=Policy.Hash(value);return new Snapshot(automationId,id,identity,hash,Policy.Hash(identity+":"+hash));
  }
  public Snapshot Inspect(Target target,string automationId)=>Read(target,Find(target,automationId),automationId);
- public Snapshot Set(Target target,string automationId,string expected,string text,Action beforeWrite) {
-  Policy.Text(text);var element=Find(target,automationId);var before=Read(target,element,automationId);Policy.Match(expected,before.Fingerprint);var foreground=GetForegroundWindow();Root(target);beforeWrite();element.Patterns.Value.Pattern.SetValue(text);
+ public Snapshot Set(Target target,string automationId,string expected,string text,Action beforeWrite,Action afterWrite) {
+  Policy.Text(text);var element=Find(target,automationId);var before=Read(target,element,automationId);Policy.Match(expected,before.Fingerprint);var foreground=GetForegroundWindow();Root(target);beforeWrite();element.Patterns.Value.Pattern.SetValue(text);afterWrite();
   Root(target);var after=Read(target,Find(target,automationId),automationId);Policy.Require(after.IdentityHash==before.IdentityHash,"UIA_CONTROL_CHANGED");Policy.Require(after.ValueHash==Policy.Hash(text),"UIA_VALUE_MISMATCH");Policy.Require(GetForegroundWindow()==foreground,"UIA_FOCUS_CHANGED");return after;
  }
  public void Dispose()=>automation.Dispose();
@@ -73,8 +73,11 @@ internal static class Program {
    Policy.Require(request.Version==1&&Guid.TryParse(requestId,out _)&&request.Target is not null,"UIA_BAD_REQUEST");Policy.Require(request.Operation is "bind" or "inspect" or "set","UIA_OPERATION_REJECTED");
    if(request.Operation!="bind")Policy.Require(request.Target!.StartTicks is not null&&request.Target.RootId is not null&&request.AutomationId is {Length:>0 and <=128},"UIA_BINDING_REQUIRED");
    if(request.Operation=="set"){Policy.Text(request.Text);Policy.Require(request.ExpectedFingerprint is {Length:64},"UIA_OBSERVATION_REQUIRED");}
+   void Trace(string phase){try{Console.Error.WriteLine(JsonSerializer.Serialize(new {kind="uia-phase",requestId,phase},Json));}catch(IOException){/* Diagnostics must not change provider execution. */}}
+   Trace("request-validated");
    // Do not instantiate UIA for malformed requests. Never enumerate the desktop root.
-   using var driver=new Driver();object result=request.Operation switch {"bind"=>driver.Bind(request.Target!),"inspect"=>driver.Inspect(request.Target!,request.AutomationId!),"set"=>driver.Set(request.Target!,request.AutomationId!,request.ExpectedFingerprint!,request.Text!,()=>mayHaveChanged=true),_=>throw new Rejected("UIA_OPERATION_REJECTED")};
+   using var driver=new Driver();object result=request.Operation switch {"bind"=>driver.Bind(request.Target!),"inspect"=>driver.Inspect(request.Target!,request.AutomationId!),"set"=>driver.Set(request.Target!,request.AutomationId!,request.ExpectedFingerprint!,request.Text!,()=>{mayHaveChanged=true;Trace("set-call-boundary");},()=>Trace("set-returned")),_=>throw new Rejected("UIA_OPERATION_REJECTED")};
+   Trace("operation-returned");
    Console.WriteLine(JsonSerializer.Serialize(new {version=1,requestId,ok=true,result},Json));return 0;
   }catch(Exception error){Console.WriteLine(JsonSerializer.Serialize(new {version=1,requestId,ok=false,error=new {code=error is Rejected?error.Message:"UIA_PROVIDER_ERROR",mayHaveChanged}},Json));return 0;}
  }

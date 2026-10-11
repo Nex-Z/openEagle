@@ -1,0 +1,406 @@
+{
+  "startedAt": "2026-10-11T08:14:24.361Z",
+  "planning": "scripted",
+  "modelCalls": 0,
+  "osUiaExecuted": true,
+  "steps": [
+    {
+      "name": "shared lease rejection",
+      "status": "passed",
+      "firstAttempt": true,
+      "retries": 0,
+      "durationMs": 0.9958999999998923,
+      "evidence": {
+        "rejected": true
+      }
+    },
+    {
+      "name": "readonly rejection",
+      "status": "passed",
+      "firstAttempt": true,
+      "retries": 0,
+      "durationMs": 172.61249999999927,
+      "evidence": {
+        "code": "UIA_READONLY"
+      }
+    },
+    {
+      "name": "password rejection",
+      "status": "passed",
+      "firstAttempt": true,
+      "retries": 0,
+      "durationMs": 162.59810000000107,
+      "evidence": {
+        "code": "UIA_PASSWORD_REJECTED"
+      }
+    },
+    {
+      "name": "disabled rejection",
+      "status": "passed",
+      "firstAttempt": true,
+      "retries": 0,
+      "durationMs": 172.97530000000006,
+      "evidence": {
+        "code": "UIA_DISABLED"
+      }
+    },
+    {
+      "name": "approval denied",
+      "status": "passed",
+      "firstAttempt": true,
+      "retries": 0,
+      "durationMs": 528.4493000000002,
+      "evidence": {
+        "unchanged": true
+      }
+    },
+    {
+      "name": "whole Unicode value",
+      "status": "failed",
+      "firstAttempt": false,
+      "retries": 0,
+      "durationMs": 532.0191000000013,
+      "error": "UIA_CANCELLED"
+    }
+  ],
+  "retries": 0,
+  "output": "C:\\Users\\17602\\AppData\\Local\\Temp\\openeagle-uia-acceptance-onCd4Y",
+  "textResult": {
+    "status": "unverified",
+    "error": "UIA_CANCELLED",
+    "mayHaveChanged": true
+  },
+  "cancellationResult": {
+    "status": "not-run"
+  },
+  "target": {
+    "hwnd": "9440418",
+    "processId": 6196
+  },
+  "sentinel": {
+    "hwnd": "721450"
+  },
+  "startConfirmedAt": "2026-10-11T08:14:35.771Z",
+  "uiaBindingAttempted": true,
+  "leaseAcquired": true,
+  "status": "failed",
+  "error": "UIA_CANCELLED",
+  "leaseReleased": true,
+  "fixtureExited": true,
+  "focusResult": {
+    "status": "interrupted",
+    "failure": "FIXTURE_FOREGROUND_CHANGED",
+    "method": "20ms requested polling; actual gaps recorded",
+    "provesNoTransientChange": false,
+    "count": 61,
+    "maxGapMs": 32.342900000001464,
+    "samples": [
+      {
+        "sequence": 1,
+        "elapsedMs": 11197.5742,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 2,
+        "elapsedMs": 11202.8475,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 3,
+        "elapsedMs": 11228.0214,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 4,
+        "elapsedMs": 11259.3616,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 5,
+        "elapsedMs": 11290.0501,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 6,
+        "elapsedMs": 11320.6509,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 7,
+        "elapsedMs": 11352.0191,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 8,
+        "elapsedMs": 11382.1888,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 9,
+        "elapsedMs": 11413.3059,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 10,
+        "elapsedMs": 11444.1818,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 11,
+        "elapsedMs": 11475.4146,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 12,
+        "elapsedMs": 11506.1859,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 13,
+        "elapsedMs": 11537.6774,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 14,
+        "elapsedMs": 11569.1605,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 15,
+        "elapsedMs": 11599.9955,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 16,
+        "elapsedMs": 11630.4088,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 17,
+        "elapsedMs": 11661.5148,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 18,
+        "elapsedMs": 11692.2021,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 19,
+        "elapsedMs": 11723.0082,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 20,
+        "elapsedMs": 11753.2793,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 21,
+        "elapsedMs": 11784.083,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 22,
+        "elapsedMs": 11816.1749,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 23,
+        "elapsedMs": 11848.2619,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 24,
+        "elapsedMs": 11880.3094,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 25,
+        "elapsedMs": 11911.7948,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 26,
+        "elapsedMs": 11943.0255,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 27,
+        "elapsedMs": 11973.9813,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 28,
+        "elapsedMs": 12004.2597,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 29,
+        "elapsedMs": 12034.0819,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 30,
+        "elapsedMs": 12065.3132,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 31,
+        "elapsedMs": 12095.6583,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 32,
+        "elapsedMs": 12126.7864,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 33,
+        "elapsedMs": 12158.1077,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 34,
+        "elapsedMs": 12189.6456,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 35,
+        "elapsedMs": 12220.386,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 36,
+        "elapsedMs": 12251.9836,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 37,
+        "elapsedMs": 12283.1359,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 38,
+        "elapsedMs": 12314.2825,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 39,
+        "elapsedMs": 12345.7134,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 40,
+        "elapsedMs": 12376.8103,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 41,
+        "elapsedMs": 12407.8818,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 42,
+        "elapsedMs": 12439.6153,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 43,
+        "elapsedMs": 12470.7957,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 44,
+        "elapsedMs": 12501.5185,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 45,
+        "elapsedMs": 12533.1809,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 46,
+        "elapsedMs": 12564.0671,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 47,
+        "elapsedMs": 12595.3884,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 48,
+        "elapsedMs": 12626.2252,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 49,
+        "elapsedMs": 12657.415,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 50,
+        "elapsedMs": 12687.8578,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 51,
+        "elapsedMs": 12720.0936,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 52,
+        "elapsedMs": 12750.4112,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 53,
+        "elapsedMs": 12781.7146,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 54,
+        "elapsedMs": 12814.0575,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 55,
+        "elapsedMs": 12845.4514,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 56,
+        "elapsedMs": 12877.1329,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 57,
+        "elapsedMs": 12908.6127,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 58,
+        "elapsedMs": 12940.0798,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 59,
+        "elapsedMs": 12970.6382,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 60,
+        "elapsedMs": 13001.839,
+        "role": "sentinel"
+      },
+      {
+        "sequence": 61,
+        "elapsedMs": 13033.0444,
+        "role": "target"
+      }
+    ]
+  },
+  "finishedAt": "2026-10-11T08:14:37.604Z"
+}

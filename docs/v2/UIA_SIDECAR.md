@@ -123,3 +123,41 @@ runner 在窗口就绪立即输出 `UIA_READY`（含两个自有窗口身份、s
 ### 本轮证据
 
 没有运行 `--run-owned-window`，没有新建任何真实窗口，没有UIA调用。仅运行 plan模式、10项离线模拟测试（开始/身份/焦点分类/采样缺口/回复关联/超时/取消/关闭/有界自有进程清理）、C#构建与14项纯策略自检。双窗口的实际WinForms行为、控件AutomationId、后台SetValue及焦点保持仍待一次另行授权的现场验收。
+## 双窗口现场轮次 onCd4Y：后台证据分析（未重跑）
+
+源提交 `52afe4614e25a97054c476723837234ac1d88c0b`。原始报告逐字节保存于 [report.json](evidence/windows-uia-background-2026-10-11/report.json)，SHA-256及事实摘要见 [manifest.json](evidence/windows-uia-background-2026-10-11/manifest.json)。本节分析只使用自有证据，没有查询其他窗口内容或推断用户行为。
+
+| 步骤 | 结果 | 首次耗时 ms |
+|---|---|---:|
+| 共享 lease 拒绝并发 | 通过 | 0.996 |
+| readonly 拒绝 | 通过 | 172.612 |
+| password 拒绝 | 通过 | 162.598 |
+| disabled 拒绝 | 通过 | 172.975 |
+| runtime 审批拒绝且控件不变 | 通过 | 528.449 |
+| Unicode 整段填写 | 中止、值未验证 | 532.019 |
+| stale / replay / 取消专项 | 未运行 | — |
+
+预定9项，执行6项，其中5通过、1中止；后3项未运行。全部重试0，脚本规划、模型调用0。上述不是 LLM 准确率，也不是后台文本能力成功率。
+
+焦点样本1—60均为 sentinel；第61帧变为自有 target。第60帧时间13001.8390ms，第61帧13033.0444ms，间隔31.2054ms；从首帧到变化为1835.4702ms。最大采样间隔32.3429ms，没有 other/none 样本。只能确定变化发生在该采样间隔内，不能精确到某条COM指令。
+
+监测记录 `FIXTURE_FOREGROUND_CHANGED` 后中止活动 worker，该请求报 `UIA_CANCELLED`；这是**monitor 触发的取消**，不是取消专项通过。清理随后完成，报告 fixtureExited/leaseReleased 均为true，现场已立即回传释放。没有重新激活、鼠键、剪贴板或现场重试。
+
+### 能证明与不能证明的调用
+
+- 真实 UIA bind/inspect 已执行：三个控件政策拒绝以及审批拒绝前的 entry 观察均来自实际 sidecar/UIA；不是 fake provider。
+- Unicode步骤确实进入填写流程，但原报告没有记录每个 worker 的 operation 及 SetValue 边界。UIA_CANCELLED 可能来自该步骤的观察、fresh inspect 或 set worker；532ms时长不能替代调用证据。
+- **不能确认 COM SetValue 是否被调用/返回，也不能确认最终值**；mayHaveChanged=true保留unknown。不能声称“没写入”，也不能声称“写入成功后被取消”。
+
+### 根因范围与最小工程修复
+
+60帧稳定后才变化，不支持“monitor 刚启动即误把背景状态当变化”的解释。首个变化样本在清理开始前被记录，所以不是 finally 关闭窗口造成的这个首个变化。期间已有多个 bind/inspect worker 完成，未出现 worker 自己窗口对应的 other 类别；这削弱“一启动任何worker就必然抢焦点”的假设，但不能排除特定worker或provider间接激活target。
+
+已核查 WinForms 官方 v10.0.0 的 [TextBoxBaseAccessibleObject](https://github.com/dotnet/winforms/blob/v10.0.0/src/System.Windows.Forms/System/Windows/Forms/Controls/TextBox/TextBoxBase.TextBoxBaseAccessibleObject.cs) 和 [AccessibleObject](https://github.com/dotnet/winforms/blob/v10.0.0/src/System.Windows.Forms/System/Windows/Forms/Accessibility/AccessibleObject.cs) SetValue路径。本机安装程序集显示10.0.11，不能把相邻版本静态源码当成本轮执行轨迹。当前**没有确证的焦点变化根因**，不据此替换provider、放宽监测或再加操作门槛。
+
+确定的工程缺口是审计不足。本次仅补：固定阶段的worker诊断（request-validated / set-call-boundary / set-returned / operation-returned）、worker启动/退出/取消请求，同一Node单调时钟的step起点和采样接收时间，以及monitor原始stopTrigger。诊断不含文本/目标内容，按请求ID匹配、8192字节限长；观察器异常不能改变执行结果或触发重试。新增离线回归验证这些边界。
+
+`set-call-boundary`只表示到达调用前边界，不保证已进入COM；`set-returned`才证明调用返回，仍需独立值oracle才算写入验证成功。新增审计不能追溯补全旧报告。
+
+下一步仅在另行授权后做有界验证：先用新审计定位变化相对worker/set边界的顺序；若已确认只发生在SetValue边界，再单独分析目标provider。当前保持backgroundVerified=false；本轮没有重新运行现场，也没有新增测试门槛替代能力。
+本次后台验证：UIA transport / Pi integration / sentinel 离线回归 26/26，C# 纯策略自检 14/14，TypeScript core、React、Electron 类型检查通过。新增审计测试首次因测试内子进程脚本换行转义错误失败，修正测试后通过；这不是现场重试，也不计入现场首次成功率。未再运行真实窗口。
