@@ -1,0 +1,90 @@
+{
+  "readOnly": {
+    "kind": "read-only-owned-window",
+    "inputCalls": 0,
+    "activationCalls": 0,
+    "screenshotCalls": 0,
+    "pid": 10584,
+    "title": "OpenEagle read-only HWND diagnosis",
+    "bufferLength": 8,
+    "handleHex": "50099e0000000000",
+    "handleNumber": 10357072,
+    "electronFocused": false,
+    "nativeWindowCount": 739,
+    "nativeMatch": true,
+    "nativeHandleTypes": [
+      "number"
+    ],
+    "nativeActiveHandle": 461958,
+    "nativeOwnTitle": "OpenEagle read-only HWND diagnosis",
+    "nativeOwnRegion": {
+      "left": 1560,
+      "top": 864,
+      "width": 720,
+      "height": 360
+    },
+    "os": {
+      "targetHandle": 10357072,
+      "isWindow": true,
+      "isVisible": true,
+      "rootHandle": 10357072,
+      "targetPid": 10584,
+      "targetThread": 43644,
+      "targetSession": 1,
+      "diagnosticSession": 1,
+      "targetDesktop": "Default",
+      "diagnosticWindowStation": "WinSta0",
+      "inputDesktop": "Default",
+      "inputDesktopError": 0,
+      "foregroundHandle": 461958,
+      "foregroundPid": 37480,
+      "foregroundSession": 1,
+      "foregroundDesktop": "Default"
+    }
+  },
+  "attempt": {
+    "runtimeMetrics": {},
+    "target": {
+      "title": "OpenEagle GUI 6a7914da-d346-4c49-b9db-e31b593d2774",
+      "nativeHandleHex": "8604fc0100000000"
+    },
+    "approvalAudit": [],
+    "activationAttempts": 1,
+    "nativeFocusCalls": 1,
+    "authorizationSource": "conversation-fixture-test",
+    "stopReason": "GUI_NATIVE_HANDLE_MISMATCH",
+    "actuation": "nut-js OS input",
+    "capture": "nut-js OS region, target content bounds only",
+    "state": {
+      "value": "",
+      "saved": "",
+      "clicks": 0,
+      "inputs": 0,
+      "trustedClicks": 0,
+      "trustedInputs": 0,
+      "approved": false,
+      "focused": "",
+      "controls": {
+        "entry": {
+          "x": 259.6666717529297,
+          "y": 299.7395935058594
+        },
+        "save": {
+          "x": 90.66666793823242,
+          "y": 379.7395935058594
+        }
+      }
+    },
+    "stage": 0,
+    "images": [],
+    "exact": false
+  },
+  "attemptElapsedMs": 13092.0445,
+  "osInputVerified": false,
+  "independentFinalOracle": "not-run",
+  "successfulOsSteps": 0,
+  "successfulOsScreenshots": 0,
+  "firstAttemptAccuracy": null,
+  "completionClass": "blocked-before-input",
+  "nativeRetries": 0
+}

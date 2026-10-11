@@ -23,3 +23,10 @@ export class GuiConsent {
   revoke(){this.stopped=true;this.source=undefined;}
   get approved(){return !this.stopped&&this.source!==undefined;}
 }
+
+// v2.7.5 的声明为 void，但 N-API 实际返回多个 Win32 调用的合取 boolean。
+// 无论返回 true/false/undefined，都不能替代实际前台窗口身份核对。
+// 激活只调用一次，成功与否始终交给调用方的原生 HWND/焦点核对。
+export async function activateGuiWindowOnce(activate:()=>Promise<unknown>,verify:()=>Promise<void>,signal:AbortSignal):Promise<string>{
+  signal.throwIfAborted();const result=await activate();signal.throwIfAborted();await verify();signal.throwIfAborted();return typeof result;
+}

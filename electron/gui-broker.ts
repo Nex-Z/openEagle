@@ -6,7 +6,7 @@ import {mkdtemp,writeFile,mkdir,rmdir} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {CapabilityTicketStore,type DesktopCapability} from './capability-ticket-store';
 import {performMouseAction,performKeyboardAction} from './input';
-import {GuiAdmission,GuiConsent} from './gui-policy';
+import {GuiAdmission,GuiConsent,activateGuiWindowOnce} from './gui-policy';
 import {imageToPngBuffer} from './screenshot';
 export interface GuiBinding {
   create():Promise<BrowserWindow>;
@@ -36,6 +36,9 @@ export class GuiBroker {
   private readonly approvals:Record<string,unknown>[]=[];
   private activationAttempts=0;
   private nativeFocusCalls=0;
+  private nativeFocusReturnType:string|undefined;
+  private nativeFocusReturnValue:boolean|null=null;
+  private lastForegroundHandle:number|undefined;
   private authorizationSource:string|undefined;
   private stage=0;
   private stopReason='';
@@ -72,8 +75,8 @@ export class GuiBroker {
       const bytes=win.getNativeWindowHandle();const expected=bytes.length===8?Number(bytes.readBigUInt64LE()):bytes.readUInt32LE();
       const native=(await getWindows()).find(w=>(w as unknown as {windowHandle?:number}).windowHandle===expected);
       if(!native)throw this.stopError('GUI_INITIAL_TARGET_UNAVAILABLE');
-      this.nativeFocusCalls++;if(!await native.focus())throw this.stopError('GUI_INITIAL_ACTIVATION_REJECTED');
-      await new Promise(resolve=>setTimeout(resolve,100));this.controller.signal.throwIfAborted();
+      this.nativeFocusCalls++;
+      await activateGuiWindowOnce(async()=>{const result=await native.focus();this.nativeFocusReturnType=typeof result;this.nativeFocusReturnValue=typeof result==='boolean'?result:null;return result;},async()=>{await new Promise(resolve=>setTimeout(resolve,100));await this.guard();},this.controller.signal);
     }
     await this.guard();return {target:title,evidenceDirectory:this.output};
   }
@@ -82,7 +85,7 @@ export class GuiBroker {
     const win=this.target;if(!win||win.isDestroyed()||!win.isVisible()||!win.isFocused())throw this.stopError('GUI_FOCUS_LOST');
     const active=await getActiveWindow();this.controller.signal.throwIfAborted();
     // Version-pinned nut-js exposes its native handle on the Window object; fail closed if absent.
-    const actual=(active as unknown as {windowHandle?:number}).windowHandle;
+    const actual=(active as unknown as {windowHandle?:number}).windowHandle;this.lastForegroundHandle=actual;
     const bytes=win.getNativeWindowHandle();const expected=bytes.length===8?Number(bytes.readBigUInt64LE()):bytes.readUInt32LE();
     if(actual!==expected)throw this.stopError('GUI_NATIVE_HANDLE_MISMATCH');if(!win.isFocused())throw this.stopError('GUI_FOCUS_LOST');
     if(checkPointer&&this.pointer){const position=await mouse.getPosition();this.controller.signal.throwIfAborted();if(position.x!==this.pointer.x||position.y!==this.pointer.y)throw this.stopError('GUI_POINTER_TAKEOVER');}
@@ -154,7 +157,7 @@ export class GuiBroker {
     this.closing=(async()=>{
       try {
         await this.queue;
-        const report={runtimeMetrics:metrics,target:this.targetIdentity,approvalAudit:this.approvals,activationAttempts:this.activationAttempts,nativeFocusCalls:this.nativeFocusCalls,authorizationSource:this.authorizationSource,stopReason:this.stopReason,actuation:'nut-js OS input',capture:'nut-js OS region, target content bounds only',state:await this.binding.inspect(),stage:this.stage,images:this.images,...this.binding.summary()};
+        const report={runtimeMetrics:metrics,target:this.targetIdentity,approvalAudit:this.approvals,activationAttempts:this.activationAttempts,nativeFocusCalls:this.nativeFocusCalls,nativeFocusReturnType:this.nativeFocusReturnType,nativeFocusReturnValue:this.nativeFocusReturnValue,lastForegroundHandle:this.lastForegroundHandle,authorizationSource:this.authorizationSource,stopReason:this.stopReason,actuation:'nut-js OS input',capture:'nut-js OS region, target content bounds only',state:await this.binding.inspect(),stage:this.stage,images:this.images,...this.binding.summary()};
         if(this.output)await writeFile(join(this.output,'oracle.json'),JSON.stringify(report,null,2));
         return {...report,evidenceDirectory:this.output};
       } finally {

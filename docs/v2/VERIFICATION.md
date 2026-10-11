@@ -112,3 +112,5 @@ Real hidden Electron 42.2.0 UI test (`scripts/verify-v2-fixture.cjs`) passed: co
 完整核心回归 76 项：71 passed、0 failed、5 Linux-only skipped；新增 GUI 策略 4/4，包含在核心内的 Pi GUI/后台拒绝接线 2/2。既有隐藏 Pi UI 回归通过；三层类型、Vite、Python compileall 通过。真实 GUI 两轮 HWND 不匹配在输入前停止，一轮人工批准超时；成功 OS 输入/截图证据为 0，性能和准确率未验证，不能标通过。详见 [GUI_WINDOWS.md](./GUI_WINDOWS.md)。
 
 用户确认本次前台时段后的单次受限激活仍返回 GUI_INITIAL_ACTIVATION_REJECTED（约 6.10 秒），stage/截图/输入计数均为 0，停止原生路径。生产 UI 与独立测试批准来源回归增至 5/5；精确窗口标题、原始证据和诊断歧义见 GUI_WINDOWS.md。
+
+恢复开发只读诊断确认自有 HWND、native 枚举和 Session 1/Default 桌面一致。独立前台核对后的单次激活仍 GUI_NATIVE_HANDLE_MISMATCH，零截图/输入，停止重复原生尝试。新增 2 个激活结果/取消回归，GUI 策略 7/7；细节与原始 JSON 见 GUI_WINDOWS.md。

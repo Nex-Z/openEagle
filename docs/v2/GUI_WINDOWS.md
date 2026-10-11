@@ -59,3 +59,18 @@ UI 先显示后台检查，再单独启动专用前台窗口；正常路径还�
 本轮约 6104.49ms 后返回 GUI_INITIAL_ACTIVATION_REJECTED，未进行截图或输入，不再重试。确切窗口标题为 OpenEagle GUI 29699772-feac-413c-ad74-e5d17636018a，现已关闭。oracle 位于本机临时目录 openeagle-gui-evidence-Qhj01t/oracle.json，activationAttempts=1、stage=0、images=[]、trustedClicks=0、trustedInputs=0、approved=false、exact=false。此版本失败码合并了“枚举未找到目标”和“focus 返回 false”，不能据此断定锁屏、OS 权限拒绝或实际调用过 focus。后续诊断代码已将 GUI_INITIAL_TARGET_UNAVAILABLE 分开，并记录 nativeFocusCalls 与 authorizationSource；本轮没有再次运行 native 来补齐该细分证据。
 
 这是技术激活路径尚未验证成功，不是要求额外人工批准的政策。下一步可由用户回到可交互桌面后主动聚焦一次性入口打印的专用窗口；若实际锁屏才由用户解锁。也可先只读诊断窗口枚举/会话归属，不操作其他窗口，不绕 UAC，不重复强抢焦点。成功 OS 截图/输入证据仍为 0，后续交互矩阵和 Pi→OS 端到端仍未通过。
+
+
+## 恢复开发后的只读定位与一次验收（2026-10-11）
+
+证据归档：[windows-gui-diagnostic-2026-10-11.json](./evidence/windows-gui-diagnostic-2026-10-11.json)。只读脚本 scripts/diagnose-v2-gui.cjs 创建 showInactive 自有窗口，调用现有 nut-js 枚举/读取该窗口，并用已安装 PowerShell 7 查询 HWND/进程/Session/桌面元数据。诊断不包含输入、截图、激活、切桌面或提权 API，也没有新增生产 native 驱动。临时诊断 profile 和 host 清理，JSON 单独保留。
+
+结果：8 字节 HWND=10357072，IsWindow/IsVisible=true，根句柄相同；nut-js 枚举精确匹配，读取的自有窗口标题相同。目标 PID=10584，与 Electron PID 一致；目标、诊断进程、前台进程均在 Session 1，目标与输入桌面均为 Default，窗口站为 WinSta0。此刻无句柄转换错误、跨 Session/桌面或锁屏证据；没有读取其他窗口标题、内容或截图。
+
+曾根据本地 libnut-win32/index.d.ts 的 void 声明初步怀疑返回值适配，随后核对同版 v2.7.5 上游源码纠正：N-API 实际导出 Boolean，Windows 实现返回 AllowSetForegroundWindow、BringWindowToTop、SetForegroundWindow 的合取，不能宣称 void 就是实际失败根因。现在一次激活后必查真实前台 HWND/焦点，不把任何返回值当成功证据；回归覆盖 undefined/false/true 都必须核对、核对失败不重试、取消前不调用。源文件：https://github.com/ZachJW34/libnut-core/blob/v2.7.5/src/main.cc 与 https://github.com/ZachJW34/libnut-core/blob/v2.7.5/src/win32/window_manager.cc 。Windows 官方说明前台设置受进程条件限制，即使满足条件也可能拒绝：https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setforegroundwindow 。这解释一种可能机制，不证明本机具体拒绝原因。
+
+恢复后的首轮先因既有 Vite 1420 服务已退出，在隐藏主 UI 加载处超时约 20.02 秒，未到激活。已增加 GUI_OWN_UI_SERVER=1：验收脚本启动自己拥有的 literal-loopback Vite 并 finally 关闭，strictPort 禁止占用其他服务。补齐该前置条件后的唯一激活尝试仍在约 13.09 秒后返回 GUI_NATIVE_HANDLE_MISMATCH：nativeFocusCalls=1、activationAttempts=1、授权源 conversation-fixture-test；精确标题 OpenEagle GUI 6a7914da-d346-4c49-b9db-e31b593d2774。stage=0、images=[]、trustedClicks=0、trustedInputs=0、exact=false；窗口已关闭，未重试输入或重复抢焦点。
+
+因此实际原因已缩小为：句柄/会话/桌面正常，现有一次 native 前台请求之后目标仍不是系统前台。源码类型声明不一致并非已证实根因，具体 Win32 拒绝条件/前台竞争仍未知；没有以放宽检查、修改前台锁参数、模拟 Alt、附加输入线程或提权来绕过。后续记录现在还保留返回类型/值和实际前台句柄，但没有再运行 native 来补这份数据。
+
+安全策略回归现为 7/7；core/React/Electron 类型检查通过。OS 输入/截图、故障矩阵和 Pi→OS 端到端仍未验证。成功 OS 步骤=0，速度和首次步骤准确率 N/A；完成分类为 blocked-before-input，不是干净完成或恢复后完成。需要用户主动把下一次专用窗口置于前台后再继续，或明确进行更多只读的系统前台竞争诊断；不要求为了产品测试批准按钮额外返回电脑。

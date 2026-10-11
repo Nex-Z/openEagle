@@ -50,4 +50,4 @@ async function scenario(name){
  }catch(error){console.error(JSON.stringify({scenario:name,status:'failed',durationMs:performance.now()-started,error:String(error),osInputVerified:false}));throw error;}finally{try{await app.evaluate(()=>{for(const w of globalThis.__guiExtra??[])if(!w.isDestroyed())w.destroy();});}finally{await app.close();if(profile&&path.dirname(profile).toLowerCase()===os.tmpdir().toLowerCase()&&path.basename(profile).startsWith('openeagle-v2-app-'))fs.rmSync(profile,{recursive:true,force:true});}}
 
 }
-(async()=>{for(const name of (process.env.GUI_SCENARIOS||'success,denied,stale,closed,focus,cancel,lease,replay,pi').split(','))await scenario(name);})().catch(error=>{console.error(error);process.exitCode=1;});
+(async()=>{let server;try{if(process.env.GUI_OWN_UI_SERVER==='1'){server=await (await import('vite')).createServer({root,server:{host:'127.0.0.1',port:1420,strictPort:true}});await server.listen();}for(const name of (process.env.GUI_SCENARIOS||'success,denied,stale,closed,focus,cancel,lease,replay,pi').split(','))await scenario(name);}finally{await server?.close();}})().catch(error=>{console.error(error);process.exitCode=1;});
