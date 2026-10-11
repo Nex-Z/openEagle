@@ -5,11 +5,12 @@ export const GUI_INTERACTION={interactionMode:'foreground',usesSystemInput:true,
 export function desktopCapabilities(client:DesktopCapabilityClient,requestId:string,tickets:Map<string,string>,target:string):Capability[]{
   return ['desktop_observe','desktop_click','desktop_type'].map(name=>({
     name,interaction:name==='desktop_observe'?{...GUI_INTERACTION,usesSystemInput:false,mayChangeFocus:false}:GUI_INTERACTION,
-    description:name+': host-authorized visible window; foreground lease required; no automatic retry; click coordinates are content DIP pixels',availability:{supported:true},
-    inputSchema:name==='desktop_observe'?{type:'object',properties:{},additionalProperties:false}:{type:'object',properties:{target:{type:'string'},observationId:{type:'string'},...(name==='desktop_click'?{x:{type:'number',minimum:0},y:{type:'number',minimum:0}}:{text:{type:'string',minLength:1,maxLength:80}})},required:['target','observationId',...(name==='desktop_click'?['x','y']:['text'])],additionalProperties:false},
+    description:name+': host-authorized visible window; foreground lease required; no automatic retry; click coordinates are content DIP pixels'+(name==='desktop_type'?'; ASCII scan-code diagnostic only, not Unicode text insertion; host text receipt required; active IME composition stops input; prefer supported semantic text filling':''),availability:{supported:true},
+    inputSchema:name==='desktop_observe'?{type:'object',properties:{},additionalProperties:false}:{type:'object',properties:{target:{type:'string'},observationId:{type:'string'},...(name==='desktop_click'?{x:{type:'number',minimum:0},y:{type:'number',minimum:0}}:{text:{type:'string',minLength:1,maxLength:80,pattern:'^[ -~]+$'}})},required:['target','observationId',...(name==='desktop_click'?['x','y']:['text'])],additionalProperties:false},
     async prepare(args,_context,signal){
       if(!args||typeof args!=='object'||Array.isArray(args))throw new Error('GUI_ARGUMENT_REJECTED');
       const payload=args as Record<string,Json>;const observe=name==='desktop_observe';
+      if(name==='desktop_type'&&(typeof payload.text!=='string'||payload.text.length<1||payload.text.length>80||!/^[ -~]+$/.test(payload.text)))throw new Error('GUI_ASCII_TEXT_ONLY');
       if(!observe&&payload.target!==target)throw new Error('GUI_TARGET_MISMATCH');
       const inspected=observe?undefined:await client.request(requestId,'screen.capture',{operation:'inspect',observationId:payload.observationId,target},{signal});
       const key=JSON.stringify({name,args});let output:ActionOutput|undefined;

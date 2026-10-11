@@ -61,3 +61,23 @@ observe/click/observe/type 为 49.51/88.15/27.54/236.51ms，前三步首次成�
 仅自有 fixture 新增有界原始按键/输入/组合事件审计，记录时间、key/code/data、修饰键、选区和目标值；broker 记录逐字符调用和接收时间。审计事件不加入观察指纹，避免异步 keyup 日志使已批准目标无意义失效。无全局键盘钩子，不收集其他应用输入。
 
 离线 GUI 回归 15/15，涵盖首尾/连续空格、多字节明确拒绝、异步次序、接收超时不继续输入、等待中取消、旧延迟设置恢复及终态释放。本轮代码修复后未再打开 GUI；新接收确认能否解决现场错字仍需未来明确授权的实测，完整 GUI 与 Pi→OS 验收仍未通过。
+
+## 2026-10-11 第三轮：首字符进入组合输入的直接证据
+
+[第三轮原始 oracle](evidence/windows-gui-manual-2026-10-11-round3/oracle.json) 与同目录两张目标 OS 截图、manifest 已归档，原始字节保持不变。窗口 OpenEagle GUI 17eaec4f-8d9f-4b38-a4bd-8b192691b890；真实 UI 批准；自动激活/重试/模型调用均0。
+
+只发出一次字符 O（codePoint79）；原始事件依次包含 Shift keydown、KeyO/Process、compositionstart、compositionupdate(O)、beforeinput/input 的 insertCompositionText，最后仍 isComposing=true，没有 compositionend。最终 value=O、trustedInputs=1、composing=true、焦点entry、选区(1,1)、saved为空。GUI_TEXT_RECEIPT_TIMEOUT 在约500ms确认等待后停止，没有发出第二字符，也没有尝试提交/取消候选或修改输入法。87次指针差值全部0。
+
+observe/click/observe/type 为48.97/107.83/35.92/524.02ms，前三步首次成功，第四步failed；整体脚本11.53秒含人工批准等待，不等于输入耗时。06:24:20.437Z已释放鼠键，终态正常到达，窗口/进程/租约/服务清理。完整链路仍失败，但本轮实测证明逐字符确认会阻止未提交的组合文本继续累积。
+
+本轮已证实的是“首字符进入未完成组合输入，触发确认超时”；不能将前两轮缺少逐键记录的错字全部归因为同一个原因。当前驱动与IME方案边界见 [GUI_TEXT_INPUT.md](GUI_TEXT_INPUT.md)。归档后不再打开窗口或自动切输入法，等待用户对下一轮的明确答复。
+
+## 2026-10-11 第四轮与方向调整
+
+[第四轮原始 oracle](evidence/windows-gui-manual-2026-10-11-round4/oracle.json) 保留原始10条键盘/组合事件及全部坐标。用户同意自行切英文后运行，但事件仍显示首O进入compositionstart/insertCompositionText，无compositionend，不能把用户点击当成英文直输已生效的证明。没有自动切输入法、激活或重试。
+
+首45次原生坐标读数均为(1811,1113)，移动完成358.70ms后变为(1810,1113)，前次读数到差异约14.85ms；此期间没有再次setPosition，也没有再算DIP，故不能将迟发变化直接归为首次1.5缩放的确定性取整。驱动同版源码moveMouse使用绝对坐标归一化，getMousePos使用GetCursorPos；OS采样/坐标上下文变化或其他移动来源仍未确定。未扩大容差、未回移或重试。
+
+停止GUI_POINTER_TAKEOVER，value=O、saved空，stage1。observe/click/observe/type为39.50/111.43/33.77/217.95ms，前三步首次成功，第四步failed；脚本总11.19秒含人工等待。06:28:06.182Z已释放鼠键，清理完成。
+
+用户纠正后不再把逐字oracle作为产品默认填写方式：新增独立text_fill，复用现有browser_fill整段填写与独立验证，当前目标仅受支持的隔离loopback浏览器元素；跨工具demo已改走text_fill。系统按键诊断desktop_type明确ASCII扫描码，并在prepare前拒绝不支持文本；已观测IME组合状态现在明确报GUI_IME_COMPOSITION_ACTIVE，不等待笼统超时。没有新增native桥、UIA或剪贴板操作。详细架构、候选和社区线索见[GUI_TEXT_INPUT.md](GUI_TEXT_INPUT.md)。

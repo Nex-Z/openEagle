@@ -23,6 +23,8 @@ test('manual broker report passes the unchanged strict preload validator without
  const broker=new context.exports.GuiBroker({inspect:async()=>({}),summary:()=>({})},true);
  broker.recordPointer({x:150,y:300},{x:150,y:300},'keyboard:before');
  assert.throws(()=>broker.recordPointer({x:150,y:300},{x:151,y:300},'keyboard:after'),/GUI_POINTER_TAKEOVER/);
+ const trajectory=JSON.parse(fs.readFileSync(path.resolve(__dirname,'../docs/v2/evidence/windows-gui-manual-2026-10-11-round4/oracle.json'),'utf8')).pointerAudit.filter(x=>x.delta);
+ const replay=new context.exports.GuiBroker({inspect:async()=>({}),summary:()=>({})},true);assert.equal(trajectory.length,46);for(const point of trajectory.slice(0,-1)){assert.equal(point.delta.x,0);replay.recordPointer(point.expected,point.actual,point.phase);}const last=trajectory.at(-1);assert.throws(()=>replay.recordPointer(last.expected,last.actual,last.phase),/GUI_POINTER_TAKEOVER/);const replayReport=await replay.close();assert.equal(replayReport.pointerAudit.at(-1).delta.x,-1);
  const report=await broker.close();
  assert.equal(report.pointerAudit.length,2);assert.equal(report.pointerAudit[1].delta.x,1);assert.equal(report.pointerAudit[1].phase,'keyboard:after');assert.equal(report.stopReason,'GUI_POINTER_TAKEOVER');
  const validation={exports:{},require:()=>({})};const preload=fs.readFileSync(path.resolve(__dirname,'../dist-electron/preload.js'),'utf8');vm.runInNewContext(preload.slice(0,preload.indexOf('const BACKEND_PORT_CHANNEL')),validation);
@@ -46,3 +48,5 @@ test('existing input adapter and installed nut-js preserve string sequence offli
  received='';await assert.rejects(context.exports.performKeyboardAction({action:'type_text',text:'ab'},async phase=>{if(phase==='after')throw Error('CANCEL');}),/CANCEL/);assert.equal(received,'a');assert.equal(keyboard.config.autoDelayMs,17);
  const {guiTargetHtml}=require('../dist-electron/gui-target.js');new vm.Script(guiTargetHtml.split('<script>')[1].split('</script>')[0]);
 });
+
+test('observed IME composition is an explicit failure, never a truthy receipt or automatic commit',async()=>{let writes=0,polls=0;await assert.rejects(typeGuardedText('OpenEagle',async()=>{writes++;},async()=>{},async()=>waitForTextReceipt(async()=>{polls++;return 'composition-active';},async()=>{})),/GUI_IME_COMPOSITION_ACTIVE/);assert.equal(writes,1);assert.equal(polls,1);});

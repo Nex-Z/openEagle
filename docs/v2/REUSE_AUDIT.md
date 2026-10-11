@@ -37,3 +37,7 @@ Preload guards/framing, socket facade and desktop client are selectively copied/
 ## Windows GUI 接线（2026-10-11）
 
 复用 desktop-tools 通道契约、既有 DesktopCapabilityClient、原样 CapabilityTicketStore 与 input.ts/nut-js 驱动；GuiBroker 选择性适配原 CapabilityBroker 的请求/票据边界，增加专用窗口租约、身份/焦点/观察检查。GuiBinding 与 fixture 策略分离，Pi 宿主扩展注册同一工具。没有复制 BackendApplication 或新建 native 栈。原 capability-broker.ts SHA256：04f68f88d71a7620b0f2c55842ce3f1b6c91b617bd5399afc51238c6469014b8；desktop-tools.ts：1ad2ee1bc73af72fc296405cb551f24754b807fd96a5db54827abd5f4f8b9e59。实际 OS 验收阻塞和完整限制见 [GUI_WINDOWS.md](./GUI_WINDOWS.md)。
+
+## 文本与按键分离（2026-10-11）
+
+text_fill复用现有browser_fill的prepare/指纹/资源/effects/handle.fill/verify，注册在原browser能力集中；不新建执行器或扩大来源权限。demo改走整段语义填写，原browser_fill兼容保留。系统扫描码desktop_type保留为显式诊断；UIA桥、原生Unicode入口及安全剪贴板事务均未实现。已有Electron insertText只覆盖自有webContents，旧quick-assistant剪贴板快照没有并发保护，未拿来充当通用桌面文本能力。详见[GUI_TEXT_INPUT.md](GUI_TEXT_INPUT.md)。

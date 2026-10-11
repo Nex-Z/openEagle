@@ -1,4 +1,4 @@
-import {waitForTextReceipt} from './guarded-text';
+import {waitForTextReceipt,type TextReceipt} from './guarded-text';
 import {join} from 'node:path';
 import {BrowserWindow,ipcMain,screen} from 'electron';
 import {getActiveWindow,getWindows,mouse,screen as nativeScreen,Region} from '@nut-tree-fork/nut-js';
@@ -15,7 +15,7 @@ export interface GuiBinding {
   approve(capability:string,args:Record<string,unknown>,stage:number):Promise<boolean>;
   verify(capability:string,args:Record<string,unknown>,stage:number):Promise<boolean>;
   summary():Record<string,unknown>;
-  textReceipt?(prefix:string):Promise<boolean>;
+  textReceipt?(prefix:string):Promise<TextReceipt>;
 }
 
 

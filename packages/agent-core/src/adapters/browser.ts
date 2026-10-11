@@ -1,3 +1,4 @@
+import {createTextFillCapability} from './text-fill.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { chromium, type Browser, type BrowserContext, type ElementHandle, type Page } from 'playwright';
 import type { Capability, Effect, Json, PreparedAction } from '../contracts.js';
@@ -290,5 +291,6 @@ export function createBrowserCapabilities(options: BrowserOptions = {}): {
         return prepared;
       }),
   ];
+  capabilities.push(createTextFillCapability(capabilities.find(cap=>cap.name==='browser_fill')!));
   return { capabilities, close };
 }

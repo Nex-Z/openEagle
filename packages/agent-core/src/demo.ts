@@ -54,7 +54,7 @@ export async function runDemo(options: {chromiumExecutable?: string; windowsMode
     const runtime = new AgentRuntime({registry,onMetric:metrics.collect,cleanup:()=>browser.close(),authorize:async request => {
       // 仅批准本次临时夹具的固定动作；生产宿主必须实现自己的可信批准界面。
       if (request.capability === 'browser_navigate') return request.target === `${origin}/`;
-      if (request.capability === 'browser_fill') return request.args !== null && typeof request.args === 'object' && !Array.isArray(request.args) && request.args.value === nonce;
+      if (request.capability === 'text_fill') return request.args !== null && typeof request.args === 'object' && !Array.isArray(request.args) && request.args.text === nonce;
       if (request.capability === 'browser_click') return request.args !== null && typeof request.args === 'object' && !Array.isArray(request.args) && request.args.expectedText === receipt;
       if (request.capability === 'files_write') return request.target === join(workspace,'receipt.txt') && !request.effects.includes('destructive');
       return request.capability === 'cli_run' && request.target.startsWith('hash_receipt:');
@@ -68,7 +68,7 @@ export async function runDemo(options: {chromiumExecutable?: string; windowsMode
       const elements=observation.elements as Record<string,Json>[];
       const input=elements.find(e=>e.tag==='input'); const button=elements.find(e=>e.tag==='button');
       if (!input || !button) throw new Error('缺少已观察表单元素');
-      checked(await session.invoke('browser_fill',{ref:input.ref!,value:discoveredNonce}));
+      checked(await session.invoke('text_fill',{target:{kind:'browser-element',ref:input.ref!},text:discoveredNonce}));
       checked(await session.invoke('browser_click',{ref:button.ref!,expectedText:`receipt-${discoveredNonce}`}));
       const savedObservation=checked(await session.invoke('browser_read',{}));
       const saved=String(savedObservation.text).trim();

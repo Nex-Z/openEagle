@@ -27,7 +27,7 @@ export function createGuiFixture(smoke=false):GuiBroker {
     async verify(capability,args,stage){
       return capability==='desktop.keyboard'?state.value===args.text&&state.trustedInputs===GUI_TEXT.length:stage===1?state.focused==='entry'&&state.trustedClicks===1:state.saved===GUI_TEXT&&state.trustedClicks===2;
     },
-    async textReceipt(prefix){return state.value===prefix&&state.trustedInputs===prefix.length&&state.focused==='entry'&&state.composing===false&&state.selectionStart===prefix.length&&state.selectionEnd===prefix.length;},
+    async textReceipt(prefix){if(state.composing===true)return 'composition-active';return state.value===prefix&&state.trustedInputs===prefix.length&&state.focused==='entry'&&state.composing===false&&state.selectionStart===prefix.length&&state.selectionEnd===prefix.length;},
     summary(){return {eventAudit:state.events??[],exact:state.saved===GUI_TEXT&&state.trustedClicks===2&&state.trustedInputs===GUI_TEXT.length};},
   };
   return new GuiBroker(binding,smoke);

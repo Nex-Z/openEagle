@@ -1,0 +1,21 @@
+{
+  "sha256": {
+    "oracle.json": "f77e0fe40d5832d09cae23bddb65f8868f5e9c091a1ce91a9b562ea3d70354f1",
+    "window-0.png": "e9fbd8de40bc18a6c0195b1f2cf3688d30f9d3785a7458458f8555713f9e5468",
+    "window-1.png": "f0d3f988a5e77f413f9e1b604c70f3b81865164b27d3c34a8c00f2ba4e1c80ce"
+  },
+  "planning": "scripted",
+  "modelCalls": 0,
+  "attempts": 1,
+  "retries": 0,
+  "complete": false,
+  "stopReason": "GUI_POINTER_TAKEOVER",
+  "releasedAt": "2026-10-11T06:28:06.182Z",
+  "scriptDurationMs": 11188.6401,
+  "pointerChecks": 46,
+  "nonzeroDeltas": 1,
+  "keyboardCalls": 1,
+  "eventCount": 10,
+  "compositionEndCount": 0,
+  "nativeFocusCalls": 0
+}

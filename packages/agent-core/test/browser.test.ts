@@ -268,3 +268,11 @@ test('宿主cleanup覆盖审批等待期间取消并关闭后台页面', async (
     assert.throws(()=>runtime.start({goal:'reuse',workspace:tmpdir()},new ScriptedEngine(async()=>'')),/仅允许一个任务/);
   }finally{await session.close();await stop(server);}
 });
+
+test('text_fill replaces Unicode and whitespace semantically and never falls back to desktop keys',async()=>{
+ const expected='  中文 😀 é  repeated  spaces\nsecond line  ';let submitted='';
+ const server=createServer((request,response)=>{response.setHeader('content-type','text/html; charset=utf-8');if(request.url?.startsWith('/saved')){submitted=new URL(request.url,'http://fixture').searchParams.get('text')??'';response.end('<h1>Saved text</h1>');}else response.end('<form action="/saved"><textarea name="text"></textarea><button>Save</button></form>');});
+ const origin=await listen(server),session=createBrowserCapabilities({executablePath,allowedOrigins:[origin]});const cap=(name:string)=>session.capabilities.find(c=>c.name===name)!;
+ try{const text=cap('text_fill');assert.equal(text.interaction?.usesSystemInput,false);assert.equal(text.interaction?.interactionMode,'background');await assert.rejects(text.prepare({target:{kind:'desktop-control',ref:'unknown'},text:'x'},task),/UNSUPPORTED/);await execute(await cap('browser_navigate').prepare({url:origin},task));const snapshot=(await execute(await cap('browser_read').prepare({},task))).output;const fill=await text.prepare({target:{kind:'browser-element',ref:findRef(snapshot,'textarea')},text:expected},task);assert.deepEqual(fill.effects,['write','external-submit']);const result=await execute(fill);assert.equal(result.verified,true);assert.equal(result.output.evidence.at(-1)?.kind,'text-method');await execute(await cap('browser_click').prepare({ref:findRef(snapshot,'button'),expectedText:'Saved text'},task));assert.equal(submitted.replace(/\r\n/g,'\n'),expected);
+ }finally{await session.close();await stop(server);}
+});
