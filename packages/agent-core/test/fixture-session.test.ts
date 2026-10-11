@@ -59,3 +59,5 @@ test('cleanup failure is reported without retry or false cleanup success',async(
     assert.doesNotMatch(String(results[0]!.payload.content),/cleanup complete/);await session.close();
   }
 });
+
+test('Pi entry reports safe actionable UIA failures without provider details or false cleanup claims',async()=>{for(const code of ['UIA_TARGET_CHANGED','UIA_TIMEOUT','UIA_CLEANUP_INCOMPLETE']){const events:SessionEnvelope[]=[];const session=new FixtureSession({mode:'pi',send:e=>events.push(e),create:async()=>{throw Error(code+' secret-provider-detail');}});session.receive(envelope());await session.idle();const terminal=events.find(e=>e.type==='server:message')!;assert.equal(terminal.payload.status,'failed');assert.match(String(terminal.payload.content),new RegExp(code));assert.doesNotMatch(String(terminal.payload.content),/secret-provider-detail|MODEL_RUNTIME_FAILED|cleanup complete/);await session.close();}});

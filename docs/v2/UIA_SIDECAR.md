@@ -178,3 +178,19 @@ runner 在窗口就绪立即输出 `UIA_READY`（含两个自有窗口身份、s
 显式获准后使用：node scripts/verify-v2-uia.cjs --run-owned-window --foreground-text-only。仅查看计划可用 --foreground-text-only（不加 --run-owned-window），不创建窗口。等待开始最多120秒，执行最多20秒；失焦/Stop/未知结果停止，不重试。此处记录命令不授权新一轮运行。
 
 最终离线验证：入口11/11（含前台target允许、失焦停止、后台默认仍要求sentinel）；C#构建及14/14纯策略自检通过。相关core单元80项：75通过、5项Linux专用跳过、0失败；core/React/Electron类型检查通过。CI终态另记录于PR，Hosted CI真实交互UIA为not run。
+
+## 通用助手产品路径审查与两项修复（e407daf 后）
+
+本次只后台源审查/离线回归，无真实窗口、模型网络调用或付费请求。发现并修复：
+
+1. UIA已有待用授权时，重新授权被取消、目标校验失败或后台限定拒绝，旧grant仍可被下一条消息消费，与UI显示未授权冲突。现在每次有效会话的替换申请先递增revision并删除旧grant，再检查忙碌/模式/目标与显示对话框；新申请未明确批准就没有可消费授权。旧对话框晚返回也不能复活授权。
+2. Pi产品入口将UIA目标变化、超时、取消或清理失败统统显示为MODEL_RUNTIME_FAILED。现在只输出白名单UIA错误码和固定处理提示；不回显provider内容/凭据。对可能产生副作用的失败保留unknown警示，对清理未完成不声称已释放。
+
+先在旧实现复现两条失败回归，再修复通过。最终宿主6/6，core单元81项：76通过、5项Linux专用跳过、0失败；core、React、Electron类型检查通过。CI终态在Draft PR记录，真实GUI为not run；此前前台UIA单轮证据保持原样。
+
+当前可用性差距与务实顺序：
+
+- 普通Pi消息的能力组合仍是temporary-sample只读 + 明确宿主UIA授权；native GUI仍走显式rehearsal内容入口。browser/files/CLI已有adapter与验证，但尚未组成普通Pi消息的统一宿主授权工作区/浏览器资源配置。这是代码接线范围缺口，不是只差填写API key；下一阶段先复用这些adapter建立显式宿主能力配置，以fake transport验证跨工具链，不能默认为任意文件/进程/日常profile授权。
+- UIA按钮撤销的是UIA能力和worker，不等于取消整个模型会话；取消整任务仍走已有任务取消入口。未知副作用仍需停止并核对目标，不能靠模型回复当成功证据。
+- 现有步骤firstAttempt是单次调用状态，不能据此得出模型任务级首次准确率或跨调用补救次数；已有metrics区分runtime完成和oracle成功，产品统计还需以用户任务的目标/独立验证为单位接入，不能把每次成功调用都当首次成功任务。
+- 真实provider/API、模型、预算尚未明确，阻塞的是真实模型验收；不阻塞上述离线产品接线。后台UIA、实际取消专项和任意应用仍未通过/未验收。本轮没有新增前台要求。

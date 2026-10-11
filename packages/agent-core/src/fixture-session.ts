@@ -139,5 +139,27 @@ export class FixtureSession {
 
 function safeModelError(error:unknown):string {
   const text=String(error);
+  // Allowlisted host guidance only: provider text may contain credentials or target content.
+  const uiaGuidance:Record<string,string>={
+    UIA_REVOKED:'UIA 授权已撤销；需要使用时请重新明确授权。',
+    UIA_TARGET_CHANGED:'目标控件已变化；请重新观察并确认目标。',
+    UIA_WINDOW_CHANGED:'目标窗口已关闭或变化；请重新选择并授权目标。',
+    UIA_PROCESS_CHANGED:'目标进程已变化；请重新选择并授权目标。',
+    UIA_TARGET_REUSED:'目标身份已变化；请重新选择并授权目标。',
+    UIA_BINDING_REJECTED:'无法确认目标身份；请检查宿主目标清单。',
+    UIA_LAUNCH_FAILED:'UIA 驱动无法启动；请检查 sidecar 和 .NET 10 Desktop Runtime。',
+    UIA_FOCUS_CHANGED:'目标焦点发生变化；请检查目标状态，勿直接重试。',
+    UIA_STALE_OBSERVATION:'观察已过期；请重新观察后再确认操作。',
+    UIA_REPLAY_OR_STALE:'操作已使用或观察过期；请先检查目标状态，勿重复提交。',
+    UIA_SESSION_STOPPED:'UIA 会话已停止；请先检查目标状态，勿直接重试。',
+    UIA_TIMEOUT:'UIA 调用超时；目标可能已改变，请先检查，勿直接重试。',
+    UIA_CANCELLED:'UIA 调用已取消；目标可能已改变，请先检查，勿直接重试。',
+    UIA_PROVIDER_ERROR:'UIA provider 调用失败；目标可能已改变，请先检查，勿直接重试。',
+    UIA_PROTOCOL_ERROR:'UIA 驱动回复无效；目标可能已改变，请先检查，勿直接重试。',
+    UIA_CLEANUP_INCOMPLETE:'UIA 清理未确认完成；勿重试或启动其他桌面操作，请检查自有目标。',
+  };
+  const uiaCode=Object.keys(uiaGuidance).find(code=>new RegExp('(?:^|[^A-Z0-9_])'+code+'(?:$|[^A-Z0-9_])').test(text));
+  if(uiaCode)return uiaCode+'：'+uiaGuidance[uiaCode];
+
   return ['MODEL_SESSION_NOT_CONFIGURED','MODEL_SESSION_BUSY','MODEL_CALL_BUDGET_EXHAUSTED','MODEL_INPUT_LIMIT','MODEL_OUTPUT_LIMIT','MODEL_INCOMPLETE_STREAM','MODEL_TIMEOUT','MODEL_CANCELLED','MODEL_PROVIDER_FAILED'].find(code=>text.includes(code)) ?? (['GUI_INITIAL_TARGET_UNAVAILABLE','GUI_INITIAL_ACTIVATION_REJECTED','GUI_NATIVE_HANDLE_MISMATCH','GUI_FOCUS_LOST','GUI_APPROVAL_TIMEOUT','GUI_DESKTOP_BUSY','GUI_CANCELLED'].find(code=>text.includes(code))??'MODEL_RUNTIME_FAILED');
 }
