@@ -102,3 +102,24 @@ agent-core 作为 workspace 生产依赖进入包；OpenAI SDK 使用 Pi 已锁�
 原始报告逐字节保存在 [report.json](evidence/windows-uia-owned-2026-10-11/report.json)，SHA-256、源提交和独立清理检查见 [manifest.json](evidence/windows-uia-owned-2026-10-11/manifest.json)。报告称 fixtureExited=true，随后独立检查 PID 已不存在、桌面锁不存在，立即告知用户可以恢复操作。
 
 已做离线工程修复：仅对显式授权的可见测试 fixture 使用可见启动；增加 `Start this one authorized UIA round` 按钮。runner 最多等待120秒，必须收到用户点击开始且该窗口在前台的自有 oracle 才启动 UIA；点击后失焦直接失败，不反复 refocus。立即显示窗口标题和按钮说明，关闭/超时有明确失败。新增3项离线门槛测试；**修复后的窗口模式没有再次运行**。下一次真实尝试需要先说明并取得新的单轮授权。
+## 双自有窗口后台验收入口（当前版本，尚未现场执行）
+
+本节替代旧的“target 必须在前台”验收门槛。UIA adapter 本身没有该前提；目标必须保持在后台，用户操作独立 sentinel 开始。
+
+- 后台目标标题：`openEagle UIA background target`；仅包含已授权的 entry/readonly/password/disabled 控件。
+- 前台 sentinel 标题：`openEagle UIA foreground sentinel`；用户点击 `Start one background UIA round`。任一窗口关闭或 sentinel Stop 都关闭这两个自有窗口。只初次显示，不调用 Activate/BringToFront/SetForegroundWindow，也不发送鼠键、剪贴板输入。
+- 开始条件为用户明确点击、两个不同自有 HWND 与实际 child PID 身份匹配、随后成功取得共享 desktop lease。sentinel 当前为前台是这项后台测试的观察基准，不是强求目标前台。每个 UIA 操作仍由 adapter 复核 target PID/启动时间/RuntimeId。
+- 单独采样线程请求每20ms读取前台 HWND，仅输出 sentinel/target/other/none 分类、序号和单调时钟；不读取其他窗口标题、文本、截图或保存其 HWND。记录实际采样间隔与最大间隔。遇到非 sentinel、乱序、丢样、超过250ms的采样间隔/接收陈旧或8192条上限即停止，不抢回焦点。
+- 这是**轮询采样**，并非完整前台事件捕获；即使全部样本都是 sentinel，也只能报告 `sentinel-at-all-samples`，`provesNoTransientChange=false`。不得声称没有采样间隙中的瞬时变化。
+- 控件 oracle 使用带请求ID的独立回复；sample事件不会被当成文本结果。报告分别包含 `textResult`、`focusResult`、`cancellationResult`；写入未验证与取消未知副作用不包装成成功，取消结束不等于回滚。
+- 就绪等待5秒、用户开始等待120秒、实际运行预算60秒、oracle回复3秒。停止时先取消UIA并等待worker清理，再关闭自有fixture输入流；若1.5秒未退出，仅终止该 child，并再等1.5秒。退出无法确认则报 `UIA_CLEANUP_INCOMPLETE`，不假报释放。
+
+### 现场回传约定
+
+runner 在窗口就绪立即输出 `UIA_READY`（含两个自有窗口身份、sentinel标题及按钮说明）；执行代理看到这个明确事件后**立即结束当前turn回传父级**，不能把 pnpm 启动行当作窗口就绪。待父级告知用户后另行接续观察。
+
+清理确认后立即输出 `UIA_RELEASED`，包括文本/焦点/取消分项状态；执行代理收到后**立即结束当前turn回传**，首先告知用户可以恢复电脑操作。证据整理、提交和CI均用后续后台turn，不能夹在释放与回传之间。清理失败输出不同事件，不告知“已释放”。
+
+### 本轮证据
+
+没有运行 `--run-owned-window`，没有新建任何真实窗口，没有UIA调用。仅运行 plan模式、10项离线模拟测试（开始/身份/焦点分类/采样缺口/回复关联/超时/取消/关闭/有界自有进程清理）、C#构建与14项纯策略自检。双窗口的实际WinForms行为、控件AutomationId、后台SetValue及焦点保持仍待一次另行授权的现场验收。
